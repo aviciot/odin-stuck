@@ -39,7 +39,7 @@ class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
     password: Optional[str] = None
-    db: int = 1          # Odin always uses DB 1; Omni uses 0
+    db: int = 0          # Odin owns its own Redis; DB 0
     ssl: bool = False
 
 
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: Optional[str] = None
-    REDIS_DB: int = 1
+    REDIS_DB: int = 0
     REDIS_SSL: bool = False
 
     # Auth service

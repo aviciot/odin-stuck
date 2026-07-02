@@ -146,7 +146,7 @@ INSERT INTO auth_service.roles (name, description, mcp_access, tool_restrictions
 ('super_admin', 'Full system access', ARRAY['*'], '{}', 'admin', 10000, 1000.00, 7200),
 ('developer', 'Developer access', ARRAY['database_mcp', 'macgyver_mcp', 'informatica_mcp'], '{"database_mcp": ["analyze_full_sql_context", "compare_query_plans"], "macgyver_mcp": ["*"], "informatica_mcp": ["*"]}', 'view', 5000, 100.00, 7200),
 ('analyst', 'Data analyst access', ARRAY['database_mcp'], '{"database_mcp": ["analyze_full_sql_context", "get_top_queries"]}', 'view', 1000, 50.00, 3600),
-('viewer', 'Read-only access', ARRAY[], '{}', 'view', 100, 10.00, 3600)
+('viewer', 'Read-only access', ARRAY[]::text[], '{}', 'view', 100, 10.00, 3600)
 ON CONFLICT (name) DO NOTHING;
 
 -- ============================================================

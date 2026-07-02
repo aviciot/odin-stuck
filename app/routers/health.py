@@ -1,10 +1,10 @@
 """Health check endpoints."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from sqlalchemy import text
 
 from app.config import settings
-from app.database import engine, redis_client
+import app.database as db_module
 
 router = APIRouter()
 
@@ -14,17 +14,21 @@ async def health():
     db_status, redis_status = "ok", "ok"
 
     try:
-        async with engine.begin() as conn:
+        if db_module.engine is None:
+            raise RuntimeError("engine not initialized")
+        async with db_module.engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
     except Exception:
         db_status = "error"
 
     try:
-        await redis_client.ping()
+        if db_module.redis_client is None:
+            raise RuntimeError("redis not initialized")
+        await db_module.redis_client.ping()
     except Exception:
         redis_status = "error"
 
-    overall = "healthy" if db_status == "ok" and redis_status == "ok" else "degraded"
+    overall = "ok" if db_status == "ok" and redis_status == "ok" else "degraded"
     return {
         "status": overall,
         "db": db_status,
@@ -37,14 +41,15 @@ async def health():
 @router.get("/health/ready")
 async def health_ready():
     try:
-        async with engine.begin() as conn:
+        if db_module.engine is None:
+            raise RuntimeError("engine not initialized")
+        async with db_module.engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
-        return {"status": "ready"}
+        return {"status": "ok"}
     except Exception as e:
-        from fastapi import Response
         return Response(content=f"db error: {e}", status_code=503)
 
 
 @router.get("/health/live")
 async def health_live():
-    return {"status": "alive", "instance_id": settings.odin_instance_id}
+    return {"status": "ok", "instance_id": settings.odin_instance_id}

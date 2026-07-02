@@ -3,6 +3,7 @@ Odin — Multi-Agent Orchestration Platform
 Entry point. Lifespan handles DB/Redis init and background tasks.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,6 +14,9 @@ from app.database import init_db, close_db
 from app.utils.logger import logger, setup_logging
 from app.routers import health
 from app.routers import admin_llm_providers
+from app.routers import admin_agents
+from app.routers import admin_orchestrators
+from app.services.agent_registry import start_change_listener
 
 
 @asynccontextmanager
@@ -28,6 +32,9 @@ async def lifespan(app: FastAPI):
 
     await init_db()
 
+    # Background task: listen for agent registry invalidation signals
+    listener_task = asyncio.create_task(start_change_listener())
+
     logger.info(
         "Odin ready",
         instance_id=settings.odin_instance_id,
@@ -36,6 +43,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    listener_task.cancel()
     logger.info("Odin shutting down", instance_id=settings.odin_instance_id)
     await close_db()
     logger.info("Odin shutdown complete")
@@ -57,4 +65,6 @@ app.add_middleware(
 )
 
 app.include_router(health.router, tags=["health"])
-app.include_router(admin_llm_providers.router)
+app.include_router(admin_llm_providers.router, prefix="/api/v1")
+app.include_router(admin_agents.router, prefix="/api/v1")
+app.include_router(admin_orchestrators.router, prefix="/api/v1")

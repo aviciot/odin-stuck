@@ -1,6 +1,6 @@
 # Odin Redis Key Space
-# Last updated: 2026-06-28
-# Redis DB index: 1 (Omni uses 0 — NEVER use DB 0 from Odin)
+# Last updated: 2026-07-02
+# Redis: odin-redis container (fully isolated). DB index: 0 (Odin owns this Redis entirely).
 
 ## Key Patterns
 
@@ -23,7 +23,6 @@
 
 ## Naming Rules
 - All keys MUST start with `odin:` or `rl:odin:`
-- Never use Redis DB 0 (Omni's namespace)
 - Hash tokens before storing: `hashlib.sha256(token.encode()).hexdigest()`
 
 ## Adding a New Key

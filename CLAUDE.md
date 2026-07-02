@@ -24,7 +24,7 @@ Before touching any code, read these docs if you haven't this session:
 
 Odin is a **multi-agent orchestration platform** — completely separate from Omni (`/opt/docker/omni-stack`).
 
-It **shares containers only**: `omni-postgres` (DB: `odin`) and `omni-redis` (DB index: `1`).
+It is **fully isolated**: own Postgres (`odin-postgres`), own Redis (`odin-redis`), own network (`odin-network`).
 Everything else is isolated: own schema, own credentials, own ports, own network attachment.
 
 ---
