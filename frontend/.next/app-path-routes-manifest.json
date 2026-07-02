@@ -1,0 +1,8 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/agents/page": "/agents",
+  "/dashboard/page": "/dashboard",
+  "/login/page": "/login",
+  "/page": "/",
+  "/runs/page": "/runs"
+}

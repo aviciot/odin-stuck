@@ -249,3 +249,41 @@ services:
       odin-auth-service:
         condition: service_healthy
     restart: unless-stopped
+
+  # ============================================================
+  # Odin Frontend — Next.js dashboard (port 3200)
+  # ============================================================
+  odin-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: odin-frontend
+    expose:
+      - "3200"
+    ports:
+      - "3200:3200"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      NODE_ENV: development
+      ODIN_API_URL: "http://odin-bridge:8001"
+      ODIN_AUTH_URL: "http://odin-auth-service:8701"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy-network"
+      - "traefik.http.routers.odin-ui.rule=Host(`${ODIN_UI_HOSTNAME:-odin-ui.example.com}`)"
+      - "traefik.http.routers.odin-ui.priority=10"
+      - "traefik.http.services.odin-ui-svc.loadbalancer.server.port=3200"
+    networks:
+      - odin-network
+      - proxy-network
+    depends_on:
+      - odin-bridge
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
