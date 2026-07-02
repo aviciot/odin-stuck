@@ -29,7 +29,8 @@ services:
       POSTGRES_USER: ${ODIN_DB_USER:-odin}
       POSTGRES_PASSWORD: ${ODIN_DB_PASSWORD:-odin_secret}
     volumes:
-      - ./volumes/postgres/pgdata:/var/lib/postgresql/data
+      - ./volumes/postgres/pgdata:/var/lib/postgresql/data   # persistent data
+      - ./postgres/init:/docker-entrypoint-initdb.d          # auto-run on first boot
     networks:
       - odin-network
     restart: unless-stopped
@@ -46,9 +47,10 @@ services:
   odin-redis:
     image: redis:7-alpine
     container_name: odin-redis
-    command: redis-server --appendonly yes ${ODIN_REDIS_PASSWORD:+--requirepass $ODIN_REDIS_PASSWORD}
+    command: redis-server /etc/redis/redis.conf ${ODIN_REDIS_PASSWORD:+--requirepass $ODIN_REDIS_PASSWORD}
     volumes:
-      - ./volumes/redis:/data
+      - ./volumes/redis:/data                        # persistent data
+      - ./redis/config/redis.conf:/etc/redis/redis.conf:ro  # config
     networks:
       - odin-network
     restart: unless-stopped
