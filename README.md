@@ -332,4 +332,4 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 ## License
 
-Private — Shift4 internal project.
+© 2026 Avi Cohen. All rights reserved.
