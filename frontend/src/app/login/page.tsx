@@ -2,18 +2,16 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
-import { isTokenValid } from '@/lib/jwt';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, isLoading, error, clearError } = useAuthStore();
+  const { login, fetchUser, isLoading, error, clearError } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('odin_access_token');
-    if (isTokenValid(token)) router.replace('/dashboard');
+    fetchUser().then((ok) => { if (ok) router.replace('/dashboard'); });
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {

@@ -1,6 +1,7 @@
 export interface OdinUser {
   id: number;
   email: string;
+  username: string;
   name: string;
   role: string;
 }
@@ -17,7 +18,7 @@ export interface AuthState {
   isLoading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   fetchUser: () => Promise<boolean>;
   clearError: () => void;
 }

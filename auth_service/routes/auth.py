@@ -5,8 +5,10 @@ Login, logout, token validation, and refresh endpoints.
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, Cookie
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Optional
 
 from models.schemas import AuthRequest, TokenPair, User
 from services.user_service import get_user_by_api_key, get_user_by_id
@@ -15,6 +17,8 @@ from services.token_service import create_access_token, create_refresh_token, ve
 from services.audit_service import audit_log
 from config.database import get_db_pool
 from config.settings import settings
+
+COOKIE_OPTS = dict(httponly=True, samesite="strict", secure=False)  # set secure=True behind HTTPS
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -104,11 +108,39 @@ async def login(auth_request: AuthRequest, request: Request):
     await audit_log(user.id, user.username, "login", "success", ip_address=ip_address)
 
     logger.info(f"[LOGIN] Success for user_id={user.id}, expires_in={expires_in}s")
-    return TokenPair(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=expires_in
-    )
+    response = JSONResponse(content={
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_in": expires_in,
+    })
+    response.set_cookie("odin_access_token", access_token, max_age=expires_in, **COOKIE_OPTS)
+    response.set_cookie("odin_refresh_token", refresh_token, max_age=settings.REFRESH_TOKEN_EXPIRY, **COOKIE_OPTS)
+    return response
+
+
+@router.get("/me")
+async def me(odin_access_token: Optional[str] = Cookie(None)):
+    """Return current user from httpOnly cookie."""
+    token = odin_access_token
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = await verify_token(token)
+        user_id = int(payload.get("sub"))
+        user = await get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(401, "User not found")
+        return {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "username": user.username,
+            "role": user.role,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(401, "Invalid session")
 
 
 @router.get("/validate")
@@ -170,16 +202,20 @@ async def validate(request: Request, credentials: HTTPAuthorizationCredentials =
         raise HTTPException(401, "Token validation failed")
 
 
-@router.post("/refresh", response_model=TokenPair)
-async def refresh(credentials: HTTPAuthorizationCredentials = Depends(security)):
+@router.post("/refresh")
+async def refresh(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    odin_refresh_token: Optional[str] = Cookie(None),
+):
     """
-    Refresh access token using refresh token.
+    Refresh access token using refresh token (Bearer header or httpOnly cookie).
     """
-    if not credentials:
-        raise HTTPException(401, "Authorization header required")
+    token = (credentials.credentials if credentials else None) or odin_refresh_token
+    if not token:
+        raise HTTPException(401, "No refresh token")
 
     # Verify refresh token
-    payload = await verify_token(credentials.credentials)
+    payload = await verify_token(token)
 
     if payload.get("type") != "refresh":
         raise HTTPException(401, "Invalid token type")
@@ -192,13 +228,13 @@ async def refresh(credentials: HTTPAuthorizationCredentials = Depends(security))
 
     # Create new tokens
     access_token = await create_access_token(user)
-    refresh_token = await create_refresh_token(user)
+    new_refresh_token = await create_refresh_token(user)
 
     # Get expires_in
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         expires_in = await conn.fetchval("""
-            SELECT r.token_expiry 
+            SELECT r.token_expiry
             FROM auth_service.roles r
             JOIN auth_service.users u ON u.role_id = r.id
             WHERE u.id = $1
@@ -207,30 +243,35 @@ async def refresh(credentials: HTTPAuthorizationCredentials = Depends(security))
     if not expires_in:
         expires_in = settings.ACCESS_TOKEN_EXPIRY
 
-    return TokenPair(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=expires_in
-    )
+    response = JSONResponse(content={
+        "access_token": access_token,
+        "refresh_token": new_refresh_token,
+        "expires_in": expires_in,
+    })
+    response.set_cookie("odin_access_token", access_token, max_age=expires_in, **COOKIE_OPTS)
+    response.set_cookie("odin_refresh_token", new_refresh_token, max_age=settings.REFRESH_TOKEN_EXPIRY, **COOKIE_OPTS)
+    return response
 
 
 @router.post("/logout")
-async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    odin_access_token: Optional[str] = Cookie(None),
+):
     """
-    Logout and revoke tokens.
+    Logout and revoke tokens. Accepts Bearer header or httpOnly cookie.
     """
-    if not credentials:
-        raise HTTPException(401, "Authorization header required")
+    token = (credentials.credentials if credentials else None) or odin_access_token
+    if token:
+        try:
+            await revoke_token(token)
+            payload = await verify_token(token)
+            user_id = int(payload.get("sub"))
+            await audit_log(user_id, payload.get("username"), "logout", "success")
+        except Exception:
+            pass
 
-    # Revoke the token
-    await revoke_token(credentials.credentials)
-
-    # Get user for audit log
-    try:
-        payload = await verify_token(credentials.credentials)
-        user_id = int(payload.get("sub"))
-        await audit_log(user_id, payload.get("username"), "logout", "success")
-    except:
-        pass  # Token might be expired
-
-    return {"message": "Logged out successfully"}
+    response = JSONResponse(content={"message": "Logged out successfully"})
+    response.delete_cookie("odin_access_token")
+    response.delete_cookie("odin_refresh_token")
+    return response
