@@ -41,8 +41,10 @@ export const useAuthStore = create<AuthState>((set) => ({
         throw new Error(err.detail || 'Invalid credentials');
       }
       const data: TokenResponse = await res.json();
+      console.log('[login] got token, type:', data.token_type, 'len:', data.access_token?.length);
       localStorage.setItem('odin_access_token', data.access_token);
       if (data.refresh_token) localStorage.setItem('odin_refresh_token', data.refresh_token);
+      console.log('[login] stored, reading back:', localStorage.getItem('odin_access_token')?.slice(0,20));
       set({ user: decodeUser(data.access_token), isAuthenticated: true, isLoading: false, error: null });
     } catch (e: any) {
       set({ user: null, isAuthenticated: false, isLoading: false, error: e.message });
@@ -87,7 +89,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({ user: decodeUser(token), isAuthenticated: true, isLoading: false });
       return true;
     } catch (err) {
-      console.error('[authStore] fetchUser failed:', err);
+      console.error('[authStore] fetchUser EXCEPTION:', err);
       localStorage.removeItem('odin_access_token');
       localStorage.removeItem('odin_refresh_token');
       set({ user: null, isAuthenticated: false, isLoading: false });

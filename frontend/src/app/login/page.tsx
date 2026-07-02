@@ -11,7 +11,18 @@ export default function LoginPage() {
   const [showPw, setShowPw] = useState(false);
 
   useEffect(() => {
-    fetchUser().then((ok) => { if (ok) router.replace('/dashboard'); });
+    // If already have a valid token, skip login
+    try {
+      const token = localStorage.getItem('odin_access_token');
+      if (token) {
+        const seg = token.split('.')[1];
+        const b64 = seg.replace(/-/g, '+').replace(/_/g, '/') + '==';
+        const payload = JSON.parse(atob(b64));
+        if (payload.exp * 1000 > Date.now()) {
+          router.replace('/dashboard');
+        }
+      }
+    } catch {}
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -54,12 +65,13 @@ export default function LoginPage() {
         .animate-entrance { animation: fade-slide-up 0.8s cubic-bezier(0.16,1,0.3,1) forwards; }
         .brand-input {
           display: block; width: 100%; background: rgba(2,6,23,.5);
-          border: 1px solid #1e293b; border-radius: 8px;
+          border: 1px solid #334155; border-radius: 8px;
           padding: 10px 12px 10px 40px;
-          color: #e2e8f0; font-size: 14px; transition: all .2s;
+          color: #f1f5f9 !important; font-size: 14px; transition: all .2s;
+          -webkit-text-fill-color: #f1f5f9;
         }
         .brand-input:focus { border-color: #3b4dff; box-shadow: 0 0 0 2px rgba(59,77,255,.2); outline: none; }
-        .brand-input::placeholder { color: #475569; }
+        .brand-input::placeholder { color: #64748b !important; -webkit-text-fill-color: #64748b; }
       `}</style>
 
       <main className="min-h-screen flex flex-col items-center justify-center p-6 relative bg-mesh text-slate-200 antialiased overflow-x-hidden">
