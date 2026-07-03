@@ -120,6 +120,7 @@ export const odinApi = {
   updateOrchestrator: (id: string, body: unknown) => api.patch<OrchestratorFull>(`/admin/orchestrators/${id}`, body),
   deleteOrchestrator: (id: string) => api.delete<void>(`/admin/orchestrators/${id}`),
   testLlm: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-llm`, body),
+  testVoice: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-voice`, body),
   getOrchestrator: async (name: string): Promise<OrchestratorFull | undefined> => {
     const list = await api.get<OrchestratorFull[]>('/admin/orchestrators');
     return list.find((o) => o.name === name);
@@ -127,7 +128,7 @@ export const odinApi = {
   transcribe: async (name: string, audio: Blob): Promise<{ text: string }> => {
     const form = new FormData();
     form.append('audio', audio, 'recording.webm');
-    const res = await fetch(`${API_BASE}/api/v1/orchestrators/${name}/transcribe`, {
+    const res = await fetch(`${API_BASE}/orchestrators/${name}/transcribe`, {
       method: 'POST',
       body: form,
     });

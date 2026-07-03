@@ -74,6 +74,7 @@ export default function OrchestratorsPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [testState, setTestState] = useState<{ loading: boolean; ok?: boolean; latency?: number; error?: string }>({ loading: false });
+  const [voiceTestState, setVoiceTestState] = useState<{ loading: boolean; ok?: boolean; latency?: number; error?: string }>({ loading: false });
 
   async function load() {
     setLoading(true);
@@ -137,6 +138,21 @@ export default function OrchestratorsPage() {
       setTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
     } catch (e: any) {
       setTestState({ loading: false, ok: false, error: e.message });
+    }
+  }
+
+  async function testVoice() {
+    if (!editing || !form.transcription_provider || !form.transcription_model) return;
+    setVoiceTestState({ loading: true });
+    try {
+      const res = await odinApi.testVoice(editing.id, {
+        provider: form.transcription_provider,
+        model: form.transcription_model,
+        api_key: form.transcription_api_key || undefined,
+      });
+      setVoiceTestState({ loading: false, ok: res.ok, latency: res.latency_ms, error: res.error });
+    } catch (e: any) {
+      setVoiceTestState({ loading: false, ok: false, error: e.message });
     }
   }
 
@@ -408,6 +424,18 @@ export default function OrchestratorsPage() {
                         style={INP}
                       />
                     </Field>
+                    {editing && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <button onClick={testVoice} disabled={voiceTestState.loading || !form.transcription_provider || !form.transcription_model} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text)', cursor: voiceTestState.loading ? 'wait' : 'pointer', fontSize: 13, fontWeight: 600 }}>
+                          {voiceTestState.loading ? '...' : 'Test connection'}
+                        </button>
+                        {voiceTestState.ok !== undefined && (
+                          <span style={{ fontSize: 12, color: voiceTestState.ok ? '#4ade80' : '#f87171' }}>
+                            {voiceTestState.ok ? `✓ ${voiceTestState.latency}ms — ${voiceTestState.error}` : `✗ ${voiceTestState.error}`}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

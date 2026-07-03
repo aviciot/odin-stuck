@@ -301,9 +301,48 @@ async def test_llm(orch_id: uuid.UUID, body: LLMTestRequest, db: AsyncSession = 
     """Validate an LLM API key by sending a minimal request to the provider."""
     api_key = body.api_key
     if not api_key:
-        # Use the stored key for this orchestrator
         row = await _get_or_404(db, orch_id)
         if not row.llm_api_key_encrypted:
             raise HTTPException(status_code=400, detail="No API key stored and none provided")
         api_key = decrypt_value(row.llm_api_key_encrypted)
     return await _test_llm(body.provider, body.model, api_key, body.base_url)
+
+
+class VoiceTestRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: Optional[str] = None
+
+
+@router.post("/{orch_id}/test-voice", response_model=LLMTestResult)
+async def test_voice(orch_id: uuid.UUID, body: VoiceTestRequest, db: AsyncSession = Depends(get_db)):
+    """Validate a transcription API key by listing available models."""
+    import time
+    api_key = body.api_key
+    if not api_key:
+        row = await _get_or_404(db, orch_id)
+        if not row.transcription_api_key_encrypted:
+            raise HTTPException(status_code=400, detail="No API key stored and none provided")
+        api_key = decrypt_value(row.transcription_api_key_encrypted)
+
+    start = time.monotonic()
+    try:
+        if body.provider == "openai":
+            import openai
+            client = openai.AsyncOpenAI(api_key=api_key)
+            models = await client.models.list()
+            ms = int((time.monotonic() - start) * 1000)
+            whisper_models = [m.id for m in models.data if "whisper" in m.id or "transcribe" in m.id]
+            return LLMTestResult(ok=True, latency_ms=ms, error=f"Available: {', '.join(whisper_models) or 'none found'}")
+        elif body.provider == "groq":
+            from groq import AsyncGroq
+            client = AsyncGroq(api_key=api_key)
+            models = await client.models.list()
+            ms = int((time.monotonic() - start) * 1000)
+            audio_models = [m.id for m in models.data if "whisper" in m.id]
+            return LLMTestResult(ok=True, latency_ms=ms, error=f"Available: {', '.join(audio_models) or 'none found'}")
+        else:
+            return LLMTestResult(ok=False, error=f"Unknown provider: {body.provider}")
+    except Exception as exc:
+        ms = int((time.monotonic() - start) * 1000)
+        return LLMTestResult(ok=False, error=str(exc), latency_ms=ms)

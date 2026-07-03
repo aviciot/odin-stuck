@@ -8,11 +8,15 @@ async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
   const path = segments.join('/');
   const url = `${BRIDGE_BASE}/api/v1/${path}${req.nextUrl.search}`;
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const contentType = req.headers.get('content-type') || '';
+  const isMultipart = contentType.includes('multipart/form-data');
+  const headers: Record<string, string> = {};
+  if (!isMultipart) headers['Content-Type'] = 'application/json';
+  if (isMultipart) headers['Content-Type'] = contentType; // preserve boundary
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const body = req.method !== 'GET' && req.method !== 'HEAD'
-    ? await req.text()
+    ? await req.arrayBuffer()
     : undefined;
 
   const upstream = await fetch(url, { method: req.method, headers, body });
