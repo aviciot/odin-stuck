@@ -16,7 +16,6 @@ import os
 import time
 
 import websockets
-from websockets.server import WebSocketServerProtocol
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("mock-agent")
@@ -40,7 +39,7 @@ def build_reply(message: str) -> str:
     )
 
 
-async def handle(ws: WebSocketServerProtocol, path: str) -> None:
+async def handle(ws) -> None:
     client = ws.remote_address
     log.info(f"Connection from {client} path={path}")
 
