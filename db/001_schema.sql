@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS odin.orchestrators (
     allowed_agent_ids UUID[] NOT NULL DEFAULT '{}',
     llm_provider TEXT,
     llm_model TEXT,
+    llm_api_key_encrypted TEXT,
+    llm_base_url TEXT,
     max_iterations INTEGER NOT NULL DEFAULT 10,
     max_parallel_tools INTEGER NOT NULL DEFAULT 4,
     rate_limit_rpm INTEGER NOT NULL DEFAULT 30,

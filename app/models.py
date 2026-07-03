@@ -75,6 +75,8 @@ class Orchestrator(Base):
     allowed_agent_ids: Mapped[List[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
     llm_provider: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     llm_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    llm_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    llm_base_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     max_iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     max_parallel_tools: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, nullable=False, default=30)

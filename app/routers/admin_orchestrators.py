@@ -3,11 +3,11 @@ Admin — Orchestrators
 CRUD for odin.orchestrators. Publishes odin:orchestrators:changed on any write.
 """
 
-import json
 import uuid
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, get_redis
 from app.models import Orchestrator
+from app.utils.crypto import encrypt_value, decrypt_value, key_hint
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin/orchestrators", tags=["admin-orchestrators"])
@@ -32,9 +33,11 @@ class OrchestratorCreate(BaseModel):
     name: str = Field(..., description="Unique slug used in /ws/orchestrate/{name}")
     display_name: str
     system_prompt: str = ""
-    allowed_agent_ids: List[uuid.UUID] = Field(default_factory=list, description="Empty = all enabled agents")
+    allowed_agent_ids: List[uuid.UUID] = Field(default_factory=list)
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
     max_iterations: int = 10
     max_parallel_tools: int = 4
     rate_limit_rpm: int = 30
@@ -48,6 +51,8 @@ class OrchestratorUpdate(BaseModel):
     allowed_agent_ids: Optional[List[uuid.UUID]] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    llm_api_key: Optional[str] = None       # blank = keep existing
+    llm_base_url: Optional[str] = None
     max_iterations: Optional[int] = None
     max_parallel_tools: Optional[int] = None
     rate_limit_rpm: Optional[int] = None
@@ -63,6 +68,8 @@ class OrchestratorOut(BaseModel):
     allowed_agent_ids: List[uuid.UUID]
     llm_provider: Optional[str]
     llm_model: Optional[str]
+    llm_api_key_hint: Optional[str]         # masked, e.g. sk-a••••••••1234
+    llm_base_url: Optional[str]
     max_iterations: int
     max_parallel_tools: int
     rate_limit_rpm: int
@@ -71,6 +78,19 @@ class OrchestratorOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class LLMTestRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: Optional[str] = None           # plaintext; if omitted use stored key
+    base_url: Optional[str] = None
+
+
+class LLMTestResult(BaseModel):
+    ok: bool
+    latency_ms: Optional[int] = None
+    error: Optional[str] = None
 
 
 # ------------------------------------------------------------------ #
@@ -86,6 +106,8 @@ def _row_to_out(row: Orchestrator) -> OrchestratorOut:
         allowed_agent_ids=list(row.allowed_agent_ids or []),
         llm_provider=row.llm_provider,
         llm_model=row.llm_model,
+        llm_api_key_hint=key_hint(row.llm_api_key_encrypted) if row.llm_api_key_encrypted else None,
+        llm_base_url=row.llm_base_url,
         max_iterations=row.max_iterations,
         max_parallel_tools=row.max_parallel_tools,
         rate_limit_rpm=row.rate_limit_rpm,
@@ -110,15 +132,54 @@ async def _invalidate(name: str) -> None:
         logger.warning("orchestrator: failed to invalidate cache", error=str(exc))
 
 
+async def _test_llm(provider: str, model: str, api_key: str, base_url: Optional[str]) -> LLMTestResult:
+    """Send a minimal request to the provider to validate the key."""
+    import time
+    start = time.monotonic()
+    try:
+        if provider == "anthropic":
+            url = (base_url or "https://api.anthropic.com") + "/v1/messages"
+            headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+            payload = {"model": model, "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.post(url, headers=headers, json=payload)
+        elif provider == "openai":
+            url = (base_url or "https://api.openai.com") + "/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
+            payload = {"model": model, "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.post(url, headers=headers, json=payload)
+        elif provider == "groq":
+            url = (base_url or "https://api.groq.com") + "/openai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
+            payload = {"model": model, "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]}
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.post(url, headers=headers, json=payload)
+        elif provider == "gemini":
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            payload = {"contents": [{"parts": [{"text": "hi"}]}], "generationConfig": {"maxOutputTokens": 5}}
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.post(url, json=payload)
+        else:
+            return LLMTestResult(ok=False, error=f"Unknown provider: {provider}")
+
+        ms = int((time.monotonic() - start) * 1000)
+        if r.status_code in (200, 201):
+            return LLMTestResult(ok=True, latency_ms=ms)
+        body = r.json()
+        msg = body.get("error", {}).get("message") or body.get("error") or str(r.status_code)
+        return LLMTestResult(ok=False, error=str(msg), latency_ms=ms)
+    except Exception as exc:
+        ms = int((time.monotonic() - start) * 1000)
+        return LLMTestResult(ok=False, error=str(exc), latency_ms=ms)
+
+
 # ------------------------------------------------------------------ #
 # Routes                                                               #
 # ------------------------------------------------------------------ #
 
 @router.get("", response_model=List[OrchestratorOut])
-async def list_orchestrators(
-    enabled_only: bool = False,
-    db: AsyncSession = Depends(get_db),
-):
+async def list_orchestrators(enabled_only: bool = False, db: AsyncSession = Depends(get_db)):
     q = select(Orchestrator).order_by(Orchestrator.name)
     if enabled_only:
         q = q.where(Orchestrator.enabled == True)
@@ -137,8 +198,10 @@ async def create_orchestrator(body: OrchestratorCreate, db: AsyncSession = Depen
         display_name=body.display_name,
         system_prompt=body.system_prompt,
         allowed_agent_ids=[str(i) for i in body.allowed_agent_ids],
-        llm_provider=body.llm_provider,
-        llm_model=body.llm_model,
+        llm_provider=body.llm_provider or None,
+        llm_model=body.llm_model or None,
+        llm_api_key_encrypted=encrypt_value(body.llm_api_key) if body.llm_api_key else None,
+        llm_base_url=body.llm_base_url or None,
         max_iterations=body.max_iterations,
         max_parallel_tools=body.max_parallel_tools,
         rate_limit_rpm=body.rate_limit_rpm,
@@ -159,11 +222,7 @@ async def get_orchestrator(orch_id: uuid.UUID, db: AsyncSession = Depends(get_db
 
 
 @router.patch("/{orch_id}", response_model=OrchestratorOut)
-async def update_orchestrator(
-    orch_id: uuid.UUID,
-    body: OrchestratorUpdate,
-    db: AsyncSession = Depends(get_db),
-):
+async def update_orchestrator(orch_id: uuid.UUID, body: OrchestratorUpdate, db: AsyncSession = Depends(get_db)):
     row = await _get_or_404(db, orch_id)
 
     if body.display_name is not None:
@@ -173,9 +232,13 @@ async def update_orchestrator(
     if body.allowed_agent_ids is not None:
         row.allowed_agent_ids = [str(i) for i in body.allowed_agent_ids]
     if body.llm_provider is not None:
-        row.llm_provider = body.llm_provider
+        row.llm_provider = body.llm_provider or None
     if body.llm_model is not None:
-        row.llm_model = body.llm_model
+        row.llm_model = body.llm_model or None
+    if body.llm_api_key:                        # non-blank = update; blank = preserve
+        row.llm_api_key_encrypted = encrypt_value(body.llm_api_key)
+    if body.llm_base_url is not None:
+        row.llm_base_url = body.llm_base_url or None
     if body.max_iterations is not None:
         row.max_iterations = body.max_iterations
     if body.max_parallel_tools is not None:
@@ -203,3 +266,16 @@ async def delete_orchestrator(orch_id: uuid.UUID, db: AsyncSession = Depends(get
     await db.commit()
     await _invalidate(name)
     logger.info("orchestrator deleted", orch_id=str(orch_id), name=name)
+
+
+@router.post("/{orch_id}/test-llm", response_model=LLMTestResult)
+async def test_llm(orch_id: uuid.UUID, body: LLMTestRequest, db: AsyncSession = Depends(get_db)):
+    """Validate an LLM API key by sending a minimal request to the provider."""
+    api_key = body.api_key
+    if not api_key:
+        # Use the stored key for this orchestrator
+        row = await _get_or_404(db, orch_id)
+        if not row.llm_api_key_encrypted:
+            raise HTTPException(status_code=400, detail="No API key stored and none provided")
+        api_key = decrypt_value(row.llm_api_key_encrypted)
+    return await _test_llm(body.provider, body.model, api_key, body.base_url)

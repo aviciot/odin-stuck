@@ -42,7 +42,7 @@ _ORCH_TTL = 600
 # ------------------------------------------------------------------ #
 
 class OrchestratorConfig:
-    def __init__(self, row: Orchestrator):
+    def __init__(self, row):
         self.id = row.id
         self.name = row.name
         self.display_name = row.display_name
@@ -50,6 +50,8 @@ class OrchestratorConfig:
         self.allowed_agent_ids = list(row.allowed_agent_ids or [])
         self.llm_provider = row.llm_provider or "anthropic"
         self.llm_model = row.llm_model
+        self.llm_api_key_encrypted = getattr(row, "llm_api_key_encrypted", None)
+        self.llm_base_url = getattr(row, "llm_base_url", None)
         self.max_iterations = row.max_iterations
         self.max_parallel_tools = row.max_parallel_tools
         self.rate_limit_rpm = row.rate_limit_rpm
@@ -76,6 +78,8 @@ async def _load_orchestrator(name: str, db: AsyncSession) -> Optional[Orchestrat
                 p.id = uuid.UUID(data["id"])
                 p.allowed_agent_ids = [uuid.UUID(x) for x in data.get("allowed_agent_ids", [])]
                 p.daily_budget_usd = Decimal(str(data.get("daily_budget_usd", "0")))
+                p.llm_api_key_encrypted = data.get("llm_api_key_encrypted")
+                p.llm_base_url = data.get("llm_base_url")
                 return OrchestratorConfig(p)
         except Exception as exc:
             logger.warning("orchestrator cache miss", name=name, error=str(exc))
@@ -99,6 +103,8 @@ async def _load_orchestrator(name: str, db: AsyncSession) -> Optional[Orchestrat
                 "allowed_agent_ids": [str(x) for x in (row.allowed_agent_ids or [])],
                 "llm_provider": row.llm_provider or "anthropic",
                 "llm_model": row.llm_model,
+                "llm_api_key_encrypted": row.llm_api_key_encrypted,
+                "llm_base_url": row.llm_base_url,
                 "max_iterations": row.max_iterations,
                 "max_parallel_tools": row.max_parallel_tools,
                 "rate_limit_rpm": row.rate_limit_rpm,
@@ -134,8 +140,11 @@ async def _build_tools(orch: OrchestratorConfig, db: AsyncSession) -> list[dict]
 def _build_provider(orch: OrchestratorConfig) -> AnthropicProvider:
     from app.config import settings
     from app.utils.crypto import decrypt_value
-    # For now only Anthropic is implemented
-    api_key = settings.llm.api_key
+    # Use orchestrator-specific key if set, otherwise fall back to env
+    if orch.llm_api_key_encrypted:
+        api_key = decrypt_value(orch.llm_api_key_encrypted)
+    else:
+        api_key = settings.llm.api_key
     model = orch.llm_model or settings.llm.model
     return AnthropicProvider(api_key=api_key, model=model)
 

@@ -29,7 +29,7 @@ export const api = {
 export interface Agent {
   id: string;
   slug: string;
-  name: string;
+  display_name: string;
   description: string;
   transport: string;
   endpoint_url: string;
@@ -70,6 +70,8 @@ export interface OrchestratorFull {
   allowed_agent_ids: string[];
   llm_provider: string | null;
   llm_model: string | null;
+  llm_api_key_hint: string | null;
+  llm_base_url: string | null;
   max_iterations: number;
   max_parallel_tools: number;
   rate_limit_rpm: number;
@@ -110,6 +112,7 @@ export const odinApi = {
   createOrchestrator: (body: unknown) => api.post<OrchestratorFull>('/admin/orchestrators', body),
   updateOrchestrator: (id: string, body: unknown) => api.patch<OrchestratorFull>(`/admin/orchestrators/${id}`, body),
   deleteOrchestrator: (id: string) => api.delete<void>(`/admin/orchestrators/${id}`),
+  testLlm: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-llm`, body),
   tokens: () => api.get<AccessToken[]>('/admin/tokens'),
   createToken: (body: unknown) => api.post<AccessToken>('/admin/tokens', body),
   updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),
