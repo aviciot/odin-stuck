@@ -125,14 +125,14 @@ export const odinApi = {
   testLlm: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-llm`, body),
   testVoice: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-voice`, body),
   testTts: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-tts`, body),
-  tts: async (name: string, text: string): Promise<ArrayBuffer> => {
+  tts: async (name: string, text: string): Promise<Response> => {
     const res = await fetch(`/api/odin/orchestrators/${name}/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
     if (!res.ok) throw new Error(await res.text());
-    return res.arrayBuffer();
+    return res;
   },
   getOrchestrator: async (name: string): Promise<OrchestratorFull | undefined> => {
     const list = await api.get<OrchestratorFull[]>('/admin/orchestrators');

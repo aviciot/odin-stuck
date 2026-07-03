@@ -22,9 +22,12 @@ async function proxy(req: NextRequest, params: Promise<{ path: string[] }>) {
   const upstream = await fetch(url, { method: req.method, headers, body });
   const upstreamType = upstream.headers.get('content-type') || '';
   if (upstream.status === 204) return new NextResponse(null, { status: 204 });
+  // Stream audio directly without buffering
   if (upstreamType.startsWith('audio/')) {
-    const buf = await upstream.arrayBuffer();
-    return new NextResponse(buf, { status: upstream.status, headers: { 'Content-Type': upstreamType } });
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: { 'Content-Type': upstreamType, 'Transfer-Encoding': 'chunked' },
+    });
   }
   const data = await upstream.json().catch(() => ({}));
   return NextResponse.json(data, { status: upstream.status });

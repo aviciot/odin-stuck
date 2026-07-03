@@ -197,19 +197,40 @@ export default function PlaygroundPage() {
             if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, pending: false };
             return copy;
           });
-          // TTS outside setMessages to avoid React StrictMode double-fire
+          // TTS — stream audio chunks via MediaSource for low-latency playback
           if (ttsEnabled && assistantBuf.current) {
             const textToSpeak = assistantBuf.current;
             const orchName = selectedOrch;
             setSpeaking(true);
             odinApi.tts(orchName, textToSpeak)
-              .then(buf => {
-                const blob = new Blob([buf], { type: 'audio/mpeg' });
-                const url = URL.createObjectURL(blob);
+              .then(async res => {
+                if (!res.body) throw new Error('no body');
+                // MediaSource lets us start playing before all bytes arrive
+                const ms = new MediaSource();
+                const url = URL.createObjectURL(ms);
                 const audio = new Audio(url);
                 audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
                 audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+
+                await new Promise<void>((resolve) => { ms.addEventListener('sourceopen', () => resolve(), { once: true }); });
                 audio.play();
+
+                const sb = ms.addSourceBuffer('audio/mpeg');
+                const reader = res.body.getReader();
+
+                const pump = async () => {
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) { ms.endOfStream(); break; }
+                    // Wait for sourceBuffer to be ready before appending
+                    await new Promise<void>(r => {
+                      if (!sb.updating) { r(); return; }
+                      sb.addEventListener('updateend', () => r(), { once: true });
+                    });
+                    sb.appendBuffer(value);
+                  }
+                };
+                pump().catch(() => { setSpeaking(false); ms.endOfStream(); });
               })
               .catch(() => setSpeaking(false));
           }
