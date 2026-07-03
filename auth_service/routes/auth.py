@@ -143,6 +143,31 @@ async def me(odin_access_token: Optional[str] = Cookie(None)):
         raise HTTPException(401, "Invalid session")
 
 
+@router.post("/verify")
+async def verify(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verify JWT and return payload (used by odin-bridge service-to-service)."""
+    if not credentials:
+        raise HTTPException(401, "Authorization header required")
+    try:
+        payload = await verify_token(credentials.credentials)
+        user_id = int(payload.get("sub"))
+        user = await get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(401, "User not found")
+        return {
+            "sub": str(user.id),
+            "user_id": user.id,
+            "username": user.username,
+            "name": user.name,
+            "role": user.role,
+            "email": user.email,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
+
 @router.get("/validate")
 async def validate(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
     """

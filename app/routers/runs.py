@@ -118,7 +118,7 @@ async def list_runs(
     """List runs. Admins see all; regular users see only their own."""
     q = select(Run).order_by(Run.started_at.desc()).limit(limit).offset(offset)
 
-    is_admin = user.get("role") in ("admin", "superadmin")
+    is_admin = user.get("role") in ("admin", "superadmin", "super_admin")
     if not is_admin:
         q = q.where(Run.user_id == user["user_id"])
 
@@ -137,7 +137,7 @@ async def run_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Aggregate stats: total runs, by status, total cost."""
-    is_admin = user.get("role") in ("admin", "superadmin")
+    is_admin = user.get("role") in ("admin", "superadmin", "super_admin")
 
     base = select(Run)
     if not is_admin:
@@ -173,7 +173,7 @@ async def get_run(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
-    is_admin = user.get("role") in ("admin", "superadmin")
+    is_admin = user.get("role") in ("admin", "superadmin", "super_admin")
     if not is_admin and row.user_id != user.get("user_id"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
@@ -197,7 +197,7 @@ async def delete_run(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a run and its steps/usage (cascade). Admin only."""
-    if user.get("role") not in ("admin", "superadmin"):
+    if user.get("role") not in ("admin", "superadmin", "super_admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
 
     row = await db.get(Run, run_id)

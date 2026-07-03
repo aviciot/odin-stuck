@@ -47,7 +47,7 @@ async def require_jwt(
 async def require_admin(user: dict = Depends(require_jwt)) -> dict:
     """Require JWT + admin role."""
     role = user.get("role", "")
-    if role not in ("admin", "superadmin"):
+    if role not in ("admin", "superadmin", "super_admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin role required",
