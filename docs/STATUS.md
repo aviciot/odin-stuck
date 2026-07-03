@@ -1,5 +1,5 @@
 # Odin Status
-# Last updated: 2026-07-03
+# Last updated: 2026-07-03 (session 3)
 
 ## Build Progress
 
@@ -14,7 +14,7 @@
 | Phase 6 — Dashboard WS + runs API | ✓ Complete | ws_dashboard.py, runs.py, Redis pub/sub multiplexing |
 | Phase 6.5 — Frontend admin UI | ✓ Complete | Orchestrators, Agents, Tokens, Runs pages; per-orch LLM config |
 | Phase 6.6 — Playground UI | ✓ Complete | Split-pane chat + real-time Redis trace; mock agents |
-| Phase 7 — Full tests + compose finalize | **Next** | integration tests, .env.example, hardening |
+| Phase 7 — Full tests + compose finalize | ✓ Complete | 29/29 tests passing, .env.example, compose hardening |
 
 ## Infrastructure (as of 2026-07-03)
 
@@ -70,9 +70,8 @@ Full agentic loop confirmed working:
 
 ## Open Items
 
-- **DB reset issue**: if Postgres is wiped but Redis survives, orchestrator cache references stale FK IDs → run INSERT fails silently. Fix: recreate orchestrators via UI after any DB reset. Long-term: add cache-busting on FK violation.
-- Phase 7: live end-to-end integration test (real WS orchestrate + tool fan-out)
-- Phase 7: `.env.example` finalization + compose hardening
-- Phase 7: replica-2 smoke test (optional, needs `--profile replica`)
-- Traefik hostname: needs `ODIN_HOSTNAME` env var set per deployment
-- mock agents need `docker compose build` (not just restart) to pick up code changes — no volume mount
+- **DB reset issue**: if Postgres is wiped but Redis survives, orchestrator cache references stale FK IDs → run INSERT fails silently. Fix: recreate orchestrators via UI after any DB reset. `init_db.sh` now flushes Redis after seeding to reduce window.
+- **A2A adapter**: stub only. `a2a_adapter.py` exists but is not functional. Real A2A agent card protocol work is pending (next topic).
+- Traefik hostname: needs `ODIN_HOSTNAME` + `ODIN_UI_HOSTNAME` env vars set per deployment.
+- mock agents need `docker compose build` (not just restart) to pick up code changes — no volume mount.
+- Replica-2 smoke test: optional, not yet run. Enable with `--profile replica`.

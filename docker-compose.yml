@@ -179,6 +179,10 @@ services:
       - odin-network
       - proxy-network
     depends_on:
+      odin-postgres:
+        condition: service_healthy
+      odin-redis:
+        condition: service_healthy
       odin-auth-service:
         condition: service_healthy
     restart: unless-stopped
@@ -248,6 +252,10 @@ services:
       - odin-network
       - proxy-network
     depends_on:
+      odin-postgres:
+        condition: service_healthy
+      odin-redis:
+        condition: service_healthy
       odin-auth-service:
         condition: service_healthy
     restart: unless-stopped
@@ -272,6 +280,12 @@ services:
     networks:
       - odin-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('localhost',9000),2); s.close()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     logging:
       driver: "json-file"
       options:
@@ -293,6 +307,12 @@ services:
     networks:
       - odin-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('localhost',9000),2); s.close()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     logging:
       driver: "json-file"
       options:
@@ -314,6 +334,12 @@ services:
     networks:
       - odin-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('localhost',9000),2); s.close()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     logging:
       driver: "json-file"
       options:
@@ -351,8 +377,15 @@ services:
       - odin-network
       - proxy-network
     depends_on:
-      - odin-bridge
+      odin-bridge:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3200/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     logging:
       driver: "json-file"
       options:
