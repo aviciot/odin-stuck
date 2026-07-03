@@ -4,11 +4,12 @@ CRUD for odin.agents. Publishes odin:agents:changed on any write.
 auth_token is stored Fernet-encrypted; GET returns masked representation.
 """
 
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,8 +28,11 @@ VALID_TRANSPORTS = {"omni_ws", "a2a"}
 # Pydantic schemas                                                     #
 # ------------------------------------------------------------------ #
 
+_SLUG_RE = re.compile(r'^[a-z0-9_]{1,48}$')
+
+
 class AgentCreate(BaseModel):
-    slug: str = Field(..., description="Unique slug — becomes agent__<slug> tool name")
+    slug: str = Field(..., description="Unique slug — becomes agent__<slug> tool name. Pattern: [a-z0-9_], max 48 chars.")
     display_name: str
     description: str = Field(..., description="Used as the LLM tool description")
     transport: str = Field("omni_ws", description="Transport type: omni_ws | a2a")
@@ -39,6 +43,13 @@ class AgentCreate(BaseModel):
     max_concurrency: int = 4
     enabled: bool = True
     tags: List[str] = Field(default_factory=list)
+
+    @field_validator('slug')
+    @classmethod
+    def slug_valid(cls, v: str) -> str:
+        if not _SLUG_RE.match(v):
+            raise ValueError('slug must match [a-z0-9_]{1,48} — no hyphens, no uppercase')
+        return v
 
 
 class AgentUpdate(BaseModel):

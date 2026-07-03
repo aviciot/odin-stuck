@@ -4,8 +4,8 @@ set -e
 echo "=== Odin DB Init ==="
 
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-odin-postgres}"
+REDIS_CONTAINER="${REDIS_CONTAINER:-odin-redis}"
 ODIN_DB_USER="${ODIN_DB_USER:-odin}"
-ODIN_DB_PASSWORD="${ODIN_DB_PASSWORD:-odin_secret}"
 ODIN_DB_NAME="${ODIN_DB_NAME:-odin}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,13 +19,10 @@ for i in $(seq 1 20); do
   sleep 2
 done
 
-# The odin user and database are created by the Postgres container itself
-# (via POSTGRES_USER / POSTGRES_DB env vars). Just apply schemas.
-
-# Copy schema files
-docker cp "$PROJECT_DIR/db/001_schema.sql"          "$POSTGRES_CONTAINER:/tmp/odin_001_schema.sql"
-docker cp "$PROJECT_DIR/auth_service/SCHEMA.sql"    "$POSTGRES_CONTAINER:/tmp/odin_auth_schema.sql"
-docker cp "$PROJECT_DIR/db/002_seed.sql"            "$POSTGRES_CONTAINER:/tmp/odin_002_seed.sql"
+# Copy schema + seed files into container
+docker cp "$PROJECT_DIR/db/001_schema.sql"       "$POSTGRES_CONTAINER:/tmp/odin_001_schema.sql"
+docker cp "$PROJECT_DIR/auth_service/SCHEMA.sql" "$POSTGRES_CONTAINER:/tmp/odin_auth_schema.sql"
+docker cp "$PROJECT_DIR/db/002_seed.sql"         "$POSTGRES_CONTAINER:/tmp/odin_002_seed.sql"
 
 echo "Creating auth_service schema..."
 docker exec "$POSTGRES_CONTAINER" psql -U "$ODIN_DB_USER" -d "$ODIN_DB_NAME" \
@@ -43,4 +40,26 @@ echo "Applying seed data..."
 docker exec "$POSTGRES_CONTAINER" psql -U "$ODIN_DB_USER" -d "$ODIN_DB_NAME" \
   -f /tmp/odin_002_seed.sql
 
+# Flush Redis orchestrator + agent cache so the bridge picks up fresh DB IDs.
+# Without this, stale cached UUIDs cause FK violations on run inserts.
+echo "Flushing Redis orchestrator/agent cache..."
+if docker ps --format '{{.Names}}' | grep -q "^${REDIS_CONTAINER}$"; then
+  docker exec "$REDIS_CONTAINER" redis-cli -n 0 \
+    DEL odin:agents:registry \
+    "odin:orchestrators:default" \
+    > /dev/null
+  echo "  Redis cache flushed."
+else
+  echo "  Redis container '$REDIS_CONTAINER' not running — skipping cache flush."
+fi
+
+echo ""
 echo "=== Odin DB Init complete ==="
+echo ""
+echo "Agents seeded:"
+docker exec "$POSTGRES_CONTAINER" psql -U "$ODIN_DB_USER" -d "$ODIN_DB_NAME" \
+  -c "SELECT slug, display_name, enabled FROM odin.agents ORDER BY slug;"
+echo ""
+echo "Orchestrators seeded:"
+docker exec "$POSTGRES_CONTAINER" psql -U "$ODIN_DB_USER" -d "$ODIN_DB_NAME" \
+  -c "SELECT name, display_name, llm_model, enabled FROM odin.orchestrators ORDER BY name;"
