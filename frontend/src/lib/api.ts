@@ -62,6 +62,33 @@ export interface Run {
   duration_ms: number | null;
 }
 
+export interface OrchestratorFull {
+  id: string;
+  name: string;
+  display_name: string;
+  system_prompt: string;
+  allowed_agent_ids: string[];
+  llm_provider: string | null;
+  llm_model: string | null;
+  max_iterations: number;
+  max_parallel_tools: number;
+  rate_limit_rpm: number;
+  daily_budget_usd: string;
+  enabled: boolean;
+}
+
+export interface AccessToken {
+  id: string;
+  label: string;
+  user_id: number;
+  orchestrator_id: string | null;
+  enabled: boolean;
+  expires_at: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  token?: string;
+}
+
 export interface RunStats {
   total: number;
   by_status: Record<string, number>;
@@ -79,7 +106,14 @@ export const odinApi = {
     .then((r) => r.json())
     .catch(() => ({ status: 'error', postgres: 'unknown', redis: 'unknown' })),
   agents: () => api.get<Agent[]>('/admin/agents'),
-  orchestrators: () => api.get<Orchestrator[]>('/admin/orchestrators'),
+  orchestrators: () => api.get<OrchestratorFull[]>('/admin/orchestrators'),
+  createOrchestrator: (body: unknown) => api.post<OrchestratorFull>('/admin/orchestrators', body),
+  updateOrchestrator: (id: string, body: unknown) => api.patch<OrchestratorFull>(`/admin/orchestrators/${id}`, body),
+  deleteOrchestrator: (id: string) => api.delete<void>(`/admin/orchestrators/${id}`),
+  tokens: () => api.get<AccessToken[]>('/admin/tokens'),
+  createToken: (body: unknown) => api.post<AccessToken>('/admin/tokens', body),
+  updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),
+  deleteToken: (id: string) => api.delete<void>(`/admin/tokens/${id}`),
   runs: (limit = 20) => api.get<{ items: Run[]; total: number }>(`/runs?limit=${limit}`),
   runStats: () => api.get<RunStats>('/runs/stats'),
 };
