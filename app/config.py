@@ -124,9 +124,6 @@ class GlobalConfig:
         )
         self.instance_id: str = env.THE_M_INSTANCE_ID
 
-        # Keep backward-compatible alias used in main.py / logging
-        self.odin_instance_id: str = self.instance_id
-
         self.database = DatabaseConfig(
             host=env.DATABASE_HOST,
             port=env.DATABASE_PORT,

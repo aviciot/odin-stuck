@@ -37,7 +37,7 @@ async def init_db() -> None:
         host=settings.database.host,
         database=settings.database.database,
         redis_db=settings.redis.db,
-        instance=settings.odin_instance_id,
+        instance=settings.instance_id,
     )
 
     engine = create_async_engine(

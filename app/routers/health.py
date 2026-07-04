@@ -34,7 +34,7 @@ async def health():
         "db": db_status,
         "redis": redis_status,
         "redis_db": settings.redis.db,
-        "instance_id": settings.odin_instance_id,
+        "instance_id": settings.instance_id,
     }
 
 
@@ -52,4 +52,4 @@ async def health_ready():
 
 @router.get("/health/live")
 async def health_live():
-    return {"status": "ok", "instance_id": settings.odin_instance_id}
+    return {"status": "ok", "instance_id": settings.instance_id}

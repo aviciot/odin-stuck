@@ -27,7 +27,7 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 async def require_jwt(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
 ) -> dict:
-    """Validate JWT issued by odin-auth-service. Returns user payload."""
+    """Validate JWT issued by them-auth-service. Returns user payload."""
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -64,7 +64,7 @@ async def require_bearer(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Validate opaque bearer token (odin.access_tokens).
+    Validate opaque bearer token (them.access_tokens).
     L1 cache → L2 Redis → DB.
     Returns token payload: {token_id, user_id, label, orchestrator_id, enabled}
     """

@@ -1,12 +1,39 @@
+# Environment
 .env
 .env.test
+.env.local
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
-logs/
+*.pyd
+*.egg-info/
+dist/
+.pytest_cache/
 htmlcov/
 .coverage
 coverage.xml
-dist/
-*.egg-info/
-.pytest_cache/
+
+# Logs & data (bind-mounted volumes)
+logs/
+volumes/postgres/pgdata/
+volumes/redis/
+
+# Frontend build artifacts
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.suo
+*.user
+
+# Claude worktrees (local only)
+.claude/worktrees/

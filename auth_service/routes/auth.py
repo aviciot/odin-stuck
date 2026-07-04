@@ -113,15 +113,15 @@ async def login(auth_request: AuthRequest, request: Request):
         "refresh_token": refresh_token,
         "expires_in": expires_in,
     })
-    response.set_cookie("odin_access_token", access_token, max_age=expires_in, **COOKIE_OPTS)
-    response.set_cookie("odin_refresh_token", refresh_token, max_age=settings.REFRESH_TOKEN_EXPIRY, **COOKIE_OPTS)
+    response.set_cookie("them_access_token", access_token, max_age=expires_in, **COOKIE_OPTS)
+    response.set_cookie("them_refresh_token", refresh_token, max_age=settings.REFRESH_TOKEN_EXPIRY, **COOKIE_OPTS)
     return response
 
 
 @router.get("/me")
-async def me(odin_access_token: Optional[str] = Cookie(None)):
+async def me(them_access_token: Optional[str] = Cookie(None)):
     """Return current user from httpOnly cookie."""
-    token = odin_access_token
+    token = them_access_token
     if not token:
         raise HTTPException(401, "Not authenticated")
     try:
@@ -145,7 +145,7 @@ async def me(odin_access_token: Optional[str] = Cookie(None)):
 
 @router.post("/verify")
 async def verify(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verify JWT and return payload (used by odin-bridge service-to-service)."""
+    """Verify JWT and return payload (used by them-bridge service-to-service)."""
     if not credentials:
         raise HTTPException(401, "Authorization header required")
     try:
@@ -230,12 +230,12 @@ async def validate(request: Request, credentials: HTTPAuthorizationCredentials =
 @router.post("/refresh")
 async def refresh(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    odin_refresh_token: Optional[str] = Cookie(None),
+    them_refresh_token: Optional[str] = Cookie(None),
 ):
     """
     Refresh access token using refresh token (Bearer header or httpOnly cookie).
     """
-    token = (credentials.credentials if credentials else None) or odin_refresh_token
+    token = (credentials.credentials if credentials else None) or them_refresh_token
     if not token:
         raise HTTPException(401, "No refresh token")
 
@@ -273,20 +273,20 @@ async def refresh(
         "refresh_token": new_refresh_token,
         "expires_in": expires_in,
     })
-    response.set_cookie("odin_access_token", access_token, max_age=expires_in, **COOKIE_OPTS)
-    response.set_cookie("odin_refresh_token", new_refresh_token, max_age=settings.REFRESH_TOKEN_EXPIRY, **COOKIE_OPTS)
+    response.set_cookie("them_access_token", access_token, max_age=expires_in, **COOKIE_OPTS)
+    response.set_cookie("them_refresh_token", new_refresh_token, max_age=settings.REFRESH_TOKEN_EXPIRY, **COOKIE_OPTS)
     return response
 
 
 @router.post("/logout")
 async def logout(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    odin_access_token: Optional[str] = Cookie(None),
+    them_access_token: Optional[str] = Cookie(None),
 ):
     """
     Logout and revoke tokens. Accepts Bearer header or httpOnly cookie.
     """
-    token = (credentials.credentials if credentials else None) or odin_access_token
+    token = (credentials.credentials if credentials else None) or them_access_token
     if token:
         try:
             await revoke_token(token)
@@ -297,6 +297,6 @@ async def logout(
             pass
 
     response = JSONResponse(content={"message": "Logged out successfully"})
-    response.delete_cookie("odin_access_token")
-    response.delete_cookie("odin_refresh_token")
+    response.delete_cookie("them_access_token")
+    response.delete_cookie("them_refresh_token")
     return response

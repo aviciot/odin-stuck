@@ -1,5 +1,5 @@
 """
-HTTP client for odin-auth-service (port 8701).
+HTTP client for them-auth-service (port 8701).
 Adapted from Omni's auth_client.py.
 """
 

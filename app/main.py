@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
     setup_logging()
     logger.info(
         "the-M starting",
-        instance_id=settings.odin_instance_id,
+        instance_id=settings.instance_id,
         env=settings.app.environment,
         redis_db=settings.redis.db,
         db=settings.database.database,
@@ -43,14 +43,14 @@ async def lifespan(app: FastAPI):
 
     logger.info(
         "the-M ready",
-        instance_id=settings.odin_instance_id,
+        instance_id=settings.instance_id,
         port=settings.app.port,
     )
 
     yield
 
     listener_task.cancel()
-    logger.info("the-M shutting down", instance_id=settings.odin_instance_id)
+    logger.info("the-M shutting down", instance_id=settings.instance_id)
     await close_db()
     logger.info("the-M shutdown complete")
 

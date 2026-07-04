@@ -24,7 +24,7 @@ async def health_check():
             )
         return HealthResponse(
             status="ok",
-            service="odin-auth-service",
+            service="them-auth-service",
             version="1.0.0",
             timestamp=datetime.utcnow().isoformat(),
             database="connected",
@@ -33,7 +33,7 @@ async def health_check():
     except Exception as e:
         return HealthResponse(
             status="degraded",
-            service="odin-auth-service",
+            service="them-auth-service",
             version="1.0.0",
             timestamp=datetime.utcnow().isoformat(),
             database=f"error: {str(e)}",
