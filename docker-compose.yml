@@ -28,7 +28,7 @@ services:
       POSTGRES_USER: ${THE_M_DB_USER:-them}
       POSTGRES_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
     volumes:
-      - ./volumes/postgres/pgdata:/var/lib/postgresql/data
+      - ./data/them-postgres:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
     networks:
       - them-network
@@ -60,7 +60,7 @@ services:
     container_name: them-redis
     command: redis-server /etc/redis/redis.conf ${THE_M_REDIS_PASSWORD:+--requirepass $THE_M_REDIS_PASSWORD}
     volumes:
-      - ./volumes/redis:/data
+      - ./data/them-redis:/data
       - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
     networks:
       - them-network
@@ -139,7 +139,7 @@ services:
       - "8001:8001"
     volumes:
       - .:/app
-      - ./volumes/logs:/app/logs
+      - ./data/them-logs:/app/logs
     environment:
       THE_M_INSTANCE_ID: "bridge-1"
       APP_HOST: "0.0.0.0"
@@ -217,7 +217,7 @@ services:
       - "8001"
     volumes:
       - .:/app
-      - ./volumes/logs:/app/logs
+      - ./data/them-logs:/app/logs
     environment:
       THE_M_INSTANCE_ID: "bridge-2"
       APP_HOST: "0.0.0.0"
