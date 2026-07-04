@@ -103,6 +103,49 @@ export interface RunStats {
   total_cost_usd: number;
 }
 
+export interface TaskOut {
+  id: string;
+  parent_task_id: string | null;
+  agent_id: string | null;
+  orchestrator_id: string | null;
+  context_id: string;
+  state: string;
+  kind: string;
+  remote_task_id: string | null;
+  budget_tokens: number | null;
+  tokens_used: number;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ArtifactPart {
+  kind?: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
+export interface ArtifactOut {
+  id: string;
+  task_id: string;
+  context_id: string;
+  artifact_id: string;
+  name: string | null;
+  parts: ArtifactPart[];
+  append_index: number;
+  last_chunk: boolean;
+  created_at: string;
+}
+
+export interface AgentCard {
+  name: string;
+  description?: string;
+  url?: string;
+  version?: string;
+  capabilities?: Record<string, unknown>;
+  skills?: Array<{ id: string; name: string; description?: string }>;
+}
+
 export interface BridgeHealth {
   status: string;
   postgres: string;
@@ -154,4 +197,14 @@ export const themApi = {
   deleteToken: (id: string) => api.delete<void>(`/admin/tokens/${id}`),
   runs: (limit = 20) => api.get<{ items: Run[]; total: number }>(`/runs?limit=${limit}`),
   runStats: () => api.get<RunStats>('/runs/stats'),
+  runTasks: (runId: string) => api.get<TaskOut[]>(`/runs/${runId}/tasks`),
+  runArtifacts: (runId: string) => api.get<ArtifactOut[]>(`/runs/${runId}/artifacts`),
+  contextArtifacts: (contextId: string, limit = 100) =>
+    api.get<ArtifactOut[]>(`/runs/context/${contextId}/artifacts?limit=${limit}`),
+  fetchAgentCard: async (endpointUrl: string): Promise<AgentCard> => {
+    const base = endpointUrl.replace(/\/+$/, '');
+    const res = await fetch(`${base}/.well-known/agent-card.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  },
 };

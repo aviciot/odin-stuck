@@ -14,7 +14,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Run, RunStep, RunUsage
+from app.models import Run, RunStep, RunUsage, Task, Artifact
 from app._deps import require_jwt
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -206,3 +206,107 @@ async def delete_run(
 
     await db.delete(row)
     await db.commit()
+
+
+# ------------------------------------------------------------------ #
+# Phase 6 — Task graph, artifacts, context inspector                  #
+# ------------------------------------------------------------------ #
+
+class TaskOut(BaseModel):
+    id: uuid.UUID
+    parent_task_id: Optional[uuid.UUID]
+    agent_id: Optional[uuid.UUID]
+    orchestrator_id: Optional[uuid.UUID]
+    context_id: uuid.UUID
+    state: str
+    kind: str
+    remote_task_id: Optional[str]
+    budget_tokens: Optional[int]
+    tokens_used: int
+    error: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ArtifactOut(BaseModel):
+    id: uuid.UUID
+    task_id: uuid.UUID
+    context_id: uuid.UUID
+    artifact_id: str
+    name: Optional[str]
+    parts: list
+    append_index: int
+    last_chunk: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+def _is_admin(user: dict) -> bool:
+    return user.get("role") in ("admin", "superadmin", "super_admin")
+
+
+async def _load_run_authorized(run_id: uuid.UUID, user: dict, db: AsyncSession) -> Run:
+    """Load a run by id; raise 404 if missing, 403 if caller lacks access."""
+    row = await db.get(Run, run_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    if not _is_admin(user) and row.user_id != user.get("user_id"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return row
+
+
+@router.get("/{run_id}/tasks", response_model=List[TaskOut])
+async def get_run_tasks(
+    run_id: uuid.UUID,
+    user: dict = Depends(require_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the task graph for a run — all tasks ordered by created_at."""
+    await _load_run_authorized(run_id, user, db)
+
+    result = await db.execute(
+        select(Task)
+        .where(Task.run_id == run_id)
+        .order_by(Task.created_at)
+    )
+    return [TaskOut.model_validate(t) for t in result.scalars()]
+
+
+@router.get("/{run_id}/artifacts", response_model=List[ArtifactOut])
+async def get_run_artifacts(
+    run_id: uuid.UUID,
+    user: dict = Depends(require_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all artifacts for tasks linked to a run, ordered by created_at."""
+    await _load_run_authorized(run_id, user, db)
+
+    result = await db.execute(
+        select(Artifact)
+        .join(Task, Artifact.task_id == Task.id)
+        .where(Task.run_id == run_id)
+        .order_by(Artifact.created_at)
+    )
+    return [ArtifactOut.model_validate(a) for a in result.scalars()]
+
+
+@router.get("/context/{context_id}/artifacts", response_model=List[ArtifactOut])
+async def get_context_artifacts(
+    context_id: uuid.UUID,
+    limit: int = Query(100, ge=1, le=500),
+    user: dict = Depends(require_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """Memory inspector — return the most recent artifacts for a context_id (last_chunk only)."""
+    result = await db.execute(
+        select(Artifact)
+        .where(Artifact.context_id == context_id, Artifact.last_chunk.is_(True))
+        .order_by(Artifact.created_at.desc())
+        .limit(limit)
+    )
+    return [ArtifactOut.model_validate(a) for a in result.scalars()]

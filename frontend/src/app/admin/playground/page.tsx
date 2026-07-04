@@ -3,13 +3,11 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type OrchestratorFull } from '@/lib/api';
+import { themApi, type OrchestratorFull, type TaskOut, type ArtifactOut, type AgentCard } from '@/lib/api';
 
 function getBridgeWs(): string {
   if (typeof window === 'undefined') return 'ws://localhost:8001';
-  // In production, NEXT_PUBLIC_BRIDGE_WS_URL is set at build time
   if (process.env.NEXT_PUBLIC_BRIDGE_WS_URL) return process.env.NEXT_PUBLIC_BRIDGE_WS_URL;
-  // In dev, bridge is on port 8001 of the same host
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${window.location.hostname}:8001`;
 }
@@ -19,19 +17,31 @@ function getBridgeWs(): string {
 type ChatMsg = { role: 'user' | 'assistant'; text: string; pending?: boolean };
 type TraceEvent = { ts: number; type: string; [key: string]: unknown };
 type RecordingState = 'idle' | 'recording' | 'transcribing';
+type DebugTab = 'trace' | 'tasks' | 'artifacts' | 'memory';
+
+type AgentInvocation = {
+  slug: string;
+  tool: string;
+  startedAt: number;
+  endedAt?: number;
+  latencyMs?: number;
+  endpointUrl?: string;
+  agentCard?: AgentCard | null;
+  fetchingCard?: boolean;
+};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function traceLabel(ev: TraceEvent): string {
   switch (ev.type) {
-    case 'run_start':     return `▶ Run started — ${ev.goal as string}`;
-    case 'iteration_start': return `↻ Iteration ${ev.iteration}`;
-    case 'tool_start':    return `⚙ ${ev.tool} called`;
-    case 'tool_done':     return `✓ ${ev.tool} done`;
-    case 'usage':         return `📊 Iter ${ev.iteration}: ${ev.input_tokens}↑ ${ev.output_tokens}↓ tokens`;
-    case 'run_end':       return `■ Run ${ev.status} — ${ev.iterations} iterations`;
-    case 'error':         return `✗ Error: ${ev.message}`;
-    default:              return ev.type;
+    case 'run_start':       return `Run started — ${ev.goal as string}`;
+    case 'iteration_start': return `Iteration ${ev.iteration}`;
+    case 'tool_start':      return `${ev.tool} called`;
+    case 'tool_done':       return `${ev.tool} done`;
+    case 'usage':           return `Iter ${ev.iteration}: ${ev.input_tokens}+ ${ev.output_tokens}- tokens`;
+    case 'run_end':         return `Run ${ev.status} — ${ev.iterations} iterations`;
+    case 'error':           return `Error: ${ev.message}`;
+    default:                return ev.type;
   }
 }
 
@@ -41,6 +51,298 @@ function traceColor(type: string): string {
   if (type.startsWith('tool')) return '#a78bfa';
   if (type === 'usage') return '#60a5fa';
   return 'var(--tm-text-muted)';
+}
+
+function stateColor(state: string): string {
+  if (state === 'completed') return '#4edea3';
+  if (state === 'failed') return '#f87171';
+  if (state === 'working') return '#a78bfa';
+  if (state === 'submitted') return '#60a5fa';
+  if (state === 'canceled' || state === 'rejected') return '#94a3b8';
+  return 'var(--tm-text-muted)';
+}
+
+// ── Debug Panel: right tray ────────────────────────────────────────────────
+
+function TabBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '6px 12px',
+        borderRadius: 6,
+        border: 'none',
+        background: active ? '#7c3aed' : 'transparent',
+        color: active ? '#fff' : 'var(--tm-text-muted)',
+        fontSize: 11,
+        fontWeight: 600,
+        cursor: 'pointer',
+        letterSpacing: '0.05em',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function TraceTab({ trace, traceBottom }: { trace: TraceEvent[]; traceBottom: React.RefObject<HTMLDivElement | null> }) {
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {trace.length === 0 && (
+        <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, textAlign: 'center', marginTop: 40 }}>
+          Trace events appear here when a run starts
+        </div>
+      )}
+      {trace.map((ev, i) => (
+        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{ fontSize: 12, color: traceColor(ev.type), fontWeight: 500, fontFamily: 'monospace' }}>
+            {traceLabel(ev)}
+          </div>
+          {ev.type === 'tool_start' && ev.input != null && (
+            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', paddingLeft: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              {JSON.stringify(ev.input, null, 2)}
+            </div>
+          )}
+          {ev.type === 'tool_done' && ev.output != null && (
+            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', paddingLeft: 12, maxHeight: 120, overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              {String(ev.output).slice(0, 300)}{String(ev.output).length > 300 ? '…' : ''}
+            </div>
+          )}
+        </div>
+      ))}
+      <div ref={traceBottom} />
+    </div>
+  );
+}
+
+function TasksTab({ runId }: { runId: string | null }) {
+  const [tasks, setTasks] = useState<TaskOut[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    if (!runId) { setTasks([]); return; }
+    setLoading(true);
+    setErr('');
+    themApi.runTasks(runId)
+      .then(setTasks)
+      .catch(e => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [runId]);
+
+  if (!runId) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, textAlign: 'center', marginTop: 40, padding: 16 }}>Start a run to see the task graph</div>;
+  if (loading) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>Loading…</div>;
+  if (err) return <div style={{ color: '#f87171', fontSize: 12, padding: 16 }}>{err}</div>;
+  if (tasks.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>No tasks yet</div>;
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {tasks.map(t => (
+        <div key={t.id} style={{
+          padding: '10px 12px',
+          borderRadius: 8,
+          border: '1px solid var(--tm-border)',
+          background: 'var(--tm-surface)',
+          marginLeft: t.parent_task_id ? 16 : 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: stateColor(t.state), color: '#fff', fontWeight: 700 }}>
+              {t.state}
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace' }}>
+              {t.kind}
+            </span>
+            {t.tokens_used > 0 && (
+              <span style={{ fontSize: 11, color: '#60a5fa', marginLeft: 'auto' }}>{t.tokens_used} tok</span>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace' }}>
+            {t.id.slice(0, 8)}…
+          </div>
+          {t.error && (
+            <div style={{ fontSize: 11, color: '#f87171', marginTop: 4, wordBreak: 'break-word' }}>{t.error}</div>
+          )}
+          {t.remote_task_id && (
+            <div style={{ fontSize: 10, color: 'var(--tm-text-muted)', marginTop: 2 }}>remote: {t.remote_task_id}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ArtifactsTab({ runId }: { runId: string | null }) {
+  const [artifacts, setArtifacts] = useState<ArtifactOut[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!runId) { setArtifacts([]); return; }
+    setLoading(true);
+    setErr('');
+    themApi.runArtifacts(runId)
+      .then(setArtifacts)
+      .catch(e => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [runId]);
+
+  const toggle = (id: string) => setExpanded(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  if (!runId) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, textAlign: 'center', marginTop: 40, padding: 16 }}>Start a run to see artifacts</div>;
+  if (loading) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>Loading…</div>;
+  if (err) return <div style={{ color: '#f87171', fontSize: 12, padding: 16 }}>{err}</div>;
+  if (artifacts.length === 0) return <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, padding: 16 }}>No artifacts yet</div>;
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {artifacts.map(a => {
+        const isOpen = expanded.has(a.id);
+        const textParts = a.parts.filter(p => p.text !== undefined);
+        return (
+          <div key={a.id} style={{ border: '1px solid var(--tm-border)', borderRadius: 8, background: 'var(--tm-surface)', overflow: 'hidden' }}>
+            <button
+              onClick={() => toggle(a.id)}
+              style={{ width: '100%', padding: '8px 12px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left' }}
+            >
+              <span style={{ fontSize: 11, color: '#a78bfa', fontWeight: 600 }}>{a.artifact_id}</span>
+              {a.name && <span style={{ fontSize: 11, color: 'var(--tm-text-muted)' }}>{a.name}</span>}
+              <span style={{ fontSize: 10, color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{a.parts.length} part{a.parts.length !== 1 ? 's' : ''}</span>
+              <span style={{ fontSize: 10, color: 'var(--tm-text-muted)' }}>{isOpen ? '▲' : '▼'}</span>
+            </button>
+            {isOpen && (
+              <div style={{ padding: '0 12px 10px', borderTop: '1px solid var(--tm-border)' }}>
+                {textParts.map((p, i) => (
+                  <pre key={i} style={{ fontSize: 11, color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: '8px 0 0' }}>
+                    {p.text}
+                  </pre>
+                ))}
+                {textParts.length === 0 && (
+                  <pre style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>
+                    {JSON.stringify(a.parts, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MemoryTab({ contextId, agentInvocations, allAgents }: {
+  contextId: string | null;
+  agentInvocations: AgentInvocation[];
+  allAgents: OrchestratorFull['allowed_agent_ids'] | null;
+}) {
+  const [artifacts, setArtifacts] = useState<ArtifactOut[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+  const [agentCards, setAgentCards] = useState<Record<string, { card?: AgentCard; fetching?: boolean; error?: string }>>({});
+
+  useEffect(() => {
+    if (!contextId) { setArtifacts([]); return; }
+    setLoading(true);
+    setErr('');
+    themApi.contextArtifacts(contextId)
+      .then(setArtifacts)
+      .catch(e => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [contextId]);
+
+  const fetchCard = async (inv: AgentInvocation) => {
+    if (!inv.endpointUrl) return;
+    const key = inv.slug;
+    setAgentCards(prev => ({ ...prev, [key]: { fetching: true } }));
+    try {
+      const card = await themApi.fetchAgentCard(inv.endpointUrl!);
+      setAgentCards(prev => ({ ...prev, [key]: { card } }));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setAgentCards(prev => ({ ...prev, [key]: { error: msg } }));
+    }
+  };
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Agent invocations with Fetch Agent Card button */}
+      {agentInvocations.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--tm-text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>Agents Used</div>
+          {agentInvocations.map((inv, i) => {
+            const cardState = agentCards[inv.slug];
+            return (
+              <div key={i} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tm-text)' }}>{inv.slug}</span>
+                  {inv.latencyMs != null && (
+                    <span style={{ fontSize: 10, color: 'var(--tm-text-muted)' }}>{inv.latencyMs}ms</span>
+                  )}
+                  <button
+                    onClick={() => fetchCard(inv)}
+                    disabled={cardState?.fetching}
+                    style={{
+                      marginLeft: 'auto', padding: '3px 8px', borderRadius: 5, border: '1px solid var(--tm-border)',
+                      background: 'transparent', color: '#a78bfa', fontSize: 10, cursor: 'pointer', fontWeight: 600,
+                    }}
+                  >
+                    {cardState?.fetching ? 'Fetching…' : 'Fetch Agent Card'}
+                  </button>
+                </div>
+                {cardState?.error && (
+                  <div style={{ fontSize: 11, color: '#f87171' }}>{cardState.error}</div>
+                )}
+                {cardState?.card && (
+                  <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace' }}>
+                    <div style={{ color: 'var(--tm-text)', fontWeight: 600, marginBottom: 4 }}>{cardState.card.name} {cardState.card.version && `v${cardState.card.version}`}</div>
+                    {cardState.card.description && <div style={{ marginBottom: 4 }}>{cardState.card.description}</div>}
+                    {cardState.card.capabilities && (
+                      <div style={{ marginBottom: 4 }}>
+                        streaming: {cardState.card.capabilities.streaming ? 'yes' : 'no'}
+                        {' · '}
+                        push: {cardState.card.capabilities.pushNotifications ? 'yes' : 'no'}
+                      </div>
+                    )}
+                    {cardState.card.skills && cardState.card.skills.length > 0 && (
+                      <div>Skills: {cardState.card.skills.map(s => s.name).join(', ')}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Context artifacts */}
+      <div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--tm-text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+          Context Memory {contextId && <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 4 }}>{contextId.slice(0, 8)}…</span>}
+        </div>
+        {!contextId && <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>Start a run to inspect memory</div>}
+        {loading && <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>Loading…</div>}
+        {err && <div style={{ color: '#f87171', fontSize: 12 }}>{err}</div>}
+        {artifacts.map(a => (
+          <div key={a.id} style={{ padding: '8px 10px', borderRadius: 6, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', marginBottom: 6, fontSize: 11 }}>
+            <div style={{ color: '#a78bfa', fontWeight: 600, marginBottom: 4 }}>{a.name || a.artifact_id}</div>
+            {a.parts.filter(p => p.text).map((p, i) => (
+              <div key={i} style={{ color: 'var(--tm-text)', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {String(p.text).slice(0, 400)}{String(p.text).length > 400 ? '…' : ''}
+              </div>
+            ))}
+          </div>
+        ))}
+        {contextId && !loading && artifacts.length === 0 && !err && (
+          <div style={{ color: 'var(--tm-text-muted)', fontSize: 12 }}>No context artifacts yet</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── Mic SVG icon ───────────────────────────────────────────────────────────
@@ -79,13 +381,16 @@ export default function PlaygroundPage() {
   const [speaking, setSpeaking] = useState(false);
   const [recordingState, setRecordingState] = useState<RecordingState>('idle');
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [debugTab, setDebugTab] = useState<DebugTab>('trace');
+  const [agentInvocations, setAgentInvocations] = useState<AgentInvocation[]>([]);
+  const [contextId, setContextId] = useState<string | null>(null);
 
   const chatWs = useRef<WebSocket | null>(null);
   const dashWs = useRef<WebSocket | null>(null);
   const runId = useRef<string | null>(null);
   const assistantBuf = useRef('');
   const chatBottom = useRef<HTMLDivElement>(null);
-  const traceBottom = useRef<HTMLDivElement>(null);
+  const traceBottom = useRef<HTMLDivElement | null>(null);
 
   // Load orchestrators list, then check voice_enabled for the selected one
   useEffect(() => {
@@ -148,6 +453,8 @@ export default function PlaygroundPage() {
     setInput('');
     setBusy(true);
     setTrace([]);
+    setAgentInvocations([]);
+    setContextId(null);
     setMessages(prev => [...prev, { role: 'user', text }]);
 
     const r = await fetch('/api/auth/token');
@@ -168,10 +475,10 @@ export default function PlaygroundPage() {
         const msg = JSON.parse(e.data);
         if (msg.type === 'ready') {
           runId.current = msg.run_id;
+          if (msg.context_id) setContextId(msg.context_id as string);
           openDashWs(msg.run_id);
-          // Add pending assistant message
           setMessages(prev => [...prev, { role: 'assistant', text: '', pending: true }]);
-          setStatus(`Run ${msg.run_id.slice(0, 8)}…`);
+          setStatus(`Run ${(msg.run_id as string).slice(0, 8)}…`);
 
         } else if (msg.type === 'token') {
           assistantBuf.current += msg.text || '';
@@ -185,10 +492,22 @@ export default function PlaygroundPage() {
           });
 
         } else if (msg.type === 'tool_start') {
-          setStatus(`Calling ${msg.tool}…`);
+          const slug = (msg.tool as string).replace(/^agent__/, '');
+          setStatus(`Calling ${slug}…`);
+          setAgentInvocations(prev => {
+            const existing = prev.find(a => a.tool === msg.tool);
+            if (existing) return prev;
+            return [...prev, { slug, tool: msg.tool as string, startedAt: Date.now() }];
+          });
 
         } else if (msg.type === 'tool_done') {
-          setStatus(`${msg.tool} done`);
+          const slug = (msg.tool as string).replace(/^agent__/, '');
+          setStatus(`${slug} done`);
+          setAgentInvocations(prev => prev.map(a =>
+            a.tool === msg.tool
+              ? { ...a, endedAt: Date.now(), latencyMs: msg.latency_ms as number ?? Date.now() - a.startedAt }
+              : a
+          ));
 
         } else if (msg.type === 'done') {
           setMessages(prev => {
@@ -279,6 +598,9 @@ export default function PlaygroundPage() {
     setMessages([]);
     setTrace([]);
     setStatus('');
+    setAgentInvocations([]);
+    setContextId(null);
+    runId.current = null;
   };
 
   // ── Voice recording ───────────────────────────────────────────────────────
@@ -465,35 +787,27 @@ export default function PlaygroundPage() {
               </div>
             </div>
 
-            {/* Trace pane */}
-            <div style={{ width: 380, display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)' }}>
-              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--tm-border)', fontSize: 11, fontWeight: 700, color: 'var(--tm-text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                Internal Trace
+            {/* Debug panel — tabbed right tray */}
+            <div style={{ width: 400, display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)', borderLeft: '1px solid var(--tm-border)' }}>
+              {/* Tab bar */}
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--tm-border)', display: 'flex', gap: 4, alignItems: 'center' }}>
+                <TabBtn label="Trace" active={debugTab === 'trace'} onClick={() => setDebugTab('trace')} />
+                <TabBtn label="Tasks" active={debugTab === 'tasks'} onClick={() => setDebugTab('tasks')} />
+                <TabBtn label="Artifacts" active={debugTab === 'artifacts'} onClick={() => setDebugTab('artifacts')} />
+                <TabBtn label="Memory" active={debugTab === 'memory'} onClick={() => setDebugTab('memory')} />
               </div>
-              <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {trace.length === 0 && (
-                  <div style={{ color: 'var(--tm-text-muted)', fontSize: 12, textAlign: 'center', marginTop: 40 }}>
-                    Trace events appear here when a run starts
-                  </div>
+              {/* Tab content */}
+              <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} />}
+                {debugTab === 'tasks' && <TasksTab runId={runId.current} />}
+                {debugTab === 'artifacts' && <ArtifactsTab runId={runId.current} />}
+                {debugTab === 'memory' && (
+                  <MemoryTab
+                    contextId={contextId}
+                    agentInvocations={agentInvocations}
+                    allAgents={null}
+                  />
                 )}
-                {trace.map((ev, i) => (
-                  <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <div style={{ fontSize: 12, color: traceColor(ev.type), fontWeight: 500, fontFamily: 'monospace' }}>
-                      {traceLabel(ev)}
-                    </div>
-                    {ev.type === 'tool_start' && ev.input && (
-                      <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', paddingLeft: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                        {JSON.stringify(ev.input, null, 2)}
-                      </div>
-                    )}
-                    {ev.type === 'tool_done' && ev.output && (
-                      <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', paddingLeft: 12, maxHeight: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                        {String(ev.output).slice(0, 300)}{String(ev.output).length > 300 ? '…' : ''}
-                      </div>
-                    )}
-                  </div>
-                ))}
-                <div ref={traceBottom} />
               </div>
             </div>
           </div>
