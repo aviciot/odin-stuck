@@ -7,7 +7,7 @@ from app.adapters.omni_ws_adapter import OmniWsAdapter
 from app.adapters.a2a_adapter import A2aAdapter
 
 
-def get_adapter(agent) -> AgentAdapter:
+def get_adapter(agent, *, context_id: str | None = None) -> AgentAdapter:
     """Return the adapter instance for the given Agent ORM row."""
     transport = agent.transport
 
@@ -17,11 +17,12 @@ def get_adapter(agent) -> AgentAdapter:
             endpoint_url=agent.endpoint_url,
             auth_token_encrypted=agent.auth_token_encrypted,
         )
-    if transport == "a2a":
+    if transport in ("a2a", "a2a_async"):
         return A2aAdapter(
             agent_slug=agent.slug,
             endpoint_url=agent.endpoint_url,
             auth_token_encrypted=agent.auth_token_encrypted,
+            context_id=context_id,
         )
 
     raise ValueError(f"Unknown agent transport: {transport!r}")

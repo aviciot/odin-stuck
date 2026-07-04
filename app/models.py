@@ -58,6 +58,10 @@ class Agent(Base):
     max_concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     tags: Mapped[List[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    agent_card: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    agent_card_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    supports_streaming: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    supports_push: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -82,6 +86,7 @@ class Orchestrator(Base):
     rate_limit_rpm: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     daily_budget_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    a2a_exposed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     voice_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     transcription_provider: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     transcription_model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

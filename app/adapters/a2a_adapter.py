@@ -37,10 +37,12 @@ class A2aAdapter(AgentAdapter):
         agent_slug: str,
         endpoint_url: str,
         auth_token_encrypted: str | None,
+        context_id: str | None = None,
     ) -> None:
         self._slug = agent_slug
         self._endpoint_url = endpoint_url.rstrip("/") + "/"
         self._auth_token_encrypted = auth_token_encrypted
+        self._context_id = context_id
 
     def _headers(self) -> dict:
         token = decrypt_value(self._auth_token_encrypted) if self._auth_token_encrypted else ""
@@ -49,17 +51,18 @@ class A2aAdapter(AgentAdapter):
         return {"Content-Type": "application/json"}
 
     def _send_message_body(self, message: str) -> dict:
+        msg: dict = {
+            "role": "user",
+            "parts": [{"kind": "text", "text": message}],
+            "messageId": str(uuid4()),
+        }
+        if self._context_id:
+            msg["contextId"] = self._context_id
         return {
             "jsonrpc": "2.0",
             "id": str(uuid4()),
             "method": "SendMessage",
-            "params": {
-                "message": {
-                    "role": "user",
-                    "parts": [{"text": message}],
-                    "messageId": str(uuid4()),
-                }
-            },
+            "params": {"message": msg},
         }
 
     def _get_task_body(self, task_id: str) -> dict:

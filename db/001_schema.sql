@@ -138,6 +138,20 @@ CREATE TABLE IF NOT EXISTS them.audit_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON them.audit_logs(created_at DESC);
 
+-- A2A server support
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS a2a_exposed BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- A2A agent card cache + capability flags
+ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS agent_card JSONB;
+ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS agent_card_url TEXT;
+ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS supports_streaming BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS supports_push BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Extend transport check to include a2a_async
+ALTER TABLE them.agents DROP CONSTRAINT IF EXISTS agents_transport_check;
+ALTER TABLE them.agents ADD CONSTRAINT agents_transport_check
+    CHECK (transport IN ('omni_ws', 'a2a', 'a2a_async'));
+
 -- Voice transcription
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS voice_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS transcription_provider VARCHAR(32);
