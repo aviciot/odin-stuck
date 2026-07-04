@@ -1,8 +1,8 @@
 """
-Configuration for Odin — Multi-Agent Orchestration Platform
+Configuration for the-M — Multi-Agent Orchestration Platform
 
 All config from environment variables. No YAML files.
-Redis DB index 1 (Omni uses 0). DB name "odin".
+Redis DB index 0 (we own the entire Redis instance). DB name "them".
 """
 
 from typing import List, Optional
@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings
 
 
 class AppConfig(BaseModel):
-    name: str = "Odin"
+    name: str = "the-M"
     environment: str = "development"
     host: str = "0.0.0.0"
     port: int = 8001
@@ -21,10 +21,10 @@ class AppConfig(BaseModel):
 class DatabaseConfig(BaseModel):
     host: str
     port: int = 5432
-    database: str = "odin"
-    user: str = "odin"
+    database: str = "them"
+    user: str = "them"
     password: str
-    schema: str = "odin"
+    schema: str = "them"
     pool_size: int = 20
     max_overflow: int = 10
     echo: bool = False
@@ -39,7 +39,7 @@ class RedisConfig(BaseModel):
     host: str = "localhost"
     port: int = 6379
     password: Optional[str] = None
-    db: int = 0          # Odin owns its own Redis; DB 0
+    db: int = 0
     ssl: bool = False
 
 
@@ -59,7 +59,7 @@ class SecurityConfig(BaseModel):
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     format: str = "json"
-    file: str = "logs/odin.log"
+    file: str = "logs/them.log"
 
 
 class Settings(BaseSettings):
@@ -74,18 +74,18 @@ class Settings(BaseSettings):
     APP_DEBUG: bool = False
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8001
-    ODIN_INSTANCE_ID: str = "bridge-1"
+    THE_M_INSTANCE_ID: str = "bridge-1"
 
     # Database
     DATABASE_HOST: str = "localhost"
     DATABASE_PORT: int = 5432
-    DATABASE_NAME: str = "odin"
-    DATABASE_USER: str = "odin"
+    DATABASE_NAME: str = "them"
+    DATABASE_USER: str = "them"
     DATABASE_PASSWORD: str = "change_me"
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
 
-    # Redis — DB 1
+    # Redis — we own the full instance, DB 0
     REDIS_ENABLED: bool = True
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     REDIS_SSL: bool = False
 
     # Auth service
-    AUTH_SERVICE_URL: str = "http://odin-auth-service:8701"
+    AUTH_SERVICE_URL: str = "http://them-auth-service:8701"
 
     # Security
     SECRET_KEY: str = "change-this-in-production"
@@ -122,7 +122,10 @@ class GlobalConfig:
             port=env.APP_PORT,
             debug=env.APP_DEBUG,
         )
-        self.odin_instance_id: str = env.ODIN_INSTANCE_ID
+        self.instance_id: str = env.THE_M_INSTANCE_ID
+
+        # Keep backward-compatible alias used in main.py / logging
+        self.odin_instance_id: str = self.instance_id
 
         self.database = DatabaseConfig(
             host=env.DATABASE_HOST,

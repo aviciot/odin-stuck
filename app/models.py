@@ -1,5 +1,5 @@
 """
-SQLAlchemy 2.0 ORM models for the odin schema.
+SQLAlchemy 2.0 ORM models for the them schema.
 """
 
 import uuid
@@ -19,7 +19,7 @@ from app.database import Base
 
 class LLMProvider(Base):
     __tablename__ = "llm_providers"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
@@ -35,7 +35,7 @@ class LLMProvider(Base):
 
 class Config(Base):
     __tablename__ = "config"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     config_key: Mapped[str] = mapped_column(Text, primary_key=True)
     config_value: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -44,7 +44,7 @@ class Config(Base):
 
 class Agent(Base):
     __tablename__ = "agents"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
@@ -66,7 +66,7 @@ class Agent(Base):
 
 class Orchestrator(Base):
     __tablename__ = "orchestrators"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
@@ -99,13 +99,13 @@ class Orchestrator(Base):
 
 class AccessToken(Base):
     __tablename__ = "access_tokens"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     label: Mapped[str] = mapped_column(Text, nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    orchestrator_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("odin.orchestrators.id", ondelete="CASCADE"), nullable=True)
+    orchestrator_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("them.orchestrators.id", ondelete="CASCADE"), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -116,10 +116,10 @@ class AccessToken(Base):
 
 class Run(Base):
     __tablename__ = "runs"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    orchestrator_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("odin.orchestrators.id"), nullable=False)
+    orchestrator_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("them.orchestrators.id"), nullable=False)
     orchestrator_name: Mapped[str] = mapped_column(Text, nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -141,12 +141,12 @@ class Run(Base):
 
 class RunStep(Base):
     __tablename__ = "run_steps"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("odin.runs.id", ondelete="CASCADE"), nullable=False)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("them.runs.id", ondelete="CASCADE"), nullable=False)
     iteration: Mapped[int] = mapped_column(Integer, nullable=False)
-    agent_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("odin.agents.id"), nullable=True)
+    agent_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("them.agents.id"), nullable=True)
     agent_slug: Mapped[str] = mapped_column(Text, nullable=False)
     tool_call_id: Mapped[str] = mapped_column(Text, nullable=False)
     input: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
@@ -163,10 +163,10 @@ class RunStep(Base):
 
 class RunUsage(Base):
     __tablename__ = "run_usage"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("odin.runs.id", ondelete="CASCADE"), nullable=False)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("them.runs.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(Text, nullable=False)
@@ -180,7 +180,7 @@ class RunUsage(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
-    __table_args__ = {"schema": "odin"}
+    __table_args__ = {"schema": "them"}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

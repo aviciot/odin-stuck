@@ -1,5 +1,5 @@
 """
-Dashboard broadcaster — publishes events to Redis pub/sub odin:dash:{channel}.
+Dashboard broadcaster — publishes events to Redis pub/sub them:dash:{channel}.
 Subscribers (ws_dashboard.py) relay events to connected dashboard WS clients.
 
 Channels:
@@ -14,11 +14,11 @@ from typing import Any
 import app.database as db_module
 from app.utils.logger import logger
 
-_DASH_PREFIX = "odin:dash:"
+_DASH_PREFIX = "them:dash:"
 
 
 async def publish(channel: str, event: dict[str, Any]) -> None:
-    """Publish an event dict to odin:dash:{channel}."""
+    """Publish an event dict to them:dash:{channel}."""
     if db_module.redis_client is None:
         return
     try:

@@ -1,6 +1,6 @@
 """
 Admin — Agents
-CRUD for odin.agents. Publishes odin:agents:changed on any write.
+CRUD for them.agents. Publishes them:agents:changed on any write.
 auth_token is stored Fernet-encrypted; GET returns masked representation.
 """
 

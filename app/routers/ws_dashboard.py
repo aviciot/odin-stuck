@@ -30,7 +30,7 @@ from app.utils.logger import logger
 
 router = APIRouter()
 
-_DASH_PREFIX = "odin:dash:"
+_DASH_PREFIX = "them:dash:"
 _STATIC_CHANNELS = {"runs", "agents", "metrics"}
 _PING_INTERVAL = 30
 

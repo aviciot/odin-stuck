@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Odin — Orchestration Platform',
+  title: 'the-M — Orchestration Platform',
   description: 'Multi-agent orchestration platform',
 };
 

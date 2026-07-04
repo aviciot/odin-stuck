@@ -1,5 +1,5 @@
 """
-Odin — Multi-Agent Orchestration Platform
+the-M — Multi-Agent Orchestration Platform
 Entry point. Lifespan handles DB/Redis init and background tasks.
 """
 
@@ -29,7 +29,7 @@ from app.services.agent_registry import start_change_listener
 async def lifespan(app: FastAPI):
     setup_logging()
     logger.info(
-        "Odin starting",
+        "the-M starting",
         instance_id=settings.odin_instance_id,
         env=settings.app.environment,
         redis_db=settings.redis.db,
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     listener_task = asyncio.create_task(start_change_listener())
 
     logger.info(
-        "Odin ready",
+        "the-M ready",
         instance_id=settings.odin_instance_id,
         port=settings.app.port,
     )
@@ -50,13 +50,13 @@ async def lifespan(app: FastAPI):
     yield
 
     listener_task.cancel()
-    logger.info("Odin shutting down", instance_id=settings.odin_instance_id)
+    logger.info("the-M shutting down", instance_id=settings.odin_instance_id)
     await close_db()
-    logger.info("Odin shutdown complete")
+    logger.info("the-M shutdown complete")
 
 
 app = FastAPI(
-    title="Odin",
+    title="the-M",
     description="Multi-Agent Orchestration Platform",
     version="0.1.0",
     lifespan=lifespan,

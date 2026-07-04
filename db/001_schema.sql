@@ -1,9 +1,9 @@
--- Odin database schema — idempotent (safe to re-run)
--- Apply: docker exec omni-postgres psql -U odin -d odin -f /tmp/001_schema.sql
+-- the-M database schema — idempotent (safe to re-run)
+-- Apply: docker exec them-postgres psql -U them -d them -f /tmp/001_schema.sql
 
-CREATE SCHEMA IF NOT EXISTS odin;
+CREATE SCHEMA IF NOT EXISTS them;
 
-CREATE TABLE IF NOT EXISTS odin.llm_providers (
+CREATE TABLE IF NOT EXISTS them.llm_providers (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
@@ -16,13 +16,13 @@ CREATE TABLE IF NOT EXISTS odin.llm_providers (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS odin.config (
+CREATE TABLE IF NOT EXISTS them.config (
     config_key TEXT PRIMARY KEY,
     config_value JSONB NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS odin.agents (
+CREATE TABLE IF NOT EXISTS them.agents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug TEXT NOT NULL UNIQUE CHECK (slug ~ '^[a-z0-9_]{1,48}$'),
     display_name TEXT NOT NULL,
@@ -38,10 +38,10 @@ CREATE TABLE IF NOT EXISTS odin.agents (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_slug ON odin.agents(slug);
-CREATE INDEX IF NOT EXISTS idx_agents_enabled ON odin.agents(enabled);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_slug ON them.agents(slug);
+CREATE INDEX IF NOT EXISTS idx_agents_enabled ON them.agents(enabled);
 
-CREATE TABLE IF NOT EXISTS odin.orchestrators (
+CREATE TABLE IF NOT EXISTS them.orchestrators (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
@@ -60,23 +60,23 @@ CREATE TABLE IF NOT EXISTS odin.orchestrators (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS odin.access_tokens (
+CREATE TABLE IF NOT EXISTS them.access_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token_hash TEXT NOT NULL UNIQUE,
     label TEXT NOT NULL,
     user_id INTEGER NOT NULL,
-    orchestrator_id UUID REFERENCES odin.orchestrators(id) ON DELETE CASCADE,
+    orchestrator_id UUID REFERENCES them.orchestrators(id) ON DELETE CASCADE,
     enabled BOOLEAN NOT NULL DEFAULT true,
     expires_at TIMESTAMPTZ,
     last_used_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_access_tokens_user ON odin.access_tokens(user_id);
-CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON odin.access_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_access_tokens_user ON them.access_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON them.access_tokens(token_hash);
 
-CREATE TABLE IF NOT EXISTS odin.runs (
+CREATE TABLE IF NOT EXISTS them.runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    orchestrator_id UUID NOT NULL REFERENCES odin.orchestrators(id),
+    orchestrator_id UUID NOT NULL REFERENCES them.orchestrators(id),
     orchestrator_name TEXT NOT NULL,
     user_id INTEGER NOT NULL,
     session_id UUID NOT NULL,
@@ -91,15 +91,15 @@ CREATE TABLE IF NOT EXISTS odin.runs (
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ended_at TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS idx_runs_user_started ON odin.runs(user_id, started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_orchestrator ON odin.runs(orchestrator_id, started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_status ON odin.runs(status);
+CREATE INDEX IF NOT EXISTS idx_runs_user_started ON them.runs(user_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_orchestrator ON them.runs(orchestrator_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON them.runs(status);
 
-CREATE TABLE IF NOT EXISTS odin.run_steps (
+CREATE TABLE IF NOT EXISTS them.run_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    run_id UUID NOT NULL REFERENCES odin.runs(id) ON DELETE CASCADE,
+    run_id UUID NOT NULL REFERENCES them.runs(id) ON DELETE CASCADE,
     iteration INTEGER NOT NULL,
-    agent_id UUID REFERENCES odin.agents(id),
+    agent_id UUID REFERENCES them.agents(id),
     agent_slug TEXT NOT NULL,
     tool_call_id TEXT NOT NULL,
     input JSONB NOT NULL,
@@ -110,12 +110,12 @@ CREATE TABLE IF NOT EXISTS odin.run_steps (
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ended_at TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS idx_run_steps_run ON odin.run_steps(run_id, iteration);
-CREATE INDEX IF NOT EXISTS idx_run_steps_agent ON odin.run_steps(agent_id);
+CREATE INDEX IF NOT EXISTS idx_run_steps_run ON them.run_steps(run_id, iteration);
+CREATE INDEX IF NOT EXISTS idx_run_steps_agent ON them.run_steps(agent_id);
 
-CREATE TABLE IF NOT EXISTS odin.run_usage (
+CREATE TABLE IF NOT EXISTS them.run_usage (
     id BIGSERIAL PRIMARY KEY,
-    run_id UUID NOT NULL REFERENCES odin.runs(id) ON DELETE CASCADE,
+    run_id UUID NOT NULL REFERENCES them.runs(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -124,10 +124,10 @@ CREATE TABLE IF NOT EXISTS odin.run_usage (
     cost_usd NUMERIC(12,8) NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_run_usage_run ON odin.run_usage(run_id);
-CREATE INDEX IF NOT EXISTS idx_run_usage_user_created ON odin.run_usage(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_run_usage_run ON them.run_usage(run_id);
+CREATE INDEX IF NOT EXISTS idx_run_usage_user_created ON them.run_usage(user_id, created_at);
 
-CREATE TABLE IF NOT EXISTS odin.audit_logs (
+CREATE TABLE IF NOT EXISTS them.audit_logs (
     id BIGSERIAL PRIMARY KEY,
     user_id INTEGER,
     action TEXT NOT NULL,
@@ -136,16 +136,16 @@ CREATE TABLE IF NOT EXISTS odin.audit_logs (
     details JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_audit_created ON odin.audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON them.audit_logs(created_at DESC);
 
--- Voice transcription (added 2026-07-03)
-ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS voice_enabled BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS transcription_provider VARCHAR(32);
-ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS transcription_model VARCHAR(64);
-ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS transcription_api_key_encrypted TEXT;
+-- Voice transcription
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS voice_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS transcription_provider VARCHAR(32);
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS transcription_model VARCHAR(64);
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS transcription_api_key_encrypted TEXT;
 
--- TTS (added 2026-07-03)
-ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS tts_enabled BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS tts_provider TEXT;
-ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS tts_voice TEXT;
-ALTER TABLE odin.orchestrators ADD COLUMN IF NOT EXISTS tts_api_key_encrypted TEXT;
+-- TTS
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS tts_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS tts_provider TEXT;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS tts_voice TEXT;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS tts_api_key_encrypted TEXT;

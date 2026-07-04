@@ -77,7 +77,7 @@ try:
 
 except ImportError as exc:
     print(f"  [SKIP] factory tests — missing container deps ({exc})")
-    print(f"         Run inside odin-bridge container for full coverage.")
+    print(f"         Run inside them-bridge container for full coverage.")
 
 # 5. A2aAdapter raises NotImplementedError
 async def _test_a2a():

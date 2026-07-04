@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { odinApi, type Agent, type Run } from '@/lib/api';
+import { themApi, type Agent, type Run } from '@/lib/api';
 
 function StatCard({ icon, label, value, sub, color }: { icon: string; label: string; value: string | number; sub?: string; color: string }) {
   return (
@@ -68,7 +68,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([odinApi.agents(), odinApi.runs()])
+    Promise.all([themApi.agents(), themApi.runs()])
       .then(([a, r]) => { setAgents(a); setRuns((r as any).items ?? r); })
       .finally(() => setLoading(false));
   }, []);

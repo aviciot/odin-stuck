@@ -1,4 +1,4 @@
-const API_BASE = '/api/odin';
+const API_BASE = '/api/them';
 const HEALTH_BASE = '/api/bridge';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -109,7 +109,7 @@ export interface BridgeHealth {
   redis: string;
 }
 
-export const odinApi = {
+export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
     .then((r) => r.json())
     .catch(() => ({ status: 'error', postgres: 'unknown', redis: 'unknown' })),
@@ -126,7 +126,7 @@ export const odinApi = {
   testVoice: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-voice`, body),
   testTts: (id: string, body: unknown) => api.post<{ ok: boolean; latency_ms?: number; error?: string }>(`/admin/orchestrators/${id}/test-tts`, body),
   tts: async (name: string, text: string): Promise<Response> => {
-    const res = await fetch(`/api/odin/orchestrators/${name}/tts`, {
+    const res = await fetch(`/api/them/orchestrators/${name}/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),

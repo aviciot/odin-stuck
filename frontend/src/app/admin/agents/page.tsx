@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { odinApi, type Agent } from '@/lib/api';
+import { themApi, type Agent } from '@/lib/api';
 
 const TRANSPORTS = ['omni_ws', 'a2a'];
 
@@ -71,7 +71,7 @@ export default function AdminAgentsPage() {
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; latency_ms: number; detail: string } | 'testing'>>({});
 
-  const reload = () => odinApi.agents().then(setAgents).finally(() => setLoading(false));
+  const reload = () => themApi.agents().then(setAgents).finally(() => setLoading(false));
 
   useEffect(() => { reload(); }, []);
 
@@ -107,9 +107,9 @@ export default function AdminAgentsPage() {
       if (!body.auth_token) delete body.auth_token;
       if (editing) {
         delete body.slug; // slug is immutable after creation
-        await odinApi.updateAgent(editing.id, body);
+        await themApi.updateAgent(editing.id, body);
       } else {
-        await odinApi.createAgent(body);
+        await themApi.createAgent(body);
       }
       setShowModal(false);
       reload();
@@ -123,7 +123,7 @@ export default function AdminAgentsPage() {
   async function handleTest(agent: Agent) {
     setTestResults((r) => ({ ...r, [agent.id]: 'testing' }));
     try {
-      const result = await odinApi.testAgent(agent.id);
+      const result = await themApi.testAgent(agent.id);
       setTestResults((r) => ({ ...r, [agent.id]: result }));
     } catch (e: unknown) {
       setTestResults((r) => ({ ...r, [agent.id]: { ok: false, latency_ms: 0, detail: e instanceof Error ? e.message : 'Test failed' } }));
@@ -133,7 +133,7 @@ export default function AdminAgentsPage() {
   async function handleDelete() {
     if (!deleteTarget) return;
     try {
-      await odinApi.deleteAgent(deleteTarget.id);
+      await themApi.deleteAgent(deleteTarget.id);
       setDeleteTarget(null);
       reload();
     } catch (e: unknown) {

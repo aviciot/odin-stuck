@@ -1,5 +1,5 @@
 """
-Run recorder — writes run lifecycle to odin.runs, odin.run_steps, odin.run_usage.
+Run recorder — writes run lifecycle to them.runs, them.run_steps, them.run_usage.
 All methods are fire-and-forget safe: they log errors but never raise.
 """
 

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { odinApi, type OrchestratorFull } from '@/lib/api';
+import { themApi, type OrchestratorFull } from '@/lib/api';
 
 // ── Model catalogues ──────────────────────────────────────────────────────
 const VOICE_MODELS: Record<string, string[]> = {
@@ -85,12 +85,12 @@ export default function OrchestratorsPage() {
 
   async function load() {
     setLoading(true);
-    odinApi.orchestrators().then(setList).finally(() => setLoading(false));
+    themApi.orchestrators().then(setList).finally(() => setLoading(false));
   }
 
   useEffect(() => {
     load();
-    odinApi.agents().then(setAllAgents);
+    themApi.agents().then(setAllAgents);
   }, []);
 
   function openCreate() {
@@ -140,7 +140,7 @@ export default function OrchestratorsPage() {
     if (!editing || !form.llm_provider || !form.llm_model) return;
     setTestState({ loading: true });
     try {
-      const res = await odinApi.testLlm(editing.id, {
+      const res = await themApi.testLlm(editing.id, {
         provider: form.llm_provider,
         model: form.llm_model,
         api_key: form.llm_api_key || undefined,
@@ -156,7 +156,7 @@ export default function OrchestratorsPage() {
     if (!editing || !form.transcription_provider || !form.transcription_model) return;
     setVoiceTestState({ loading: true });
     try {
-      const res = await odinApi.testVoice(editing.id, {
+      const res = await themApi.testVoice(editing.id, {
         provider: form.transcription_provider,
         model: form.transcription_model,
         api_key: form.transcription_api_key || undefined,
@@ -171,7 +171,7 @@ export default function OrchestratorsPage() {
     if (!editing || !form.tts_provider || !form.tts_voice) return;
     setTtsTestState({ loading: true });
     try {
-      const res = await odinApi.testTts(editing.id, {
+      const res = await themApi.testTts(editing.id, {
         provider: form.tts_provider,
         voice: form.tts_voice,
         api_key: form.tts_api_key || undefined,
@@ -212,9 +212,9 @@ export default function OrchestratorsPage() {
         delete body.tts_api_key;
       }
       if (editing) {
-        await odinApi.updateOrchestrator(editing.id, body);
+        await themApi.updateOrchestrator(editing.id, body);
       } else {
-        await odinApi.createOrchestrator(body);
+        await themApi.createOrchestrator(body);
       }
       setShowForm(false);
       load();
@@ -227,7 +227,7 @@ export default function OrchestratorsPage() {
 
   async function del(o: OrchestratorFull) {
     if (!confirm(`Delete "${o.display_name}"?`)) return;
-    await odinApi.deleteOrchestrator(o.id).catch((e) => alert(e.message));
+    await themApi.deleteOrchestrator(o.id).catch((e) => alert(e.message));
     load();
   }
 

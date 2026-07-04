@@ -1,6 +1,6 @@
 'use client';
 import { create } from 'zustand';
-import type { AuthState, OdinUser } from '@/types/auth';
+import type { AuthState, TheMUser } from '@/types/auth';
 
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
@@ -22,7 +22,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
       const me = await fetch('/api/auth/me');
       if (!me.ok) throw new Error('Failed to load user');
-      const user: OdinUser = await me.json();
+      const user: TheMUser = await me.json();
       set({ user, isAuthenticated: true, isLoading: false, error: null });
     } catch (e: any) {
       set({ user: null, isAuthenticated: false, isLoading: false, error: e.message });
@@ -42,7 +42,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         set({ user: null, isAuthenticated: false, isLoading: false });
         return false;
       }
-      const user: OdinUser = await res.json();
+      const user: TheMUser = await res.json();
       set({ user, isAuthenticated: true, isLoading: false });
       return true;
     } catch {

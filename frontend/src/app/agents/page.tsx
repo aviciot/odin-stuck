@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { odinApi, type Agent } from '@/lib/api';
+import { themApi, type Agent } from '@/lib/api';
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -10,7 +10,7 @@ export default function AgentsPage() {
   const [search, setSearch] = useState('');
 
   useEffect(() => {
-    odinApi.agents().then(setAgents).finally(() => setLoading(false));
+    themApi.agents().then(setAgents).finally(() => setLoading(false));
   }, []);
 
   const filtered = agents.filter((a) =>

@@ -9,14 +9,14 @@
 #   5. Verify run is recorded in /api/v1/runs
 #   6. Clean up (delete agent, orchestrator, token)
 #
-# Requires: odin-bridge running with a valid admin JWT or uses basic env-var auth.
+# Requires: them-bridge running with a valid admin JWT or uses basic env-var auth.
 # Usage:
 #   ADMIN_JWT=<token> bash scripts/tests/test_14_e2e_orchestrate.sh
 #   (if ADMIN_JWT is empty the test auto-skips with [SKIP])
 
 set -euo pipefail
 
-CONTAINER="${BRIDGE_CONTAINER:-odin-bridge}"
+CONTAINER="${BRIDGE_CONTAINER:-them-bridge}"
 PORT="${BRIDGE_PORT:-8001}"
 BASE="http://localhost:$PORT"
 ADMIN_JWT="${ADMIN_JWT:-}"
@@ -45,7 +45,7 @@ echo "=== test_14_e2e_orchestrate: Live E2E Orchestration ==="
 
 if [ -z "$ADMIN_JWT" ]; then
     echo "  [SKIP] ADMIN_JWT not set — skipping live E2E test"
-    echo "  Hint: get a JWT from odin-auth-service /auth/login, then re-run:"
+    echo "  Hint: get a JWT from them-auth-service /auth/login, then re-run:"
     echo "    ADMIN_JWT=<token> bash scripts/tests/test_14_e2e_orchestrate.sh"
     echo ""
     echo "Result: 0 passed, 0 failed, 1 skipped"

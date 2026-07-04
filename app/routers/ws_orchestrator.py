@@ -1,7 +1,7 @@
 """
 WebSocket endpoint: /ws/orchestrate/{name}
 
-Auth: opaque Bearer token (odin.access_tokens) OR admin JWT.
+Auth: opaque Bearer token (them.access_tokens) OR admin JWT.
 Protocol:
   Server → Client: {"type": "ready",      "run_id": "..."}
   Client → Server: {"content": "user goal text"}

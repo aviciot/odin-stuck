@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { odinApi, type AccessToken, type OrchestratorFull } from '@/lib/api';
+import { themApi, type AccessToken, type OrchestratorFull } from '@/lib/api';
 
 function Badge({ on }: { on: boolean }) {
   return (
@@ -47,7 +47,7 @@ export default function TokensPage() {
 
   async function load() {
     setLoading(true);
-    Promise.all([odinApi.tokens(), odinApi.orchestrators()])
+    Promise.all([themApi.tokens(), themApi.orchestrators()])
       .then(([t, o]) => { setList(t); setOrchestrators(o); })
       .finally(() => setLoading(false));
   }
@@ -66,7 +66,7 @@ export default function TokensPage() {
     try {
       const body: any = { label: form.label, user_id: Number(form.user_id) };
       if (form.orchestrator_id) body.orchestrator_id = form.orchestrator_id;
-      const created = await odinApi.createToken(body);
+      const created = await themApi.createToken(body);
       setNewToken(created.token ?? '');
       load();
     } catch (e: any) {
@@ -77,13 +77,13 @@ export default function TokensPage() {
   }
 
   async function toggle(t: AccessToken) {
-    await odinApi.updateToken(t.id, { enabled: !t.enabled }).catch((e) => alert(e.message));
+    await themApi.updateToken(t.id, { enabled: !t.enabled }).catch((e) => alert(e.message));
     load();
   }
 
   async function del(t: AccessToken) {
     if (!confirm(`Delete token "${t.label}"?`)) return;
-    await odinApi.deleteToken(t.id).catch((e) => alert(e.message));
+    await themApi.deleteToken(t.id).catch((e) => alert(e.message));
     load();
   }
 

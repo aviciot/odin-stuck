@@ -1,14 +1,13 @@
 version: "3.9"
 
 # ============================================================
-# Odin — Multi-Agent Orchestration Platform
+# the-M — Multi-Agent Orchestration Platform
 # Fully isolated stack: own Postgres, own Redis, own network.
-# No dependency on Omni containers.
 # ============================================================
 
 networks:
-  odin-network:
-    name: odin-network
+  them-network:
+    name: them-network
     driver: bridge
   proxy-network:
     external: true
@@ -19,23 +18,23 @@ networks:
 services:
 
   # ============================================================
-  # Odin Postgres — isolated PG16, DB: odin
+  # the-M Postgres — isolated PG16, DB: them
   # ============================================================
-  odin-postgres:
+  them-postgres:
     image: postgres:16-alpine
-    container_name: odin-postgres
+    container_name: them-postgres
     environment:
-      POSTGRES_DB: odin
-      POSTGRES_USER: ${ODIN_DB_USER:-odin}
-      POSTGRES_PASSWORD: ${ODIN_DB_PASSWORD:-odin_secret}
+      POSTGRES_DB: them
+      POSTGRES_USER: ${THE_M_DB_USER:-them}
+      POSTGRES_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
     volumes:
-      - ./volumes/postgres/pgdata:/var/lib/postgresql/data   # persistent data
-      - ./postgres/init:/docker-entrypoint-initdb.d          # auto-run on first boot
+      - ./volumes/postgres/pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
     networks:
-      - odin-network
+      - them-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${ODIN_DB_USER:-odin} -d odin"]
+      test: ["CMD-SHELL", "pg_isready -U ${THE_M_DB_USER:-them} -d them"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -54,17 +53,17 @@ services:
         max-file: "5"
 
   # ============================================================
-  # Odin Redis — isolated Redis, DB index 0 (we own it entirely)
+  # the-M Redis — isolated Redis, DB index 0 (we own it entirely)
   # ============================================================
-  odin-redis:
+  them-redis:
     image: redis:7-alpine
-    container_name: odin-redis
-    command: redis-server /etc/redis/redis.conf ${ODIN_REDIS_PASSWORD:+--requirepass $ODIN_REDIS_PASSWORD}
+    container_name: them-redis
+    command: redis-server /etc/redis/redis.conf ${THE_M_REDIS_PASSWORD:+--requirepass $THE_M_REDIS_PASSWORD}
     volumes:
-      - ./volumes/redis:/data                        # persistent data
-      - ./redis/config/redis.conf:/etc/redis/redis.conf:ro  # config
+      - ./volumes/redis:/data
+      - ./redis/config/redis.conf:/etc/redis/redis.conf:ro
     networks:
-      - odin-network
+      - them-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -85,26 +84,26 @@ services:
         max-file: "3"
 
   # ============================================================
-  # Odin Auth Service — authentication & IAM (port 8701)
+  # the-M Auth Service — authentication & IAM (port 8701)
   # ============================================================
-  odin-auth-service:
+  them-auth-service:
     build:
       context: ./auth_service
       dockerfile: Dockerfile
-    container_name: odin-auth-service
+    container_name: them-auth-service
     expose:
       - "8701"
     environment:
       HOST: "0.0.0.0"
       PORT: "8701"
-      DATABASE_URL: "postgresql://${ODIN_DB_USER:-odin}:${ODIN_DB_PASSWORD:-odin_secret}@odin-postgres:5432/odin"
-      JWT_SECRET: ${ODIN_JWT_SECRET:-change-this-jwt-secret}
-      CORS_ORIGINS: ${ODIN_CORS_ORIGINS:-http://localhost:3111}
+      DATABASE_URL: "postgresql://${THE_M_DB_USER:-them}:${THE_M_DB_PASSWORD:-them_secret}@them-postgres:5432/them"
+      JWT_SECRET: ${THE_M_JWT_SECRET:-change-this-jwt-secret}
+      CORS_ORIGINS: ${THE_M_CORS_ORIGINS:-http://localhost:3111}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     networks:
-      - odin-network
+      - them-network
     depends_on:
-      odin-postgres:
+      them-postgres:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -127,13 +126,13 @@ services:
         max-file: "5"
 
   # ============================================================
-  # Odin Bridge — orchestrator API + WS (replica 1)
+  # the-M Bridge — orchestrator API + WS (replica 1)
   # ============================================================
-  odin-bridge:
+  them-bridge:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: odin-bridge
+    container_name: them-bridge
     expose:
       - "8001"
     ports:
@@ -142,48 +141,48 @@ services:
       - .:/app
       - ./volumes/logs:/app/logs
     environment:
-      ODIN_INSTANCE_ID: "bridge-1"
+      THE_M_INSTANCE_ID: "bridge-1"
       APP_HOST: "0.0.0.0"
       APP_PORT: "8001"
       APP_ENV: ${APP_ENV:-production}
       APP_DEBUG: "false"
-      DATABASE_HOST: "odin-postgres"
+      DATABASE_HOST: "them-postgres"
       DATABASE_PORT: "5432"
-      DATABASE_NAME: "odin"
-      DATABASE_USER: ${ODIN_DB_USER:-odin}
-      DATABASE_PASSWORD: ${ODIN_DB_PASSWORD:-odin_secret}
-      REDIS_HOST: "odin-redis"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       REDIS_ENABLED: "true"
       REDIS_SSL: "false"
-      AUTH_SERVICE_URL: "http://odin-auth-service:8701"
-      SECRET_KEY: ${ODIN_SECRET_KEY:-change-this-secret-key}
+      AUTH_SERVICE_URL: "http://them-auth-service:8701"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
-      CORS_ORIGINS: ${ODIN_CORS_ORIGINS:-http://localhost:3111}
+      CORS_ORIGINS: ${THE_M_CORS_ORIGINS:-http://localhost:3111}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: "json"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy-network"
-      - "traefik.http.routers.odin.rule=Host(`${ODIN_HOSTNAME:-odin.example.com}`)"
-      - "traefik.http.routers.odin.priority=20"
-      - "traefik.http.services.odin-svc.loadbalancer.server.port=8001"
-      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie=true"
-      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie.name=odin_sticky"
-      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie.httponly=true"
-      - "traefik.http.services.odin-svc.loadbalancer.healthcheck.path=/health/live"
-      - "traefik.http.services.odin-svc.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.routers.them.rule=Host(`${THE_M_HOSTNAME:-them.example.com}`)"
+      - "traefik.http.routers.them.priority=20"
+      - "traefik.http.services.them-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie=true"
+      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie.name=them_sticky"
+      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie.httponly=true"
+      - "traefik.http.services.them-svc.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.them-svc.loadbalancer.healthcheck.interval=10s"
     networks:
-      - odin-network
+      - them-network
       - proxy-network
     depends_on:
-      odin-postgres:
+      them-postgres:
         condition: service_healthy
-      odin-redis:
+      them-redis:
         condition: service_healthy
-      odin-auth-service:
+      them-auth-service:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -206,13 +205,13 @@ services:
         max-file: "10"
 
   # ============================================================
-  # Odin Bridge Replica 2 — enable with: docker compose --profile replica up -d
+  # the-M Bridge Replica 2 — enable with: docker compose --profile replica up -d
   # ============================================================
-  odin-bridge-2:
+  them-bridge-2:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: odin-bridge-2
+    container_name: them-bridge-2
     profiles: [replica]
     expose:
       - "8001"
@@ -220,49 +219,48 @@ services:
       - .:/app
       - ./volumes/logs:/app/logs
     environment:
-      ODIN_INSTANCE_ID: "bridge-2"
+      THE_M_INSTANCE_ID: "bridge-2"
       APP_HOST: "0.0.0.0"
       APP_PORT: "8001"
       APP_ENV: ${APP_ENV:-production}
       APP_DEBUG: "false"
-      DATABASE_HOST: "odin-postgres"
+      DATABASE_HOST: "them-postgres"
       DATABASE_PORT: "5432"
-      DATABASE_NAME: "odin"
-      DATABASE_USER: ${ODIN_DB_USER:-odin}
-      DATABASE_PASSWORD: ${ODIN_DB_PASSWORD:-odin_secret}
-      REDIS_HOST: "odin-redis"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
       REDIS_PORT: "6379"
       REDIS_DB: "0"
       REDIS_ENABLED: "true"
       REDIS_SSL: "false"
-      AUTH_SERVICE_URL: "http://odin-auth-service:8701"
-      SECRET_KEY: ${ODIN_SECRET_KEY:-change-this-secret-key}
+      AUTH_SERVICE_URL: "http://them-auth-service:8701"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
-      CORS_ORIGINS: ${ODIN_CORS_ORIGINS:-http://localhost:3111}
+      CORS_ORIGINS: ${THE_M_CORS_ORIGINS:-http://localhost:3111}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: "json"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy-network"
-      - "traefik.http.services.odin-svc.loadbalancer.server.port=8001"
-      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie=true"
-      - "traefik.http.services.odin-svc.loadbalancer.sticky.cookie.name=odin_sticky"
+      - "traefik.http.services.them-svc.loadbalancer.server.port=8001"
+      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie=true"
+      - "traefik.http.services.them-svc.loadbalancer.sticky.cookie.name=them_sticky"
     networks:
-      - odin-network
+      - them-network
       - proxy-network
     depends_on:
-      odin-postgres:
+      them-postgres:
         condition: service_healthy
-      odin-redis:
+      them-redis:
         condition: service_healthy
-      odin-auth-service:
+      them-auth-service:
         condition: service_healthy
     restart: unless-stopped
 
   # ============================================================
   # Mock Agents — lightweight WS agents for testing the pipeline
-  # Add more by copying a block and changing the service name + env.
   # ============================================================
 
   mock-agent-assistant:
@@ -278,7 +276,7 @@ services:
       AGENT_DELAY: "0.03"
       PORT: "9000"
     networks:
-      - odin-network
+      - them-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('localhost',9000),2); s.close()\""]
@@ -305,7 +303,7 @@ services:
       AGENT_DELAY: "0.05"
       PORT: "9000"
     networks:
-      - odin-network
+      - them-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('localhost',9000),2); s.close()\""]
@@ -332,7 +330,7 @@ services:
       AGENT_DELAY: "0.02"
       PORT: "9000"
     networks:
-      - odin-network
+      - them-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import socket; s=socket.create_connection(('localhost',9000),2); s.close()\""]
@@ -347,13 +345,13 @@ services:
         max-file: "3"
 
   # ============================================================
-  # Odin Frontend — Next.js dashboard (port 3200)
+  # the-M Frontend — Next.js dashboard (port 3200)
   # ============================================================
-  odin-frontend:
+  them-frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev
-    container_name: odin-frontend
+    container_name: them-frontend
     expose:
       - "3200"
     ports:
@@ -364,20 +362,20 @@ services:
       - /app/.next
     environment:
       NODE_ENV: development
-      ODIN_API_URL: "http://odin-bridge:8001"
-      ODIN_AUTH_URL: "http://odin-auth-service:8701"
-      NEXT_PUBLIC_BRIDGE_WS_URL: "${ODIN_BRIDGE_WS_URL:-ws://localhost:8001}"
+      THE_M_API_URL: "http://them-bridge:8001"
+      THE_M_AUTH_URL: "http://them-auth-service:8701"
+      NEXT_PUBLIC_BRIDGE_WS_URL: "${THE_M_BRIDGE_WS_URL:-ws://localhost:8001}"
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy-network"
-      - "traefik.http.routers.odin-ui.rule=Host(`${ODIN_UI_HOSTNAME:-odin-ui.example.com}`)"
-      - "traefik.http.routers.odin-ui.priority=10"
-      - "traefik.http.services.odin-ui-svc.loadbalancer.server.port=3200"
+      - "traefik.http.routers.them-ui.rule=Host(`${THE_M_UI_HOSTNAME:-them-ui.example.com}`)"
+      - "traefik.http.routers.them-ui.priority=10"
+      - "traefik.http.services.them-ui-svc.loadbalancer.server.port=3200"
     networks:
-      - odin-network
+      - them-network
       - proxy-network
     depends_on:
-      odin-bridge:
+      them-bridge:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -404,7 +402,7 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       PORT: "9100"
     networks:
-      - odin-network
+      - them-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9100/health"]

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # test_05_agents_api.sh — CRUD smoke test for /api/v1/admin/agents
-# Runs curl inside odin-bridge container (no host ports required).
+# Runs curl inside them-bridge container (no host ports required).
 # Usage: bash scripts/tests/test_05_agents_api.sh
 
 set -euo pipefail
 
-CONTAINER="${BRIDGE_CONTAINER:-odin-bridge}"
+CONTAINER="${BRIDGE_CONTAINER:-them-bridge}"
 PORT="${BRIDGE_PORT:-8001}"
 BASE="http://localhost:$PORT/api/v1/admin/agents"
 PASS=0

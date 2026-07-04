@@ -1,6 +1,6 @@
 """
 Admin — Orchestrators
-CRUD for odin.orchestrators. Publishes odin:orchestrators:changed on any write.
+CRUD for them.orchestrators. Publishes them:orchestrators:changed on any write.
 """
 
 import uuid
@@ -20,8 +20,8 @@ from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin/orchestrators", tags=["admin-orchestrators"])
 
-_CHANGE_CHANNEL = "odin:orchestrators:changed"
-_CACHE_PREFIX = "odin:orchestrators:"
+_CHANGE_CHANNEL = "them:orchestrators:changed"
+_CACHE_PREFIX = "them:orchestrators:"
 _TTL = 600
 
 

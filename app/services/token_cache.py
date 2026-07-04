@@ -1,7 +1,7 @@
 """
 Access token cache — two levels:
   L1: in-process dict per replica (fast, not shared)
-  L2: Redis odin:session:token:{sha256(token)} TTL 300s (shared across replicas)
+  L2: Redis them:session:token:{sha256(token)} TTL 300s (shared across replicas)
 
 On miss: DB lookup via SQLAlchemy, then populate both caches.
 On revoke: delete from DB + Redis; L1 expires naturally within TTL.
@@ -19,7 +19,7 @@ import app.database as db_module
 from app.models import AccessToken
 from app.utils.logger import logger
 
-_TOKEN_PREFIX = "odin:session:token:"
+_TOKEN_PREFIX = "them:session:token:"
 _TTL = 300
 
 # L1: {token_hash: (payload_dict, expires_at_monotonic)}

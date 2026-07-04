@@ -1,7 +1,7 @@
 """
-Database and Redis connection management for Odin.
+Database and Redis connection management for the-M.
 
-Redis DB index 1 (Omni uses 0). Schema: odin.
+Schema: them.
 """
 
 from typing import AsyncGenerator, Optional
@@ -33,7 +33,7 @@ async def init_db() -> None:
     global engine, AsyncSessionLocal, redis_client
 
     logger.info(
-        "Initializing Odin database",
+        "Initializing the-M database",
         host=settings.database.host,
         database=settings.database.database,
         redis_db=settings.redis.db,
@@ -67,7 +67,7 @@ async def init_db() -> None:
             host=settings.redis.host,
             port=settings.redis.port,
             password=settings.redis.password or None,
-            db=settings.redis.db,   # always 1
+            db=settings.redis.db,
             decode_responses=True,
         )
         await redis_client.ping()

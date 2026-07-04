@@ -1,0 +1,7 @@
+# Keep folder structure, ignore actual data files
+postgres/*
+!postgres/.gitkeep
+redis/*
+!redis/.gitkeep
+logs/*
+!logs/.gitkeep

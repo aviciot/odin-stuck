@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-CONTAINER="${POSTGRES_CONTAINER:-odin-postgres}"
+CONTAINER="${POSTGRES_CONTAINER:-them-postgres}"
 DB="${POSTGRES_DB:-odin}"
 USER="${POSTGRES_USER:-odin}"
 

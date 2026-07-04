@@ -2,7 +2,7 @@
 
 -- ── LLM Providers ────────────────────────────────────────────────────────────
 
-INSERT INTO odin.llm_providers (name, display_name, default_model, model_pricing, enabled)
+INSERT INTO them.llm_providers (name, display_name, default_model, model_pricing, enabled)
 VALUES (
     'anthropic',
     'Anthropic Claude',
@@ -11,7 +11,7 @@ VALUES (
     true
 ) ON CONFLICT (name) DO NOTHING;
 
-INSERT INTO odin.config (config_key, config_value)
+INSERT INTO them.config (config_key, config_value)
 VALUES ('llm_routing', '{"provider": "anthropic", "model": "claude-sonnet-4-6", "max_tokens": 4096}')
 ON CONFLICT (config_key) DO NOTHING;
 
@@ -19,7 +19,7 @@ ON CONFLICT (config_key) DO NOTHING;
 -- These match the mock-agent-* containers in docker-compose.yml.
 -- endpoint_url points to container-internal hostnames on port 9000.
 
-INSERT INTO odin.agents (slug, display_name, description, transport, endpoint_url, enabled)
+INSERT INTO them.agents (slug, display_name, description, transport, endpoint_url, enabled)
 VALUES
     (
         'assistant',
@@ -53,15 +53,13 @@ ON CONFLICT (slug) DO UPDATE SET
 
 -- ── Default Orchestrator ──────────────────────────────────────────────────────
 -- Wires all three mock agents together.
--- Uses a CTE to collect current agent IDs so allowed_agent_ids stays consistent
--- even if agents were inserted in a previous run with different UUIDs.
 
 WITH agent_ids AS (
     SELECT ARRAY_AGG(id) AS ids
-    FROM odin.agents
+    FROM them.agents
     WHERE slug IN ('assistant', 'researcher', 'coder')
 )
-INSERT INTO odin.orchestrators (
+INSERT INTO them.orchestrators (
     name, display_name, system_prompt,
     allowed_agent_ids, llm_provider, llm_model,
     max_iterations, max_parallel_tools, rate_limit_rpm, enabled

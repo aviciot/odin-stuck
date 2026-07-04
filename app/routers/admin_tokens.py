@@ -1,6 +1,6 @@
 """
 Admin — Access Tokens
-Manage odin.access_tokens (bearer tokens for WS /ws/orchestrate/{name}).
+Manage them.access_tokens (bearer tokens for WS /ws/orchestrate/{name}).
 
 Plaintext token returned ONCE on creation — never stored.
 Only sha256(token) stored in DB.

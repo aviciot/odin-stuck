@@ -1,6 +1,6 @@
 """
 Rate limiter — Redis INCR fixed-window per user per hour slot.
-Key: rl:odin:{user_id}:{hour_slot}  TTL 7200s
+Key: rl:them:{user_id}:{hour_slot}  TTL 7200s
 Replica-safe: all replicas share the same Redis counter.
 """
 
@@ -10,7 +10,7 @@ from typing import Optional
 import app.database as db_module
 from app.utils.logger import logger
 
-_KEY_PREFIX = "rl:odin:"
+_KEY_PREFIX = "rl:them:"
 _WINDOW_SECONDS = 3600
 _KEY_TTL = 7200  # 2x window so key outlives the slot
 

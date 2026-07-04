@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-CONTAINER="${BRIDGE_CONTAINER:-odin-bridge}"
+CONTAINER="${BRIDGE_CONTAINER:-them-bridge}"
 PORT="${BRIDGE_PORT:-8001}"
 BASE="http://localhost:$PORT/api/v1/admin/tokens"
 PASS=0

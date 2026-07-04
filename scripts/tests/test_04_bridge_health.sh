@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# test_04_bridge_health.sh — verify odin-bridge health endpoints
+# test_04_bridge_health.sh — verify them-bridge health endpoints
 # Runs curl inside the container to avoid needing exposed host ports.
 # Usage: bash scripts/tests/test_04_bridge_health.sh
 
 set -euo pipefail
 
-CONTAINER="${BRIDGE_CONTAINER:-odin-bridge}"
+CONTAINER="${BRIDGE_CONTAINER:-them-bridge}"
 PORT="${BRIDGE_PORT:-8001}"
 BASE="http://localhost:$PORT"
 PASS=0

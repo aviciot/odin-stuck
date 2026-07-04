@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { odinApi, type OrchestratorFull } from '@/lib/api';
+import { themApi, type OrchestratorFull } from '@/lib/api';
 
 function getBridgeWs(): string {
   if (typeof window === 'undefined') return 'ws://localhost:8001';
@@ -89,7 +89,7 @@ export default function PlaygroundPage() {
 
   // Load orchestrators list, then check voice_enabled for the selected one
   useEffect(() => {
-    odinApi.orchestrators().then(list => {
+    themApi.orchestrators().then(list => {
       const enabled = list.filter(o => o.enabled);
       setOrchestrators(enabled);
       const name = initialOrch || (enabled.length > 0 ? enabled[0].name : '');
@@ -202,7 +202,7 @@ export default function PlaygroundPage() {
             const textToSpeak = assistantBuf.current;
             const orchName = selectedOrch;
             setSpeaking(true);
-            odinApi.tts(orchName, textToSpeak)
+            themApi.tts(orchName, textToSpeak)
               .then(async res => {
                 if (!res.body) throw new Error('no body');
                 // MediaSource lets us start playing before all bytes arrive
@@ -297,7 +297,7 @@ export default function PlaygroundPage() {
         const blob = new Blob(chunks, { type: 'audio/webm' });
         setRecordingState('transcribing');
         try {
-          const result = await odinApi.transcribe(selectedOrch, blob);
+          const result = await themApi.transcribe(selectedOrch, blob);
           if (result.text) {
             await sendText(result.text);
           }

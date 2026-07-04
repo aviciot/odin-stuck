@@ -33,10 +33,10 @@ from app.services.providers.base import (
 from app.services.providers.anthropic import AnthropicProvider
 from app.utils.logger import logger
 
-_ORCH_PREFIX = "odin:orchestrators:"
+_ORCH_PREFIX = "them:orchestrators:"
 _ORCH_TTL = 600
-_DASH_RUN_PREFIX = "odin:dash:run:"
-_DASH_RUNS_CHANNEL = "odin:dash:runs"
+_DASH_RUN_PREFIX = "them:dash:run:"
+_DASH_RUNS_CHANNEL = "them:dash:runs"
 
 
 async def _publish_run_event(run_id: uuid.UUID, event: dict) -> None:

@@ -1,6 +1,6 @@
 """
 Admin — LLM Providers
-CRUD for odin.llm_providers + llm_routing config key.
+CRUD for them.llm_providers + llm_routing config key.
 
 All API keys are stored Fernet-encrypted. The GET responses return a masked
 key ("sk-...****") so the caller can tell whether a key is set, without ever

@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { odinApi, type Run, type RunStats } from '@/lib/api';
+import { themApi, type Run, type RunStats } from '@/lib/api';
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { bg: string; color: string }> = {
@@ -25,7 +25,7 @@ export default function RunsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.allSettled([odinApi.runs(50), odinApi.runStats()]).then(([r, s]) => {
+    Promise.allSettled([themApi.runs(50), themApi.runStats()]).then(([r, s]) => {
       if (r.status === 'fulfilled') setRuns(r.value?.items ?? []);
       if (s.status === 'fulfilled') setStats(s.value);
       setLoading(false);

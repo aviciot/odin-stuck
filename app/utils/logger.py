@@ -1,5 +1,5 @@
 """
-Structured logging for Odin. Adapted from Omni.
+Structured logging for the-M.
 """
 
 import logging
@@ -12,7 +12,7 @@ from structlog.typing import EventDict, WrappedLogger
 
 
 def add_app_context(logger: WrappedLogger, method_name: str, event_dict: EventDict) -> EventDict:
-    event_dict["app"] = "odin"
+    event_dict["app"] = "the-M"
     return event_dict
 
 

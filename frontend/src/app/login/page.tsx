@@ -40,7 +40,6 @@ export default function LoginPage() {
           0%,100%{transform:scale(1);filter:drop-shadow(0 0 8px rgba(59,77,255,.6))}
           50%{transform:scale(1.15);filter:drop-shadow(0 0 15px rgba(59,77,255,.9))}
         }
-        @keyframes orbit-nodes { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
         @keyframes fade-slide-up { 0%{opacity:0;transform:translateY(20px)} 100%{opacity:1;transform:translateY(0)} }
         .glow-overlay { animation: pulse-glow 8s ease-in-out infinite; }
         .grid-scanning {
@@ -49,7 +48,6 @@ export default function LoginPage() {
           animation: grid-move 4s linear infinite;
         }
         .animate-slow-spin { animation: slow-spin 20s linear infinite; }
-        .logo-nodes { transform-origin: center; animation: orbit-nodes 30s linear infinite; }
         .logo-core { transform-origin: center; animation: core-pulse 4s ease-in-out infinite; }
         .animate-entrance { animation: fade-slide-up 0.8s cubic-bezier(0.16,1,0.3,1) forwards; }
         .brand-input {
@@ -64,58 +62,56 @@ export default function LoginPage() {
       `}</style>
 
       <main className="min-h-screen flex flex-col items-center justify-center p-6 relative bg-mesh text-slate-200 antialiased overflow-x-hidden">
-        {/* Background layers */}
         <div className="absolute inset-0 z-0 opacity-20 pointer-events-none grid-scanning" />
         <div className="absolute inset-0 z-0 glow-overlay pointer-events-none"
           style={{ background: 'linear-gradient(135deg, rgba(37,99,235,.1) 0%, transparent 50%, rgba(67,56,202,.1) 100%)' }} />
 
         {/* Brand header */}
         <div className="z-10 text-center mb-10 w-full max-w-sm animate-entrance" style={{ animationDelay: '0.1s', opacity: 0 }}>
-          {/* Logo */}
-          <div className="mb-6 flex justify-center">
-            <div className="relative w-28 h-28 flex items-center justify-center">
-              <div className="absolute inset-0 border-2 rounded-full animate-slow-spin"
-                style={{ borderColor: 'rgba(59,77,255,.2)' }} />
-              <div className="absolute inset-2 border rounded-full"
-                style={{ borderColor: 'rgba(99,102,241,.1)', animation: 'slow-spin 15s linear infinite reverse' }} />
-              <div className="relative z-10 w-20 h-20">
-                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-                  <defs>
-                    <linearGradient id="odin-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" style={{ stopColor: '#3b4dff', stopOpacity: 1 }} />
-                      <stop offset="100%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
-                    </linearGradient>
-                  </defs>
-                  {/* Orbiting nodes — 8 points */}
-                  <g className="logo-nodes">
-                    {[
-                      [50,15],[85,50],[50,85],[15,50],
-                      [75,25],[75,75],[25,75],[25,25],
-                    ].map(([cx, cy], i) => (
-                      <circle key={i} cx={cx} cy={cy} r="4" fill="url(#odin-grad)" />
-                    ))}
-                    {/* Connecting lines */}
-                    <line x1="50" y1="15" x2="85" y2="50" stroke="url(#odin-grad)" strokeWidth="0.5" opacity="0.4"/>
-                    <line x1="85" y1="50" x2="50" y2="85" stroke="url(#odin-grad)" strokeWidth="0.5" opacity="0.4"/>
-                    <line x1="50" y1="85" x2="15" y2="50" stroke="url(#odin-grad)" strokeWidth="0.5" opacity="0.4"/>
-                    <line x1="15" y1="50" x2="50" y2="15" stroke="url(#odin-grad)" strokeWidth="0.5" opacity="0.4"/>
-                  </g>
-                  {/* Pulsing core */}
-                  <g className="logo-core">
-                    <circle cx="50" cy="50" r="14" fill="none" stroke="url(#odin-grad)" strokeWidth="2.5" />
-                    {/* Rune-like inner mark */}
-                    <line x1="50" y1="38" x2="50" y2="62" stroke="url(#odin-grad)" strokeWidth="2" />
-                    <line x1="43" y1="44" x2="57" y2="44" stroke="url(#odin-grad)" strokeWidth="2" />
-                    <line x1="43" y1="56" x2="57" y2="56" stroke="url(#odin-grad)" strokeWidth="2" />
-                  </g>
-                </svg>
-              </div>
+          {/* the-M Logo — shield with agent-network M */}
+          <div className="mb-6 flex justify-center items-center gap-4">
+            <div className="relative flex items-center justify-center">
+              <svg width="80" height="88" viewBox="0 0 80 88" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="them-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style={{ stopColor: '#3b4dff', stopOpacity: 1 }} />
+                    <stop offset="100%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
+                  </linearGradient>
+                  <linearGradient id="them-shield" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" style={{ stopColor: '#0f1729', stopOpacity: 1 }} />
+                    <stop offset="100%" style={{ stopColor: '#1a1f3a', stopOpacity: 1 }} />
+                  </linearGradient>
+                </defs>
+                {/* Shield shape */}
+                <path d="M40 4 L74 18 L74 46 C74 64 58 78 40 84 C22 78 6 64 6 46 L6 18 Z"
+                  fill="url(#them-shield)" stroke="url(#them-grad)" strokeWidth="2.5" />
+                {/* Agent network nodes — M shape */}
+                {/* Left top, apex, right top */}
+                <circle cx="20" cy="28" r="4" fill="url(#them-grad)" />
+                <circle cx="40" cy="52" r="4" fill="url(#them-grad)" />
+                <circle cx="60" cy="28" r="4" fill="url(#them-grad)" />
+                {/* Bottom nodes */}
+                <circle cx="28" cy="60" r="3" fill="url(#them-grad)" opacity="0.7"/>
+                <circle cx="52" cy="60" r="3" fill="url(#them-grad)" opacity="0.7"/>
+                {/* M strokes connecting the nodes */}
+                <line x1="20" y1="28" x2="40" y2="52" stroke="url(#them-grad)" strokeWidth="2.5" strokeLinecap="round"/>
+                <line x1="40" y1="52" x2="60" y2="28" stroke="url(#them-grad)" strokeWidth="2.5" strokeLinecap="round"/>
+                <line x1="20" y1="28" x2="28" y2="60" stroke="url(#them-grad)" strokeWidth="2" strokeLinecap="round" opacity="0.6"/>
+                <line x1="60" y1="28" x2="52" y2="60" stroke="url(#them-grad)" strokeWidth="2" strokeLinecap="round" opacity="0.6"/>
+                {/* Red core dot */}
+                <circle cx="40" cy="52" r="5" fill="#e63946" className="logo-core" />
+              </svg>
             </div>
+            <h1 style={{
+              fontSize: '42px', fontWeight: 900, letterSpacing: '-0.04em',
+              color: '#e8eaed', lineHeight: 1, userSelect: 'none',
+            }}>
+              the-<span style={{ color: '#3b4dff' }}>M</span>
+            </h1>
           </div>
 
-          <h1 className="text-4xl font-black tracking-tight text-white mb-1">Odin</h1>
           <p className="font-bold tracking-widest uppercase text-[10px] mb-4" style={{ color: '#3b4dff' }}>
-            Orchestration Platform
+            Multi-Agent Orchestration Platform
           </p>
           <div className="space-y-1">
             <h2 className="text-xl font-semibold text-white">Welcome back</h2>
@@ -133,7 +129,6 @@ export default function LoginPage() {
             padding: '32px',
             boxShadow: '0 25px 50px rgba(0,0,0,.5)',
           }}>
-            {/* Error */}
             {error && (
               <div className="mb-5 flex items-start gap-2 rounded-lg p-3"
                 style={{ background: 'rgba(220,38,38,.1)', border: '1px solid rgba(220,38,38,.3)' }}>
@@ -145,7 +140,6 @@ export default function LoginPage() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Email */}
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-slate-300" htmlFor="email">Email address</label>
                 <div className="relative">
@@ -156,14 +150,13 @@ export default function LoginPage() {
                   </div>
                   <input
                     id="email" type="email" required autoComplete="email"
-                    placeholder="admin@odin.local"
+                    placeholder="admin@them.local"
                     value={email} onChange={(e) => setEmail(e.target.value)}
                     className="brand-input"
                   />
                 </div>
               </div>
 
-              {/* Password */}
               <div className="space-y-1.5">
                 <label className="block text-sm font-medium text-slate-300" htmlFor="password">Password</label>
                 <div className="relative">
@@ -188,7 +181,6 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {/* Submit */}
               <button type="submit" disabled={isLoading}
                 className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-70"
                 style={{
@@ -203,9 +195,8 @@ export default function LoginPage() {
             </form>
           </div>
 
-          {/* Footer */}
           <p className="mt-6 text-center text-xs text-slate-600">
-            Odin Orchestration Platform · Multi-Agent Runtime
+            the-M · Multi-Agent Runtime
           </p>
         </section>
       </main>

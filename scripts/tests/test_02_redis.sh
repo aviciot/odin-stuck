@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-CONTAINER="${REDIS_CONTAINER:-odin-redis}"
+CONTAINER="${REDIS_CONTAINER:-them-redis}"
 REDIS_DB="${REDIS_DB:-0}"
 PASS=0
 FAIL=0

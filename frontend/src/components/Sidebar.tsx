@@ -44,25 +44,25 @@ export default function Sidebar() {
         <div style={{ padding: '0 24px', marginBottom: '32px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
             {/* Mini logo */}
-            <div style={{
-              width: '32px', height: '32px', borderRadius: '8px',
-              background: 'linear-gradient(135deg, #3b4dff 0%, #7c3aed 100%)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
-                <circle cx="12" cy="12" r="4" stroke="white" strokeWidth="1.5"/>
-                <circle cx="12" cy="4" r="1.5" fill="white"/>
-                <circle cx="12" cy="20" r="1.5" fill="white"/>
-                <circle cx="4" cy="12" r="1.5" fill="white"/>
-                <circle cx="20" cy="12" r="1.5" fill="white"/>
-                <line x1="12" y1="8" x2="12" y2="5.5" stroke="white" strokeWidth="1"/>
-                <line x1="12" y1="16" x2="12" y2="18.5" stroke="white" strokeWidth="1"/>
-                <line x1="8" y1="12" x2="5.5" y2="12" stroke="white" strokeWidth="1"/>
-                <line x1="16" y1="12" x2="18.5" y2="12" stroke="white" strokeWidth="1"/>
-              </svg>
-            </div>
+            {/* Shield + M logo */}
+            <svg width="34" height="38" viewBox="0 0 80 88" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="sb-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" style={{ stopColor: '#3b4dff', stopOpacity: 1 }} />
+                  <stop offset="100%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
+                </linearGradient>
+              </defs>
+              <path d="M40 4 L74 18 L74 46 C74 64 58 78 40 84 C22 78 6 64 6 46 L6 18 Z"
+                fill="rgba(59,77,255,0.15)" stroke="url(#sb-grad)" strokeWidth="3" />
+              <circle cx="20" cy="28" r="4.5" fill="url(#sb-grad)" />
+              <circle cx="40" cy="52" r="4.5" fill="url(#sb-grad)" />
+              <circle cx="60" cy="28" r="4.5" fill="url(#sb-grad)" />
+              <line x1="20" y1="28" x2="40" y2="52" stroke="url(#sb-grad)" strokeWidth="3" strokeLinecap="round"/>
+              <line x1="40" y1="52" x2="60" y2="28" stroke="url(#sb-grad)" strokeWidth="3" strokeLinecap="round"/>
+              <circle cx="40" cy="52" r="5.5" fill="#e63946" />
+            </svg>
             <div>
-              <h1 style={{ color: '#e8eaed', fontWeight: 900, fontSize: '18px', letterSpacing: '-0.02em', lineHeight: 1 }}>Odin</h1>
+              <h1 style={{ color: '#e8eaed', fontWeight: 900, fontSize: '18px', letterSpacing: '-0.02em', lineHeight: 1 }}>the-M</h1>
               <p style={{ color: 'rgba(255,255,255,.3)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
                 Orchestration
               </p>

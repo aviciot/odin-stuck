@@ -1,4 +1,4 @@
-export interface OdinUser {
+export interface TheMUser {
   id: number;
   email: string;
   username: string;
@@ -13,7 +13,7 @@ export interface TokenResponse {
 }
 
 export interface AuthState {
-  user: OdinUser | null;
+  user: TheMUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;

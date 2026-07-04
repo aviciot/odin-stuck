@@ -1,9 +1,9 @@
 """
 Agent registry with two-level cache:
   L1: in-process dict (per replica, cleared on pub/sub signal)
-  L2: Redis odin:agents:registry (TTL 600s, shared across replicas)
+  L2: Redis them:agents:registry (TTL 600s, shared across replicas)
 
-Pub/sub channel odin:agents:changed triggers invalidation on all replicas.
+Pub/sub channel them:agents:changed triggers invalidation on all replicas.
 """
 
 import asyncio
@@ -17,8 +17,8 @@ from app.database import get_redis
 from app.models import Agent
 from app.utils.logger import logger
 
-_REGISTRY_KEY = "odin:agents:registry"
-_CHANGE_CHANNEL = "odin:agents:changed"
+_REGISTRY_KEY = "them:agents:registry"
+_CHANGE_CHANNEL = "them:agents:changed"
 _TTL = 600
 
 # L1 in-process cache: None means "not loaded yet"
@@ -99,7 +99,7 @@ async def invalidate_registry() -> None:
 
 
 async def start_change_listener() -> None:
-    """Background task: subscribe to odin:agents:changed and clear L1 on signal."""
+    """Background task: subscribe to them:agents:changed and clear L1 on signal."""
     global _l1_cache
     try:
         redis = await get_redis()

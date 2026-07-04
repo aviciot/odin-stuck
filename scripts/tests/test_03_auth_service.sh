@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# test_03_auth_service.sh — verify odin-auth-service health endpoints
+# test_03_auth_service.sh — verify them-auth-service health endpoints
 # Runs curl inside the container to avoid needing exposed host ports.
 # Usage: bash scripts/tests/test_03_auth_service.sh
 
 set -euo pipefail
 
-CONTAINER="${AUTH_CONTAINER:-odin-auth-service}"
+CONTAINER="${AUTH_CONTAINER:-them-auth-service}"
 PORT="${AUTH_PORT:-8701}"
 BASE="http://localhost:$PORT"
 PASS=0

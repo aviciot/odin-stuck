@@ -43,8 +43,8 @@ class Settings:
     RATE_LIMIT_WINDOW: int = int(os.getenv("RATE_LIMIT_WINDOW", "3600"))  # 1 hour
 
     # Application Metadata
-    APP_TITLE: str = "Odin Auth Service"
-    APP_DESCRIPTION: str = "Authentication and authorization for Odin"
+    APP_TITLE: str = "the-M Auth Service"
+    APP_DESCRIPTION: str = "Authentication and authorization for the-M"
     APP_VERSION: str = "1.0.0"
 
     @classmethod
