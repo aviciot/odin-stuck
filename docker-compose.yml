@@ -28,7 +28,7 @@ services:
       POSTGRES_USER: ${THE_M_DB_USER:-them}
       POSTGRES_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
     volumes:
-      - ./data/them-postgres:/var/lib/postgresql/data
+      - ./data/them-postgres/pgdata:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
     networks:
       - them-network
@@ -379,7 +379,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3200/login"]
+      test: ["CMD", "curl", "-f", "-L", "http://localhost:3200/login"]
       interval: 30s
       timeout: 5s
       retries: 3

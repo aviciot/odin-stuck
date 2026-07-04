@@ -35,6 +35,7 @@ async def get_db_pool() -> asyncpg.Pool:
                 min_size=settings.DB_POOL_MIN_SIZE,
                 max_size=settings.DB_POOL_MAX_SIZE,
                 init=_set_search_path,
+                ssl=False,
             )
             logger.info(f"Database pool created: {settings.DB_POOL_MIN_SIZE}-{settings.DB_POOL_MAX_SIZE} connections")
         except Exception as e:

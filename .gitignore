@@ -18,7 +18,7 @@ coverage.xml
 
 # Logs & data (bind-mounted volumes)
 logs/
-data/them-postgres/
+data/them-postgres/pgdata/
 data/them-redis/
 data/them-logs/
 # Old volume paths (pre-rename)
