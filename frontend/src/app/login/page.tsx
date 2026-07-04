@@ -71,35 +71,35 @@ export default function LoginPage() {
           {/* the-M Logo — shield with agent-network M */}
           <div className="mb-6 flex justify-center items-center gap-4">
             <div className="relative flex items-center justify-center">
-              <svg width="80" height="88" viewBox="0 0 80 88" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="them-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" style={{ stopColor: '#3b4dff', stopOpacity: 1 }} />
-                    <stop offset="100%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
-                  </linearGradient>
-                  <linearGradient id="them-shield" x1="0%" y1="0%" x2="100%" y2="100%">
-                    <stop offset="0%" style={{ stopColor: '#0f1729', stopOpacity: 1 }} />
-                    <stop offset="100%" style={{ stopColor: '#1a1f3a', stopOpacity: 1 }} />
-                  </linearGradient>
-                </defs>
-                {/* Shield shape */}
-                <path d="M40 4 L74 18 L74 46 C74 64 58 78 40 84 C22 78 6 64 6 46 L6 18 Z"
-                  fill="url(#them-shield)" stroke="url(#them-grad)" strokeWidth="2.5" />
-                {/* Agent network nodes — M shape */}
-                {/* Left top, apex, right top */}
-                <circle cx="20" cy="28" r="4" fill="url(#them-grad)" />
-                <circle cx="40" cy="52" r="4" fill="url(#them-grad)" />
-                <circle cx="60" cy="28" r="4" fill="url(#them-grad)" />
-                {/* Bottom nodes */}
-                <circle cx="28" cy="60" r="3" fill="url(#them-grad)" opacity="0.7"/>
-                <circle cx="52" cy="60" r="3" fill="url(#them-grad)" opacity="0.7"/>
-                {/* M strokes connecting the nodes */}
-                <line x1="20" y1="28" x2="40" y2="52" stroke="url(#them-grad)" strokeWidth="2.5" strokeLinecap="round"/>
-                <line x1="40" y1="52" x2="60" y2="28" stroke="url(#them-grad)" strokeWidth="2.5" strokeLinecap="round"/>
-                <line x1="20" y1="28" x2="28" y2="60" stroke="url(#them-grad)" strokeWidth="2" strokeLinecap="round" opacity="0.6"/>
-                <line x1="60" y1="28" x2="52" y2="60" stroke="url(#them-grad)" strokeWidth="2" strokeLinecap="round" opacity="0.6"/>
-                {/* Red core dot */}
-                <circle cx="40" cy="52" r="5" fill="#e63946" className="logo-core" />
+              {/*
+                Shield: heraldic shape — rounded top shoulders, straight sides, pointed bottom.
+                M network: 4 outer nodes (top-L, top-R, bottom-L, bottom-R) + center-valley node.
+                Lines: top-L→valley, top-R→valley, top-L→bottom-L, top-R→bottom-R (M shape).
+                Red dot: center valley (the "meeting point" of the M).
+              */}
+              <svg width="90" height="100" viewBox="0 0 90 100" xmlns="http://www.w3.org/2000/svg">
+                {/* Heraldic shield: flat top with rounded corners, tapers to a point */}
+                <path
+                  d="M12 10 Q12 4 18 4 L72 4 Q78 4 78 10 L78 52 C78 74 45 96 45 96 C45 96 12 74 12 52 Z"
+                  fill="rgba(15,23,42,0.85)"
+                  stroke="#e8eaed"
+                  strokeWidth="3.5"
+                  strokeLinejoin="round"
+                />
+                {/* M network lines — drawn first so nodes sit on top */}
+                {/* top-L(24,28) → valley(45,56) → top-R(66,28) */}
+                <line x1="24" y1="28" x2="45" y2="56" stroke="#c8ccd4" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="45" y1="56" x2="66" y2="28" stroke="#c8ccd4" strokeWidth="2" strokeLinecap="round"/>
+                {/* top-L → bottom-L(24,72), top-R → bottom-R(66,72) */}
+                <line x1="24" y1="28" x2="24" y2="72" stroke="#c8ccd4" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="66" y1="28" x2="66" y2="72" stroke="#c8ccd4" strokeWidth="2" strokeLinecap="round"/>
+                {/* M network nodes */}
+                <circle cx="24" cy="28" r="4.5" fill="#e8eaed" />
+                <circle cx="66" cy="28" r="4.5" fill="#e8eaed" />
+                <circle cx="24" cy="72" r="4.5" fill="#e8eaed" />
+                <circle cx="66" cy="72" r="4.5" fill="#e8eaed" />
+                {/* Center valley — red dot */}
+                <circle cx="45" cy="56" r="6" fill="#e63946" className="logo-core" />
               </svg>
             </div>
             <h1 style={{

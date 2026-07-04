@@ -44,22 +44,24 @@ export default function Sidebar() {
         <div style={{ padding: '0 24px', marginBottom: '32px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
             {/* Mini logo */}
-            {/* Shield + M logo */}
-            <svg width="34" height="38" viewBox="0 0 80 88" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="sb-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" style={{ stopColor: '#3b4dff', stopOpacity: 1 }} />
-                  <stop offset="100%" style={{ stopColor: '#7c3aed', stopOpacity: 1 }} />
-                </linearGradient>
-              </defs>
-              <path d="M40 4 L74 18 L74 46 C74 64 58 78 40 84 C22 78 6 64 6 46 L6 18 Z"
-                fill="rgba(59,77,255,0.15)" stroke="url(#sb-grad)" strokeWidth="3" />
-              <circle cx="20" cy="28" r="4.5" fill="url(#sb-grad)" />
-              <circle cx="40" cy="52" r="4.5" fill="url(#sb-grad)" />
-              <circle cx="60" cy="28" r="4.5" fill="url(#sb-grad)" />
-              <line x1="20" y1="28" x2="40" y2="52" stroke="url(#sb-grad)" strokeWidth="3" strokeLinecap="round"/>
-              <line x1="40" y1="52" x2="60" y2="28" stroke="url(#sb-grad)" strokeWidth="3" strokeLinecap="round"/>
-              <circle cx="40" cy="52" r="5.5" fill="#e63946" />
+            {/* Shield + M logo (sidebar mini) */}
+            <svg width="32" height="36" viewBox="0 0 90 100" xmlns="http://www.w3.org/2000/svg">
+              <path
+                d="M12 10 Q12 4 18 4 L72 4 Q78 4 78 10 L78 52 C78 74 45 96 45 96 C45 96 12 74 12 52 Z"
+                fill="rgba(59,77,255,0.15)"
+                stroke="rgba(232,234,237,0.7)"
+                strokeWidth="4"
+                strokeLinejoin="round"
+              />
+              <line x1="24" y1="28" x2="45" y2="56" stroke="rgba(232,234,237,0.7)" strokeWidth="2.5" strokeLinecap="round"/>
+              <line x1="45" y1="56" x2="66" y2="28" stroke="rgba(232,234,237,0.7)" strokeWidth="2.5" strokeLinecap="round"/>
+              <line x1="24" y1="28" x2="24" y2="72" stroke="rgba(232,234,237,0.7)" strokeWidth="2.5" strokeLinecap="round"/>
+              <line x1="66" y1="28" x2="66" y2="72" stroke="rgba(232,234,237,0.7)" strokeWidth="2.5" strokeLinecap="round"/>
+              <circle cx="24" cy="28" r="4.5" fill="rgba(232,234,237,0.9)" />
+              <circle cx="66" cy="28" r="4.5" fill="rgba(232,234,237,0.9)" />
+              <circle cx="24" cy="72" r="4.5" fill="rgba(232,234,237,0.9)" />
+              <circle cx="66" cy="72" r="4.5" fill="rgba(232,234,237,0.9)" />
+              <circle cx="45" cy="56" r="6" fill="#e63946" />
             </svg>
             <div>
               <h1 style={{ color: '#e8eaed', fontWeight: 900, fontSize: '18px', letterSpacing: '-0.02em', lineHeight: 1 }}>the-M</h1>
