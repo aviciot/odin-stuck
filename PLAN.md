@@ -1,6 +1,6 @@
 # the-M — A2A-Native Platform Plan
 # Last updated: 2026-07-04
-# Status: IN PROGRESS
+# Status: COMPLETE
 
 ---
 
@@ -26,13 +26,13 @@ Transform the-M from an LLM-tool-loop orchestrator into a fully A2A-native platf
 
 | Phase | Name | Status |
 |---|---|---|
-| 1 | A2A Server — the-M as an A2A agent | TODO |
-| 2 | Task graph — durable first-class tasks | TODO |
-| 3 | Durable planner — context from DB, not RAM | TODO |
-| 4 | Async delegation — long-running agents, push, governance | TODO |
-| 5 | Shared context — memory across task graph | TODO |
-| 6 | Playground — agent debug panel | TODO |
-| 7 | A2A test agents — real SDK, integration tests | TODO |
+| 1 | A2A Server — the-M as an A2A agent | ✓ Done |
+| 2 | Task graph — durable first-class tasks | ✓ Done |
+| 3 | Durable planner — context from DB, not RAM | ✓ Done |
+| 4 | Async delegation — long-running agents, push, governance | ✓ Done |
+| 5 | Shared context — memory across task graph | ✓ Done |
+| 6 | Playground — agent debug panel | ✓ Done |
+| 7 | A2A test agents — real SDK, integration tests | ✓ Done |
 
 ---
 
@@ -506,4 +506,4 @@ Confirm the platform handles them correctly. Fix anything that breaks.
 - [x] Phase 4 — Async Delegation + Governance
 - [x] Phase 5 — Shared Context / Memory
 - [x] Phase 6 — Playground Debug Panel
-- [ ] Phase 7 — Real A2A Test Agents + Integration Tests
+- [x] Phase 7 — Real A2A Test Agents + Integration Tests

@@ -51,6 +51,45 @@ ON CONFLICT (slug) DO UPDATE SET
     endpoint_url = EXCLUDED.endpoint_url,
     enabled      = EXCLUDED.enabled;
 
+-- ── A2A Test Agents (enable profile: test-agents) ────────────────────────────
+-- These match the a2a-* containers in docker-compose.yml under profile: test-agents.
+-- transport=a2a_async — handled by A2aAsyncAdapter.
+
+INSERT INTO them.agents (slug, display_name, description, transport, endpoint_url, enabled, supports_streaming)
+VALUES
+    (
+        'a2a-echo',
+        'A2A Echo',
+        'Echoes the input message verbatim. A2A v1.0 test agent for basic task lifecycle validation.',
+        'a2a_async',
+        'http://a2a-echo:9200',
+        false,
+        false
+    ),
+    (
+        'a2a-slow',
+        'A2A Slow',
+        'Waits 5 seconds before completing. Tests deadline enforcement and async delegation.',
+        'a2a_async',
+        'http://a2a-slow:9201',
+        false,
+        false
+    ),
+    (
+        'a2a-stream',
+        'A2A Stream',
+        'Streams a response word by word via artifact chunks. Tests SSE streaming and artifact assembly.',
+        'a2a_async',
+        'http://a2a-stream:9202',
+        false,
+        true
+    )
+ON CONFLICT (slug) DO UPDATE SET
+    display_name       = EXCLUDED.display_name,
+    description        = EXCLUDED.description,
+    endpoint_url       = EXCLUDED.endpoint_url,
+    supports_streaming = EXCLUDED.supports_streaming;
+
 -- ── Default Orchestrator ──────────────────────────────────────────────────────
 -- Wires all three mock agents together.
 

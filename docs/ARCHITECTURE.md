@@ -6,8 +6,9 @@
 Each enabled `them.agents` row = ONE LLM tool named `agent__<slug>`.
 The agent's `description` is the tool description — the LLM uses it to decide when to call this agent.
 
-The orchestrator engine is Omni's `llm_service.py` agentic loop with one change:
-MCP tool execution → agent adapter invocation.
+The platform runs two orchestration paths in parallel:
+- **Legacy path** (`orchestrator_service.py`): in-RAM loop, run/step recorded to Postgres
+- **A2A-native path** (`task_runner.py`): durable task graph, tasks/artifacts stored in Postgres; the default for new deployments
 
 ## Entry Points
 
@@ -20,6 +21,11 @@ MCP tool execution → agent adapter invocation.
 | `/api/v1/admin/orchestrators/{id}/test-llm` | POST | JWT (admin) | Validate LLM API key |
 | `/api/v1/admin/tokens` | REST | JWT (admin) | Access token management |
 | `/api/v1/runs` | REST | JWT | Run history |
+| `/api/v1/runs/{id}/tasks` | REST | JWT | Task graph for a run |
+| `/api/v1/runs/{id}/artifacts` | REST | JWT | Artifacts for a run |
+| `/api/v1/runs/context/{context_id}/artifacts` | REST | JWT | Context-scoped artifact query |
+| `/a2a/push/{task_id}` | POST | Bearer | Push webhook for A2A agent callbacks |
+| `/.well-known/agent-card.json` | GET | None | the-M's own A2A agent card |
 | `/health`, `/health/ready`, `/health/live` | GET | None | Health checks |
 
 ## Auth Flow (Frontend → Bridge)
@@ -45,27 +51,62 @@ WebSocket connections (can't use httpOnly cookies):
 
 **Security note:** `/api/auth/token` returns the raw JWT to JS — acceptable only for the admin playground where the token is used transiently for WS connection and never stored.
 
-## Orchestrator Lifecycle
+## A2A-Native Orchestrator (task_runner.py) — Primary Path
 
-1. Client connects to `/ws/orchestrate/{name}`
-2. Auth: opaque access token → L1 cache → L2 Redis → DB; OR admin JWT (for playground)
-3. Orchestrator config loaded from Redis `them:orchestrators:{name}` (600s TTL, DB fallback)
-4. Agent list built: `SELECT * FROM them.agents WHERE id = ANY(allowed_agent_ids) AND enabled`
-   (empty `allowed_agent_ids` = all enabled agents)
-5. Each agent → `NeutralTool(name=f"agent__{slug}", description=agent.description, schema=agent.input_schema)`
-6. LLM agentic loop starts (≤ `max_iterations`):
-   a. LLM receives tools list + system prompt + user message
-   b. LLM may emit one or more ToolCalls in a single iteration
-   c. Parallel execution: `asyncio.gather()` over all ToolCalls in iteration,
-      bounded by `orchestrator.max_parallel_tools` + per-agent `asyncio.Semaphore(max_concurrency)`
-   d. Each ToolCall → `factory.get_adapter(agent)` → `adapter.stream_invoke(input)` → collect result
-   e. **Redis publish:** every event (iteration_start, tool_start, tool_done, usage, run_end) is published
-      to `them:dash:run:{run_id}` (full) and `them:dash:runs` (summary)
-   f. Results fed back to LLM as tool_results
-   g. LLM continues or emits final answer
-7. Each LLM call → `run_recorder.record_usage()` → `them.run_usage`
-8. Each agent call → `run_recorder.record_step()` → `them.run_steps`
-9. On completion → `run_recorder.complete_run()` → `them.runs` status=completed
+The A2A-native path treats every orchestration run as a durable task graph.
+
+### Flow
+
+```
+Client → WS /ws/orchestrate/{name}
+  └─ ws_orchestrator.py: parse auth, load orchestrator config, create root Task in DB
+       └─ task_runner.run(root_task, orchestrator, agents, ws)
+            └─ Build tool list from agents (NeutralTool per agent)
+            └─ LLM agentic loop (≤ max_iterations):
+                 LLM call → zero or more ToolCalls
+                 Per ToolCall → route via adapter → child task in DB
+                 Parallel: asyncio.gather() bounded by max_parallel_tools + per-agent Semaphore
+                 Artifacts stored via context_service.record_and_cache_artifact()
+                 Budget check: tokens_used vs budget_tokens on each iteration
+            └─ Final answer → artifact recorded in DB + streamed to WS
+            └─ Root task transitioned to completed/failed
+  └─ WS sends: ready, task_id, context_id, token, tool_start, tool_done, done, error
+```
+
+### Task State Machine
+
+```
+submitted → working → completed
+                   ↘ failed
+                   ↘ canceled
+                   ↘ rejected (input-required received but not handled)
+```
+
+State transitions enforced by `task_store.transition()` — illegal transitions silently dropped.
+
+### Durable Context (context_service.py)
+
+- Every task carries a `context_id` that groups related tasks across sessions
+- Artifacts stored in `them.artifacts`; the-M is the sole writer
+- Redis hot cache `them:ctx:{context_id}:heads` (TTL 300s) for artifact lookup
+- Cache-aside: miss → query Postgres; hit → return cached list
+- `context_service.record_and_cache_artifact()` writes to DB then invalidates cache
+
+### Budget Enforcement
+
+- Root task created with `budget_tokens` (from orchestrator config) and `deadline`
+- On each loop iteration: `tokens_used >= budget_tokens` → fail with "Budget exceeded"
+- Reaper background task (runs every 60s) transitions tasks past `deadline` to `failed`
+
+### Redis Events
+
+Published by `task_store.transition()` and `task_store.record_artifact()`:
+- `them:tasks:{task_id}:events` — every state change and artifact chunk (consumed by ws_orchestrator)
+- `them:dash:run:{run_id}` — reformatted run trace events (consumed by ws_dashboard subscribers)
+
+## Legacy Orchestrator (orchestrator_service.py) — Retained
+
+Kept for backward compatibility. Uses in-RAM accumulator, records to `them.runs`/`them.run_steps`/`them.run_usage`. No task graph or artifacts.
 
 ## Dashboard WebSocket — Channel Multiplexing
 
@@ -90,32 +131,13 @@ Redis key mapping: channel `run:abc` → pub/sub channel `them:dash:run:abc`
 Browser Playground
   ├─ Left pane: chat
   │    └─ WebSocket → /ws/orchestrate/{name}?token=<jwt>
-  │         streams: token, tool_start, tool_done, done, error
-  └─ Right pane: trace
-       └─ On "ready" event (contains run_id):
-            WebSocket → /ws/dashboard?token=<jwt>
-            subscribe: ["run:{run_id}"]
-            receives: run_start, iteration_start, tool_start, tool_done, usage, run_end
+  │         streams: ready (with task_id, context_id), token, tool_start, tool_done, done, error
+  └─ Right pane: debug tabs
+       ├─ Trace tab — WS → /ws/dashboard, subscribe: ["run:{run_id}"]
+       ├─ Tasks tab — GET /api/v1/runs/{run_id}/tasks  (on done event)
+       ├─ Artifacts tab — GET /api/v1/runs/{run_id}/artifacts  (on done event)
+       └─ Memory tab — per-agent "Fetch Agent Card" → GET {endpoint}/.well-known/agent-card.json
 ```
-
-The trace pane shows the orchestrator's internal reasoning in real time via Redis pub/sub — completely separate from the user-facing token stream.
-
-## Redis Pub/Sub — Run Trace Events
-
-Published by `orchestrator_service._publish_run_event()` to two channels per event:
-- `them:dash:run:{run_id}` — full event including tool inputs/outputs
-- `them:dash:runs` — summary (no `input` field) for global dashboard widgets
-
-Event types:
-| type | Fields | When |
-|---|---|---|
-| `run_start` | orchestrator, goal | Before first LLM call |
-| `iteration_start` | iteration | Start of each LLM call |
-| `tool_start` | tool, input, iteration | Before adapter invocation |
-| `tool_done` | tool, output, iteration | After adapter completes |
-| `usage` | iteration, input_tokens, output_tokens | After each LLM call |
-| `run_end` | status, iterations, total_tokens_in, total_tokens_out, error | Run complete |
-| `error` | message | On any fatal error |
 
 ## Adapter Abstraction
 
@@ -124,33 +146,68 @@ AgentAdapter (base.py)
   └── stream_invoke(input: dict) → AsyncGenerator[AdapterEvent, None]
 
 AdapterEvent
-  type: "token" | "done" | "error"
-  text: str | None       # for token events
-  result: str | None     # for done events (full agent response)
-  error: str | None      # for error events
+  type: "token" | "done" | "error" | "task_created" | "status" | "artifact"
+  text: str | None          # token events
+  result: str | None        # done events
+  error: str | None         # error events
+  remote_task_id: str|None  # task_created events
+  state: str | None         # status events ("working", "completed", ...)
+  artifact: dict | None     # full A2A artifact dict
+  input_required: bool      # True when agent emits input-required state
 
-OmniWsAdapter (omni_ws_adapter.py)
-  - Connects to agent via WebSocket + Bearer token
-  - Sends: {"type": "message", "content": input["message"]}
-  - Parses WS stream events → AdapterEvent
+OmniWsAdapter (omni_ws_adapter.py)  transport="omni_ws"
+  - WebSocket to agent; sends {"type":"message","content":...}
+  - Parses WS stream → token/done/error AdapterEvents
+  - Used for mock-agent-* containers
 
-A2aAdapter (a2a_adapter.py)  ← fully implemented
-  - HTTP POST to {endpoint_url} with JSON-RPC 2.0 SendMessage
-  - Message body: {"parts": [{"text": input["message"]}]}
-  - Polls via GetTask if task state is not terminal (up to 30s, 0.5s interval)
-  - Terminal states: TASK_STATE_COMPLETED, TASK_STATE_FAILED, TASK_STATE_CANCELED, TASK_STATE_REJECTED
-  - On TASK_STATE_COMPLETED: streams result word-by-word as token events, then emits done
-  - On failure states: emits error event
-  - No native streaming — result is always collected first, then re-streamed token-by-token
-  - Auth: Authorization: Bearer <decrypted token>
+A2aAdapter (a2a_adapter.py)  transport="a2a"
+  - HTTP JSON-RPC SendMessage; polls GetTask up to 30s
+  - Synchronous — collects full result then re-streams as tokens
+  - Legacy; kept for simple A2A use cases
 
-MockAgent (mock_agent/agent.py)
-  - Standalone Python WS server (websockets>=12)
-  - Reads AGENT_NAME, AGENT_PERSONA, AGENT_DELAY, PORT, AUTH_TOKEN env vars
-  - Streams word-by-word reply then sends {"type":"done"}
-  - Used for dev/testing only — three instances in docker-compose
-  - IMPORTANT: no volume mount, requires `docker compose build` to pick up code changes
+A2aAsyncAdapter (a2a_async_adapter.py)  transport="a2a_async"
+  - Non-blocking submit → stream via SSE or polling
+  - SSE: GET {endpoint}tasks/{id}/events; falls back to polling on HTTP error
+  - Deduplicates artifacts by artifact_id
+  - Full artifact parts preservation — passes dict to task_store.record_artifact()
+  - Used for a2a-echo, a2a-slow, a2a-stream test agents
+  - Supports long-running tasks (configurable poll_interval, max_poll_seconds)
 ```
+
+See `docs/ADAPTERS.md` for complete transport protocol details.
+
+## A2A Test Agents (profiles: test-agents)
+
+Three real A2A SDK agents in `agents/` for integration testing:
+
+| Agent | Port | Purpose |
+|---|---|---|
+| `a2a-echo` | 9200 | Echoes input verbatim. Tests basic task lifecycle. |
+| `a2a-slow` | 9201 | Waits `SLOW_DELAY_S` seconds (default 5). Tests deadline and async delegation. |
+| `a2a-stream` | 9202 | Streams response word-by-word as artifact chunks. Tests SSE and artifact assembly. |
+
+All use `a2a-sdk 1.1.0` (`AgentExecutor` ABC, `EventQueue.enqueue_event()`, `InMemoryTaskStore`, `add_a2a_routes_to_fastapi`).
+
+Enable with:
+```bash
+docker compose --profile test-agents up -d a2a-echo a2a-slow a2a-stream
+```
+
+Seeded in `db/002_seed.sql` with `enabled=false` — enable via admin API when running integration tests.
+
+## A2A Push Webhook
+
+When an agent supports push notifications, it can POST task updates to:
+```
+POST /a2a/push/{task_id}
+Authorization: Bearer <access_token>
+Body: {"status": {"state": "completed"}, "artifacts": [...]}
+```
+
+Handler (`a2a_server.py`):
+- Resolves task from `them.tasks`
+- Idempotent if task already terminal
+- Calls `task_store.transition()` + `task_store.record_artifact()` for each artifact
 
 ## Multi-Replica Scalability
 
@@ -160,13 +217,16 @@ MockAgent (mock_agent/agent.py)
 | Token cache L2 | token_cache.py | Yes | Redis `them:session:token:*` TTL 300s |
 | Rate limiting | rate_limiter.py | Yes | Redis INCR fixed-window |
 | Agent registry cache | agent_registry.py | Yes | Redis `them:agents:registry`, pub/sub invalidation |
-| Orchestrator config | orchestrator_service.py | Yes | Redis `them:orchestrators:{name}` TTL 600s |
-| Run state | run_recorder.py | Yes | Postgres `them.runs` |
-| WS connections | ws_connection_manager.py | No (by design) | Traefik sticky sessions `them_sticky` |
+| Orchestrator config | task_runner.py | Yes | Redis `them:orchestrators:{name}` TTL 600s |
+| Task + artifact state | task_store.py | Yes | Postgres `them.tasks`, `them.artifacts` |
+| Context artifact cache | context_service.py | Yes | Redis `them:ctx:{context_id}:heads` TTL 300s |
+| Run state (legacy) | run_recorder.py | Yes | Postgres `them.runs` |
+| WS connections | ws_orchestrator.py | No (by design) | Traefik sticky sessions `them_sticky` |
 | Replica heartbeat | main.py bg task | Yes | Redis `them:bridge:{ID}:heartbeat` 30s TTL |
 
-## Background Tasks
+## Background Tasks (main.py lifespan)
 
 - `agent_registry_refresh_loop` — every 600s, re-loads agents from DB, publishes `them:agents:changed`
 - `heartbeat_loop` — every 10s, writes `them:bridge:{INSTANCE_ID}:heartbeat`
 - `config_change_listener` — xreads `them:control:events` for cache invalidation signals
+- `_reaper_loop` — every 60s, finds tasks past `deadline`, transitions them to `failed`

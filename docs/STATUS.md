@@ -14,9 +14,14 @@
 | Phase 6 — Dashboard WS + runs API | ✓ Complete | ws_dashboard.py, runs.py, Redis pub/sub multiplexing |
 | Phase 6.5 — Frontend admin UI | ✓ Complete | Orchestrators, Agents, Tokens, Runs pages; per-orch LLM config |
 | Phase 6.6 — Playground UI | ✓ Complete | Split-pane chat + real-time Redis trace; mock agents |
-| Phase 7 — Tests + compose finalize | ✓ Complete | 140 tests passing (cross-platform Python runner), compose hardened |
+| Phase 7 — Tests + compose finalize | ✓ Complete | 140+ tests passing (cross-platform Python runner), compose hardened |
 | Rename: Odin → the-M | ✓ Complete | All identifiers, schemas, containers, Redis keys, cookies renamed |
 | Local deployment | ✓ Complete | Stack running, DB seeded, users created, login works |
+| **A2A migration Phase 3** | ✓ Complete | task_runner.py (durable agentic loop), task_store.py, ws_orchestrator rewired |
+| **A2A migration Phase 4** | ✓ Complete | A2aAsyncAdapter, AdapterEvent extended, push webhook (/a2a/push), reaper |
+| **A2A migration Phase 5** | ✓ Complete | context_service.py, Redis artifact cache `them:ctx:{ctx_id}:heads` |
+| **A2A migration Phase 6** | ✓ Complete | runs/{id}/tasks, runs/{id}/artifacts, runs/context/{ctx_id}/artifacts endpoints; playground debug tabs |
+| **A2A migration Phase 7** | ✓ Complete | a2a-echo, a2a-slow, a2a-stream agents; test-agents compose profile; seed SQL; test_16 |
 
 ## Infrastructure (as of 2026-07-04)
 
@@ -31,6 +36,9 @@
 | `mock-agent-researcher` | `mock_agent/` | — | 9000 (internal) |
 | `mock-agent-coder` | `mock_agent/` | — | 9000 (internal) |
 | `vision-agent` | `agents/vision_agent/` | — | 9100 (internal) — **unhealthy** |
+| `a2a-echo` | `agents/a2a_echo/` | — | 9200 (internal) — **profile: test-agents** |
+| `a2a-slow` | `agents/a2a_slow/` | — | 9201 (internal) — **profile: test-agents** |
+| `a2a-stream` | `agents/a2a_stream/` | — | 9202 (internal) — **profile: test-agents** |
 
 ## Users Seeded
 
@@ -52,6 +60,11 @@
 | `/ws/orchestrate/{name}` | WebSocket | ✓ Live |
 | `/ws/dashboard` | WebSocket | ✓ Live |
 | `/api/v1/runs` | GET/DELETE | ✓ Live |
+| `/api/v1/runs/{id}/tasks` | GET | ✓ Live (A2A Phase 6) |
+| `/api/v1/runs/{id}/artifacts` | GET | ✓ Live (A2A Phase 6) |
+| `/api/v1/runs/context/{ctx_id}/artifacts` | GET | ✓ Live (A2A Phase 6) |
+| `/a2a/push/{task_id}` | POST | ✓ Live (A2A Phase 4) |
+| `/.well-known/agent-card.json` | GET | ✓ Live (A2A Phase 4) |
 
 ## Frontend Pages (live, http://localhost:3200)
 
@@ -63,12 +76,17 @@
 | Run History | `/runs` | ✓ |
 | Orchestrators | `/admin/orchestrators` | ✓ |
 | Access Tokens | `/admin/tokens` | ✓ |
-| Playground | `/admin/playground` | ✓ — split chat + trace pane |
+| Playground | `/admin/playground` | ✓ — chat + debug tabs (Trace, Tasks, Artifacts, Memory) |
 
 ## Open Items
 
 - **`vision-agent` unhealthy**: needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` set in `.env`. Not blocking anything else.
 - **Git hooks not wired**: test runner exists (`python scripts/tests/run_tests.py`) but no pre-push hook. Planned as GitHub Actions.
 - **Replica 2**: compose profile `replica`, not running by default. Enable with `--profile replica`.
+- **A2A test agents not seeded into live DB yet**: `db/002_seed.sql` has the rows but `them-postgres` was seeded before Phase 7. Re-run seed to add `a2a-echo`, `a2a-slow`, `a2a-stream` rows:
+  ```
+  docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+  docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
+  ```
 - **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
 - **`them-frontend` shows unhealthy in `docker ps`**: false alarm — Docker healthcheck uses `curl -f -L` but Next.js dev mode takes >30s to compile first request. App works fine; healthcheck timing is aggressive.

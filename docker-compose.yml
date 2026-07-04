@@ -390,6 +390,85 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  # ── A2A Test Agents — enable with: docker compose --profile test-agents up -d ─
+
+  a2a-echo:
+    build:
+      context: ./agents/a2a_echo
+      dockerfile: Dockerfile
+    container_name: a2a-echo
+    profiles: [test-agents]
+    expose:
+      - "9200"
+    environment:
+      PORT: "9200"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9200/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  a2a-slow:
+    build:
+      context: ./agents/a2a_slow
+      dockerfile: Dockerfile
+    container_name: a2a-slow
+    profiles: [test-agents]
+    expose:
+      - "9201"
+    environment:
+      PORT: "9201"
+      SLOW_DELAY_S: "5"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9201/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  a2a-stream:
+    build:
+      context: ./agents/a2a_stream
+      dockerfile: Dockerfile
+    container_name: a2a-stream
+    profiles: [test-agents]
+    expose:
+      - "9202"
+    environment:
+      PORT: "9202"
+      WORD_DELAY_S: "0.05"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9202/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ── Vision Agent — Location Visualizer ──────────────────────────────────────
   vision-agent:
     build:

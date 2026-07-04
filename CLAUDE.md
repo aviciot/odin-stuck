@@ -174,6 +174,7 @@ Full suite, ~30s. Zero failures required before committing.
 | `app/routers/runs.py` | 12 (runs API) |
 | `app/routers/ws_dashboard.py` or `dashboard_broadcaster.py` | 13 (dashboard WS) |
 | Any infrastructure change | 15 (compose health) |
+| `agents/a2a_*`, docker-compose test-agents profile | 16 (A2A agent structure) |
 | Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) |
 
 **E2E test (14) — needs a JWT:**

@@ -709,6 +709,81 @@ def test_15_compose_health():
     s = http_status("them-bridge", "/health/live", 8701, host="them-auth-service")
     check("Bridge → them-auth-service HTTP", s == "200", f"got {s}")
 
+# ─── test 16: A2A agent structure ────────────────────────────────────────────
+
+def test_16_a2a_agents():
+    section("test_16_a2a_agents: A2A Test Agents Structure")
+    sys.path.insert(0, str(ROOT))
+
+    agents = ("a2a_echo", "a2a_slow", "a2a_stream")
+
+    # File existence
+    for agent in agents:
+        path = ROOT / f"agents/{agent}"
+        check(f"agents/{agent}/ exists", path.is_dir())
+        check(f"agents/{agent}/main.py exists", (path / "main.py").exists())
+        check(f"agents/{agent}/Dockerfile exists", (path / "Dockerfile").exists())
+        check(f"agents/{agent}/requirements.txt exists", (path / "requirements.txt").exists())
+
+    # Structure of each main.py
+    for agent in agents:
+        try:
+            agent_src = (ROOT / f"agents/{agent}/main.py").read_text(encoding="utf-8")
+            tree = ast.parse(agent_src)
+            fns = [n.name for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))]
+            check(f"{agent}: execute defined", "execute" in fns)
+            check(f"{agent}: cancel defined", "cancel" in fns)
+            check(f"{agent}: make_agent_card defined", "make_agent_card" in fns)
+            check(f"{agent}: create_app defined", "create_app" in fns)
+            check(f"{agent}: AgentExecutor used", "AgentExecutor" in agent_src)
+            check(f"{agent}: add_a2a_routes_to_fastapi used", "add_a2a_routes_to_fastapi" in agent_src)
+            check(f"{agent}: capabilities in agent card", "capabilities" in agent_src)
+        except Exception as exc:
+            check(f"{agent} structure parse", False, str(exc))
+
+    # a2a-stream must advertise streaming=True
+    try:
+        stream_src = (ROOT / "agents/a2a_stream/main.py").read_text(encoding="utf-8")
+        check("a2a-stream: capabilities.streaming = True", ".streaming = True" in stream_src)
+    except Exception as exc:
+        check("a2a-stream streaming flag", False, str(exc))
+
+    # docker-compose.yml has test-agents profile
+    try:
+        compose_src = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        check("docker-compose: a2a-echo service", "a2a-echo" in compose_src)
+        check("docker-compose: a2a-slow service", "a2a-slow" in compose_src)
+        check("docker-compose: a2a-stream service", "a2a-stream" in compose_src)
+        check("docker-compose: test-agents profile", "test-agents" in compose_src)
+    except Exception as exc:
+        check("docker-compose structure", False, str(exc))
+
+    # db/002_seed.sql has a2a agent seeds
+    try:
+        seed_src = (ROOT / "db/002_seed.sql").read_text(encoding="utf-8")
+        check("seed: a2a-echo row", "'a2a-echo'" in seed_src)
+        check("seed: a2a-slow row", "'a2a-slow'" in seed_src)
+        check("seed: a2a-stream row", "'a2a-stream'" in seed_src)
+        check("seed: transport a2a_async", "a2a_async" in seed_src)
+        check("seed: supports_streaming column", "supports_streaming" in seed_src)
+    except Exception as exc:
+        check("002_seed.sql structure", False, str(exc))
+
+    # A2aAsyncAdapter still importable (no regression)
+    try:
+        from app.adapters.a2a_async_adapter import A2aAsyncAdapter
+        check("A2aAsyncAdapter importable", True)
+    except Exception as exc:
+        check("A2aAsyncAdapter import", False, str(exc))
+
+    # requirements.txt lists a2a-sdk for each agent
+    for agent in agents:
+        try:
+            req = (ROOT / f"agents/{agent}/requirements.txt").read_text(encoding="utf-8")
+            check(f"{agent}: requirements include a2a-sdk", "a2a-sdk" in req)
+        except Exception as exc:
+            check(f"{agent} requirements.txt", False, str(exc))
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -727,6 +802,7 @@ ALL_TESTS = [
     ("13", test_13_dashboard_ws),
     ("14", test_14_e2e_orchestrate),
     ("15", test_15_compose_health),
+    ("16", test_16_a2a_agents),
 ]
 
 if __name__ == "__main__":
