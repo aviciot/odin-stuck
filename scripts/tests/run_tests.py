@@ -1,0 +1,691 @@
+#!/usr/bin/env python3
+"""
+run_tests.py — the-M cross-platform test runner (Windows + Linux)
+Usage:
+    python scripts/tests/run_tests.py
+    python scripts/tests/run_tests.py --test 01 05 15     # run specific tests
+    ADMIN_JWT=<token> python scripts/tests/run_tests.py   # enable E2E test
+
+Calls Docker CLI via subprocess — works on any OS where `docker` is in PATH.
+No WSL, no bash required.
+"""
+
+import io
+import ast
+import hashlib
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+import asyncio
+import types
+
+# Force UTF-8 output on Windows (avoids CP1252 UnicodeEncodeError)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+ROOT = pathlib.Path(__file__).parent.parent.parent
+PASS = 0
+FAIL = 0
+SKIP = 0
+
+# ─── helpers ──────────────────────────────────────────────────────────────────
+
+def _color(text, code): return f"\033[{code}m{text}\033[0m" if sys.stdout.isatty() else text
+def green(t): return _color(t, "32")
+def red(t):   return _color(t, "31")
+def yellow(t): return _color(t, "33")
+def bold(t):  return _color(t, "1")
+
+def check(desc, ok, detail=""):
+    global PASS, FAIL
+    if ok:
+        print(f"  {green('[PASS]')} {desc}"); PASS += 1
+    else:
+        msg = f"  ({detail})" if detail else ""
+        print(f"  {red('[FAIL]')} {desc}{msg}"); FAIL += 1
+
+def skip(desc):
+    global SKIP
+    print(f"  {yellow('[SKIP]')} {desc}"); SKIP += 1
+
+def section(title):
+    print(f"\n{bold('===')} {title} {bold('===')}")
+
+def docker(*args, input=None):
+    """Run a docker command, return stdout string (empty on error)."""
+    try:
+        r = subprocess.run(
+            ["docker", *args],
+            capture_output=True, text=True, input=input, timeout=15
+        )
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+def dexec(container, *cmd):
+    """docker exec <container> <cmd...> → stdout string."""
+    return docker("exec", container, *cmd)
+
+def dcurl(container, *curl_args):
+    """docker exec <container> curl -s <args> → stdout string."""
+    return dexec(container, "curl", "-s", *curl_args)
+
+def http_status(container, path, port, method="GET", body=None, headers=None, host="localhost"):
+    args = ["-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10",
+            "-X", method, f"http://{host}:{port}{path}"]
+    if body:
+        args += ["-H", "Content-Type: application/json", "-d", body]
+    for h in (headers or []):
+        args += ["-H", h]
+    return dcurl(container, *args)
+
+def http_json(container, path, port, method="GET", body=None, headers=None, host="localhost"):
+    args = ["--max-time", "10", "-X", method, f"http://{host}:{port}{path}"]
+    if body:
+        args += ["-H", "Content-Type: application/json", "-d", body]
+    for h in (headers or []):
+        args += ["-H", h]
+    raw = dcurl(container, *args)
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+def src(rel_path):
+    return (ROOT / rel_path).read_text(encoding="utf-8")
+
+def funcs_in(rel_path):
+    tree = ast.parse(src(rel_path))
+    return [n.name for n in ast.walk(tree)
+            if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))]
+
+# ─── test 01: DB schema ───────────────────────────────────────────────────────
+
+def test_01_db():
+    section("test_01_db: Database & Schema")
+    PG = "them-postgres"
+
+    r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc", "SELECT 1")
+    check("DB connectivity", r.strip() == "1")
+
+    r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
+              "SELECT count(*) FROM information_schema.schemata WHERE schema_name='them'")
+    check("them schema exists", r.strip() == "1")
+
+    for tbl in ("llm_providers","config","agents","orchestrators",
+                "access_tokens","runs","run_steps","run_usage","audit_logs"):
+        r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
+                  f"SELECT count(*) FROM information_schema.tables "
+                  f"WHERE table_schema='them' AND table_name='{tbl}'")
+        check(f"table them.{tbl} exists", r.strip() == "1")
+
+# ─── test 02: Redis ───────────────────────────────────────────────────────────
+
+def test_02_redis():
+    section("test_02_redis: Redis Connectivity")
+    R = "them-redis"
+    r = dexec(R, "redis-cli", "-n", "0", "PING")
+    check("Redis PING", r.strip() == "PONG")
+    dexec(R, "redis-cli", "-n", "0", "SET", "them:test:canary", "ok", "EX", "10")
+    r = dexec(R, "redis-cli", "-n", "0", "GET", "them:test:canary")
+    check("Redis DB 0 read/write", r.strip() == "ok")
+    dexec(R, "redis-cli", "-n", "0", "DEL", "them:test:canary")
+
+# ─── test 03: auth service health ─────────────────────────────────────────────
+
+def test_03_auth_service():
+    section("test_03_auth_service: Auth Service Health")
+    C, P = "them-auth-service", 8701
+    for path in ("/health", "/health/live", "/health/ready"):
+        s = http_status(C, path, P)
+        check(f"GET {path} returns 200", s == "200", f"got {s}")
+    d = http_json(C, "/health", P)
+    check("health status=ok", d.get("status") == "ok", str(d))
+
+# ─── test 04: bridge health ───────────────────────────────────────────────────
+
+def test_04_bridge_health():
+    section("test_04_bridge_health: Bridge Health")
+    C, P = "them-bridge", 8001
+    for path in ("/health", "/health/live", "/health/ready"):
+        s = http_status(C, path, P)
+        check(f"GET {path} returns 200", s == "200", f"got {s}")
+    d = http_json(C, "/health", P)
+    check("health status=ok", d.get("status") == "ok", str(d))
+
+# ─── test 05: agents API CRUD ─────────────────────────────────────────────────
+
+def test_05_agents_api():
+    section("test_05_agents_api: Agents CRUD")
+    C, P = "them-bridge", 8001
+    BASE = "/api/v1/admin/agents"
+
+    s = http_status(C, BASE, P)
+    check("GET /admin/agents returns 200", s == "200", f"got {s}")
+
+    body = json.dumps({
+        "slug": "test_smoke_agent", "display_name": "Smoke Test Agent",
+        "description": "Temp agent for test_05", "transport": "omni_ws",
+        "endpoint_url": "ws://localhost:9999/ws", "auth_token": "test-token-abc123",
+        "timeout_seconds": 60, "max_concurrency": 2, "tags": ["test", "smoke"],
+    })
+    d = http_json(C, BASE, P, method="POST", body=body)
+    agent_id = d.get("id", "")
+    check("POST creates agent", d.get("slug") == "test_smoke_agent", str(d))
+    check("auth_token_set=True", d.get("auth_token_set") is True, str(d))
+
+    if not agent_id:
+        check("agent ID present (skipping remaining)", False); return
+
+    s = http_status(C, f"{BASE}/{agent_id}", P)
+    check("GET /admin/agents/{id} returns 200", s == "200", f"got {s}")
+
+    d = http_json(C, f"{BASE}/{agent_id}", P, method="PATCH",
+                  body='{"display_name":"Smoke Test Agent (updated)"}')
+    check("PATCH updates display_name",
+          d.get("display_name") == "Smoke Test Agent (updated)", str(d))
+
+    s = http_status(C, BASE, P, method="POST", body=body)
+    check("POST duplicate slug returns 409", s == "409", f"got {s}")
+
+    s = http_status(C, BASE, P, method="POST",
+                    body='{"slug":"x","display_name":"x","description":"x","transport":"invalid","endpoint_url":"ws://x"}')
+    check("POST invalid transport returns 422", s == "422", f"got {s}")
+
+    s = http_status(C, f"{BASE}/{agent_id}", P, method="DELETE")
+    check("DELETE returns 204", s == "204", f"got {s}")
+
+    s = http_status(C, f"{BASE}/{agent_id}", P)
+    check("GET deleted agent returns 404", s == "404", f"got {s}")
+
+# ─── test 06: orchestrators API CRUD ─────────────────────────────────────────
+
+def test_06_orchestrators_api():
+    section("test_06_orchestrators_api: Orchestrators CRUD")
+    C, P = "them-bridge", 8001
+    BASE = "/api/v1/admin/orchestrators"
+
+    s = http_status(C, BASE, P)
+    check("GET /admin/orchestrators returns 200", s == "200", f"got {s}")
+
+    body = json.dumps({
+        "name": "test_smoke_orch", "display_name": "Smoke Test Orchestrator",
+        "system_prompt": "You are a smoke test.", "allowed_agent_ids": [],
+        "max_iterations": 5, "max_parallel_tools": 2,
+        "rate_limit_rpm": 10, "daily_budget_usd": "1.00",
+    })
+    d = http_json(C, BASE, P, method="POST", body=body)
+    orch_id = d.get("id", "")
+    check("POST creates orchestrator", d.get("name") == "test_smoke_orch", str(d))
+
+    if not orch_id:
+        check("orchestrator ID present (skipping remaining)", False); return
+
+    s = http_status(C, f"{BASE}/{orch_id}", P)
+    check("GET /admin/orchestrators/{id} returns 200", s == "200", f"got {s}")
+
+    d = http_json(C, f"{BASE}/{orch_id}", P, method="PATCH",
+                  body='{"display_name":"Smoke Orch (updated)","max_iterations":8}')
+    check("PATCH updates max_iterations", d.get("max_iterations") == 8, str(d))
+
+    s = http_status(C, BASE, P, method="POST", body=body)
+    check("POST duplicate name returns 409", s == "409", f"got {s}")
+
+    s = http_status(C, f"{BASE}/{orch_id}", P, method="DELETE")
+    check("DELETE returns 204", s == "204", f"got {s}")
+
+    s = http_status(C, f"{BASE}/{orch_id}", P)
+    check("GET deleted orchestrator returns 404", s == "404", f"got {s}")
+
+# ─── test 07: adapter factory (structural) ────────────────────────────────────
+
+def test_07_adapter_factory():
+    section("test_07_adapter_factory: Adapter Factory & Contract")
+    sys.path.insert(0, str(ROOT))
+
+    try:
+        from app.adapters.base import AdapterEvent, AgentAdapter
+        e = AdapterEvent(type="token", text="hello")
+        check("AdapterEvent(type='token') created", e.type == "token" and e.text == "hello")
+        e2 = AdapterEvent(type="done", result="out")
+        check("AdapterEvent(type='done') created", e2.type == "done")
+        e3 = AdapterEvent(type="error", error="boom")
+        check("AdapterEvent(type='error') created", e3.type == "error")
+    except Exception as exc:
+        check("AdapterEvent import", False, str(exc)); return
+
+    try:
+        from app.adapters.factory import get_adapter
+        from app.adapters.omni_ws_adapter import OmniWsAdapter
+        from app.adapters.a2a_adapter import A2aAdapter
+        from unittest.mock import MagicMock
+
+        def make(transport):
+            a = MagicMock()
+            a.transport = transport
+            a.slug = "t"
+            a.endpoint_url = "ws://localhost:9999/ws"
+            a.auth_token_encrypted = None
+            return a
+
+        check("get_adapter('omni_ws') returns OmniWsAdapter",
+              isinstance(get_adapter(make("omni_ws")), OmniWsAdapter))
+        check("get_adapter('a2a') returns A2aAdapter",
+              isinstance(get_adapter(make("a2a")), A2aAdapter))
+
+        raised = False
+        try: get_adapter(make("ftp"))
+        except ValueError: raised = True
+        check("get_adapter(unknown) raises ValueError", raised)
+
+    except ImportError as exc:
+        skip(f"factory tests — missing container deps: {exc}")
+
+    async def _test_a2a():
+        from app.adapters.a2a_adapter import A2aAdapter
+        adapter = A2aAdapter(agent_slug="test", endpoint_url="http://localhost:19999",
+                             auth_token_encrypted=None)
+        events = []
+        async for ev in adapter.stream_invoke({"message": "hi"}, timeout=3):
+            events.append(ev)
+        return len(events) > 0 and events[-1].type == "error"
+
+    try:
+        result = asyncio.run(_test_a2a())
+        check("A2aAdapter yields error event on unreachable endpoint", result)
+    except Exception as exc:
+        check("A2aAdapter error event", False, str(exc))
+
+    try:
+        from app.adapters.base import AgentAdapter
+        import inspect
+        check("AgentAdapter is abstract", inspect.isabstract(AgentAdapter))
+    except Exception as exc:
+        check("AgentAdapter abstractness", False, str(exc))
+
+# ─── test 08: tokens API CRUD ─────────────────────────────────────────────────
+
+def test_08_tokens_api():
+    section("test_08_tokens_api: Access Tokens CRUD")
+    C, P = "them-bridge", 8001
+    BASE = "/api/v1/admin/tokens"
+
+    s = http_status(C, BASE, P)
+    check("GET /admin/tokens returns 200", s == "200", f"got {s}")
+
+    d = http_json(C, BASE, P, method="POST",
+                  body='{"label":"smoke-test-token","user_id":1}')
+    token_id = d.get("id", "")
+    token_val = d.get("token", "")
+    check("POST creates token", d.get("label") == "smoke-test-token", str(d))
+    check("token plaintext returned (len > 20)", len(token_val) > 20, token_val[:10])
+    check("token enabled=True", d.get("enabled") is True, str(d))
+
+    if not token_id:
+        check("token ID present (skipping remaining)", False); return
+
+    s = http_status(C, f"{BASE}/{token_id}", P)
+    check("GET /admin/tokens/{id} returns 200", s == "200", f"got {s}")
+
+    d = http_json(C, f"{BASE}/{token_id}", P, method="PATCH", body='{"enabled":false}')
+    check("PATCH disables token", d.get("enabled") is False, str(d))
+
+    d = http_json(C, f"{BASE}/{token_id}", P, method="PATCH", body='{"enabled":true}')
+    check("PATCH re-enables token", d.get("enabled") is True, str(d))
+
+    s = http_status(C, f"{BASE}/{token_id}", P, method="DELETE")
+    check("DELETE returns 204", s == "204", f"got {s}")
+
+    s = http_status(C, f"{BASE}/{token_id}", P)
+    check("GET deleted token returns 404", s == "404", f"got {s}")
+
+# ─── test 09: rate limiter (structural) ───────────────────────────────────────
+
+def test_09_rate_limiter():
+    section("test_09_rate_limiter: Rate Limiter & Token Cache")
+    sys.path.insert(0, str(ROOT))
+
+    try:
+        fake_db = types.ModuleType("app.database")
+        fake_db.redis_client = None
+        sys.modules.setdefault("app.database", fake_db)
+        log_mod = types.ModuleType("app.utils.logger")
+        log_mod.logger = type("L", (), {
+            "warning": lambda s, *a, **k: None,
+            "error":   lambda s, *a, **k: None,
+            "info":    lambda s, *a, **k: None,
+        })()
+        sys.modules.setdefault("app.utils.logger", log_mod)
+
+        from app.services.rate_limiter import _slot, check_rate_limit, get_current_count
+
+        slot = _slot()
+        check("_slot() returns int", isinstance(slot, int))
+        check("_slot() is current hour", slot == int(time.time()) // 3600)
+
+        result = asyncio.run(check_rate_limit(user_id=1, limit_rpm=10))
+        check("check_rate_limit allows when Redis=None", result[0] is True)
+
+        result = asyncio.run(check_rate_limit(user_id=1, limit_rpm=0))
+        check("check_rate_limit allows when limit=0 (disabled)", result[0] is True)
+
+        count = asyncio.run(get_current_count(user_id=1))
+        check("get_current_count returns 0 when Redis=None", count == 0)
+
+    except ImportError as exc:
+        skip(f"rate_limiter — missing deps: {exc}")
+    except Exception as exc:
+        check("rate_limiter", False, str(exc))
+
+    token = "test-token-abc123"
+    h = hashlib.sha256(token.encode()).hexdigest()
+    check("sha256 hash is 64 chars", len(h) == 64)
+    check("sha256 hash is deterministic", h == hashlib.sha256(token.encode()).hexdigest())
+    check("different tokens produce different hashes",
+          hashlib.sha256(b"a").hexdigest() != hashlib.sha256(b"b").hexdigest())
+
+    try:
+        s = src("app/_deps.py")
+        tree = ast.parse(s)
+        fns = [n.name for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)]
+        check("require_jwt defined in _deps.py", "require_jwt" in fns)
+        check("require_admin defined in _deps.py", "require_admin" in fns)
+        check("require_bearer defined in _deps.py", "require_bearer" in fns)
+    except Exception as exc:
+        check("_deps.py structure", False, str(exc))
+
+# ─── test 10: run recorder (structural) ───────────────────────────────────────
+
+def test_10_run_recorder():
+    section("test_10_run_recorder: Phase 5 Structure")
+
+    try:
+        fns = funcs_in("app/services/run_recorder.py")
+        for fn in ("start_run","record_step","complete_step","record_usage","complete_run"):
+            check(f"{fn} defined", fn in fns)
+    except Exception as exc:
+        check("run_recorder structure", False, str(exc))
+
+    try:
+        fns = funcs_in("app/services/orchestrator_service.py")
+        for fn in ("run_orchestrator","_load_orchestrator","_build_tools",
+                   "_invoke_agent","_ws_ready","_ws_done","_ws_error"):
+            check(f"{fn} defined", fn in fns)
+    except Exception as exc:
+        check("orchestrator_service structure", False, str(exc))
+
+    try:
+        s = src("app/routers/ws_orchestrator.py")
+        check("ws_orchestrate route defined", "ws_orchestrate" in s)
+        check("WebSocket imported", "WebSocket" in s)
+        check("Bearer token parsing present", "_parse_bearer" in s)
+        check("run_orchestrator imported", "run_orchestrator" in s)
+        check("WebSocketDisconnect handled", "WebSocketDisconnect" in s)
+    except Exception as exc:
+        check("ws_orchestrator structure", False, str(exc))
+
+    try:
+        s = src("app/services/orchestrator_service.py")
+        for ev in ("ready","done","token","error"):
+            check(f"'type':'{ev}' event present", f'"type": "{ev}"' in s or f"'type': '{ev}'" in s)
+        check("'type':'tool_start' event present", "tool_start" in s)
+        check("'type':'tool_done' event present", "tool_done" in s)
+    except Exception as exc:
+        check("WS event types", False, str(exc))
+
+    try:
+        s = src("app/main.py")
+        check("ws_orchestrator imported in main.py", "ws_orchestrator" in s)
+        check("ws_orchestrator.router included", "ws_orchestrator.router" in s)
+    except Exception as exc:
+        check("main.py wiring", False, str(exc))
+
+# ─── test 11: WS orchestrator endpoint ───────────────────────────────────────
+
+def test_11_ws_orchestrate():
+    section("test_11_ws_orchestrate: WS Orchestrator Endpoint")
+    C, P = "them-bridge", 8001
+
+    s = http_status(C, "/ws/orchestrate/test", P)
+    check("WS route responds (not 500)",
+          s in ("403","404","400","426"), f"got {s}")
+
+    d = http_json(C, "/api/v1/admin/tokens", P, method="POST",
+                  body='{"label":"ws-test-token","user_id":99}')
+    token_id = d.get("id", "")
+    check("Can create bearer token for WS auth", bool(token_id), str(d))
+
+    if token_id:
+        http_status(C, f"/api/v1/admin/tokens/{token_id}", P, method="DELETE")
+
+    s = http_status(C, "/health/live", P)
+    check("Bridge healthy after ws_orchestrator mount", s == "200", f"got {s}")
+
+# ─── test 12: runs API ────────────────────────────────────────────────────────
+
+def test_12_runs_api():
+    section("test_12_runs_api: Runs API Auth")
+    C, P = "them-bridge", 8001
+
+    for path in ("/api/v1/runs", "/api/v1/runs/stats",
+                 "/api/v1/runs/00000000-0000-0000-0000-000000000000"):
+        s = http_status(C, path, P)
+        check(f"GET {path} without auth → 401/403",
+              s in ("401","403"), f"got {s}")
+
+    s = http_status(C, "/api/v1/runs", P,
+                    headers=["Authorization: Bearer bad-token"])
+    check("GET /runs with bad JWT returns 401", s == "401", f"got {s}")
+
+    s = http_status(C, "/health/live", P)
+    check("Bridge healthy after runs router mount", s == "200", f"got {s}")
+
+# ─── test 13: dashboard WS (structural) ───────────────────────────────────────
+
+def test_13_dashboard_ws():
+    section("test_13_dashboard_ws: Phase 6 Structure")
+
+    try:
+        fns = funcs_in("app/services/dashboard_broadcaster.py")
+        for fn in ("publish","publish_run_started","publish_run_completed",
+                   "publish_run_step","publish_agents_changed"):
+            check(f"{fn} defined", fn in fns)
+        s = src("app/services/dashboard_broadcaster.py")
+        check("them:dash: prefix used", "them:dash:" in s)
+    except Exception as exc:
+        check("dashboard_broadcaster", False, str(exc))
+
+    try:
+        s = src("app/routers/ws_dashboard.py")
+        check("ws_dashboard route defined", "ws_dashboard" in s)
+        check("/ws/dashboard path present", "/ws/dashboard" in s)
+        check("subscribe message type handled", '"subscribe"' in s)
+        check("valid channels defined", "_STATIC_CHANNELS" in s or "_VALID_CHANNELS" in s)
+        check("ping loop implemented", "_ping_loop" in s)
+        check("JWT auth present", "validate_jwt" in s)
+        check("WebSocketDisconnect handled", "WebSocketDisconnect" in s)
+        check("channel relay to client", '"channel"' in s)
+    except Exception as exc:
+        check("ws_dashboard", False, str(exc))
+
+    try:
+        fns = funcs_in("app/routers/runs.py")
+        for fn in ("list_runs","get_run","run_stats","delete_run"):
+            check(f"{fn} defined", fn in fns)
+        s = src("app/routers/runs.py")
+        check("require_jwt used in runs", "require_jwt" in s)
+        check("RunDetailOut includes steps+usage", "steps" in s and "usage" in s)
+        check("admin role check in delete", "admin" in s)
+    except Exception as exc:
+        check("runs.py", False, str(exc))
+
+    try:
+        s = src("app/main.py")
+        check("ws_dashboard imported", "ws_dashboard" in s)
+        check("runs imported", "from app.routers import runs" in s or "app.routers.runs" in s)
+        check("ws_dashboard.router included", "ws_dashboard.router" in s)
+        check("runs.router included", "runs.router" in s)
+    except Exception as exc:
+        check("main.py wiring", False, str(exc))
+
+    try:
+        s = src("app/services/dashboard_broadcaster.py")
+        check("runs channel supported", '"runs"' in s or "'runs'" in s)
+        check("agents channel supported", '"agents"' in s or "'agents'" in s)
+    except Exception as exc:
+        check("broadcaster channels", False, str(exc))
+
+# ─── test 14: E2E orchestrate ─────────────────────────────────────────────────
+
+def test_14_e2e_orchestrate():
+    section("test_14_e2e_orchestrate: Live E2E Orchestration")
+    admin_jwt = os.environ.get("ADMIN_JWT", "")
+    if not admin_jwt:
+        skip("ADMIN_JWT not set — get one via POST /auth/login then re-run with ADMIN_JWT=<token>")
+        return
+
+    C, P = "them-bridge", 8001
+    auth = [f"Authorization: Bearer {admin_jwt}"]
+
+    # 1. Create access token
+    d = http_json(C, "/api/v1/admin/tokens", P, method="POST",
+                  body='{"label":"e2e-test-token","user_id":1}',
+                  headers=auth)
+    bearer = d.get("token", "")
+    token_id = d.get("id", "")
+    check("Access token created", bool(bearer), str(d))
+
+    # 2. Create agent + orchestrator
+    agent_body = json.dumps({
+        "slug": "e2e_echo_agent", "display_name": "E2E Echo Agent",
+        "description": "Echoes back the input for testing", "transport": "omni_ws",
+        "endpoint_url": "ws://localhost:9999/nonexistent",
+        "timeout_seconds": 5, "max_concurrency": 1,
+    })
+    d = http_json(C, "/api/v1/admin/agents", P, method="POST",
+                  body=agent_body, headers=auth)
+    agent_id = d.get("id", "")
+    check("Agent created", bool(agent_id), str(d))
+
+    orch_body = json.dumps({
+        "name": "e2e_test_orch", "display_name": "E2E Test Orchestrator",
+        "system_prompt": "You are a helpful assistant.",
+        "allowed_agent_ids": [agent_id] if agent_id else [],
+        "max_iterations": 2, "max_parallel_tools": 1,
+    })
+    d = http_json(C, "/api/v1/admin/orchestrators", P, method="POST",
+                  body=orch_body, headers=auth)
+    orch_id = d.get("id", "")
+    check("Orchestrator created", bool(orch_id), str(d))
+
+    # 3. WS route reachable
+    s = http_status(C, "/ws/orchestrate/e2e_test_orch", P, headers=auth)
+    check("WS route reachable (not 500)", s != "500", f"got {s}")
+
+    # 4. Runs API
+    d = http_json(C, "/api/v1/runs", P, headers=auth)
+    check("Runs list returns list/items", isinstance(d, list) or "items" in d, str(d)[:80])
+    d = http_json(C, "/api/v1/runs/stats", P, headers=auth)
+    check("Runs stats returns total field", "total" in d, str(d)[:80])
+
+    # 5. Cleanup
+    for path, label in (
+        (f"/api/v1/admin/orchestrators/{orch_id}", "Orchestrator deleted"),
+        (f"/api/v1/admin/agents/{agent_id}",       "Agent deleted"),
+        (f"/api/v1/admin/tokens/{token_id}",        "Token deleted"),
+    ):
+        if path.endswith("/"):
+            continue
+        s = http_status(C, path, P, method="DELETE", headers=auth)
+        check(label, s in ("200","204"), f"got {s}")
+
+# ─── test 15: compose health ─────────────────────────────────────────────────
+
+def test_15_compose_health():
+    section("test_15_compose_health: Container Health Check")
+
+    core = ["them-postgres","them-redis","them-auth-service","them-bridge"]
+
+    for name in core:
+        status = docker("inspect", "--format={{.State.Status}}", name).strip()
+        check(f"Container {name} running", status == "running", f"got '{status}'")
+
+    for name in core:
+        health = docker("inspect",
+            "--format={{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}",
+            name).strip()
+        check(f"{name} healthcheck healthy",
+              health in ("healthy","no-healthcheck"), f"got '{health}'")
+
+    print()
+    print("── HTTP health endpoints")
+    s = http_status("them-auth-service", "/health/live", 8701)
+    check("Auth service /health/live = 200", s == "200", f"got {s}")
+
+    for path in ("/health/live", "/health/ready"):
+        s = http_status("them-bridge", path, 8001)
+        check(f"Bridge {path} = 200", s == "200", f"got {s}")
+
+    d = http_json("them-bridge", "/health", 8001)
+    check("Bridge /health status=ok", d.get("status") == "ok", str(d))
+
+    print()
+    print("── Network connectivity")
+
+    pg = dexec("them-bridge", "python3", "-c",
+               "import socket; s=socket.create_connection(('them-postgres',5432),3); s.close(); print('ok')")
+    check("Bridge → them-postgres (TCP)", pg.strip() == "ok")
+
+    rd = dexec("them-bridge", "python3", "-c",
+               "import socket; s=socket.create_connection(('them-redis',6379),3); s.close(); print('ok')")
+    check("Bridge → them-redis (TCP)", rd.strip() == "ok")
+
+    s = http_status("them-bridge", "/health/live", 8701, host="them-auth-service")
+    check("Bridge → them-auth-service HTTP", s == "200", f"got {s}")
+
+# ─── runner ───────────────────────────────────────────────────────────────────
+
+ALL_TESTS = [
+    ("01", test_01_db),
+    ("02", test_02_redis),
+    ("03", test_03_auth_service),
+    ("04", test_04_bridge_health),
+    ("05", test_05_agents_api),
+    ("06", test_06_orchestrators_api),
+    ("07", test_07_adapter_factory),
+    ("08", test_08_tokens_api),
+    ("09", test_09_rate_limiter),
+    ("10", test_10_run_recorder),
+    ("11", test_11_ws_orchestrate),
+    ("12", test_12_runs_api),
+    ("13", test_13_dashboard_ws),
+    ("14", test_14_e2e_orchestrate),
+    ("15", test_15_compose_health),
+]
+
+if __name__ == "__main__":
+    # Filter to specific tests if requested
+    filter_ids = set(sys.argv[1:]) if len(sys.argv) > 1 else None
+    # Strip leading -- in case user passes --test flags
+    filter_ids = {a.lstrip("-") for a in filter_ids} if filter_ids else None
+
+    print(bold("========================================"))
+    print(bold("  the-M Test Suite (cross-platform)"))
+    print(bold("========================================"))
+
+    for tid, fn in ALL_TESTS:
+        if filter_ids and tid not in filter_ids:
+            continue
+        fn()
+
+    print(f"\n{bold('========================================')}")
+    summary = f"  Total: {green(str(PASS))} passed"
+    if FAIL:  summary += f", {red(str(FAIL))} failed"
+    if SKIP:  summary += f", {yellow(str(SKIP))} skipped"
+    print(bold("========================================"))
+    print(summary)
+    print(bold("========================================"))
+    sys.exit(0 if FAIL == 0 else 1)
