@@ -2,7 +2,7 @@
 Database Connection Management
 ===============================
 Manages PostgreSQL connection pool.
-Direct connection to odin-postgres (no PgBouncer).
+Direct connection to them-postgres (no PgBouncer).
 search_path set via init callback so it works with any Postgres.
 """
 
