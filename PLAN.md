@@ -502,8 +502,8 @@ Confirm the platform handles them correctly. Fix anything that breaks.
 
 - [x] Phase 1 — A2A Server
 - [x] Phase 2 — Task Graph Schema
-- [ ] Phase 3 — Durable Planner
-- [ ] Phase 4 — Async Delegation + Governance
+- [x] Phase 3 — Durable Planner
+- [x] Phase 4 — Async Delegation + Governance
 - [ ] Phase 5 — Shared Context / Memory
 - [ ] Phase 6 — Playground Debug Panel
 - [ ] Phase 7 — Real A2A Test Agents + Integration Tests

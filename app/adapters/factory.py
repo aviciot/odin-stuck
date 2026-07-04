@@ -5,6 +5,7 @@ Adapter factory — returns the correct AgentAdapter for an Agent row.
 from app.adapters.base import AgentAdapter
 from app.adapters.omni_ws_adapter import OmniWsAdapter
 from app.adapters.a2a_adapter import A2aAdapter
+from app.adapters.a2a_async_adapter import A2aAsyncAdapter
 
 
 def get_adapter(agent, *, context_id: str | None = None) -> AgentAdapter:
@@ -17,12 +18,21 @@ def get_adapter(agent, *, context_id: str | None = None) -> AgentAdapter:
             endpoint_url=agent.endpoint_url,
             auth_token_encrypted=agent.auth_token_encrypted,
         )
-    if transport in ("a2a", "a2a_async"):
+    if transport == "a2a":
         return A2aAdapter(
             agent_slug=agent.slug,
             endpoint_url=agent.endpoint_url,
             auth_token_encrypted=agent.auth_token_encrypted,
             context_id=context_id,
+        )
+    if transport == "a2a_async":
+        return A2aAsyncAdapter(
+            agent_slug=agent.slug,
+            endpoint_url=agent.endpoint_url,
+            auth_token_encrypted=agent.auth_token_encrypted,
+            context_id=context_id,
+            push_url=None,
+            supports_streaming=getattr(agent, "supports_streaming", False),
         )
 
     raise ValueError(f"Unknown agent transport: {transport!r}")

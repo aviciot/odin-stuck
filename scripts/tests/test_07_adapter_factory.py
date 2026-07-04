@@ -1,17 +1,15 @@
 #!/usr/bin/env python3.12
 """
 test_07_adapter_factory.py — unit tests for adapter factory + base contract.
-Usage: python scripts/tests/test_07_adapter_factory.py
+Usage: python scripts/tests/run_tests.py 07
 No containers required — pure Python.
 """
 
 import sys
 import os
 import asyncio
-import types
 from unittest.mock import MagicMock
 
-# Add project root to path so we can import app.*
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 PASS = 0
@@ -32,14 +30,15 @@ def make_agent(transport: str, **kwargs) -> MagicMock:
     agent = MagicMock()
     agent.transport = transport
     agent.slug = kwargs.get("slug", "test-agent")
-    agent.endpoint_url = kwargs.get("endpoint_url", "ws://localhost:9999/ws")
+    agent.endpoint_url = kwargs.get("endpoint_url", "http://localhost:9999/a2a")
     agent.auth_token_encrypted = kwargs.get("auth_token_encrypted", None)
+    agent.supports_streaming = kwargs.get("supports_streaming", False)
     return agent
 
 
 print("=== test_07_adapter_factory: Adapter Factory & Contract ===")
 
-# 1. AdapterEvent dataclass
+# 1. AdapterEvent — existing types
 try:
     from app.adapters.base import AdapterEvent, AgentAdapter
     e = AdapterEvent(type="token", text="hello")
@@ -53,33 +52,50 @@ try:
 except Exception as exc:
     check("AdapterEvent import", False, str(exc))
 
-# 2-4. Factory tests — require pydantic (installed in container, not on host)
+# 2. AdapterEvent — Phase 4 new types
+try:
+    from app.adapters.base import AdapterEvent
+    e4 = AdapterEvent(type="task_created", remote_task_id="abc-123")
+    check("AdapterEvent(type='task_created') has remote_task_id", e4.remote_task_id == "abc-123")
+
+    e5 = AdapterEvent(type="status", state="working")
+    check("AdapterEvent(type='status') has state", e5.state == "working")
+
+    e6 = AdapterEvent(type="artifact", artifact={"artifactId": "x", "parts": [{"kind": "text", "text": "hi"}]})
+    check("AdapterEvent(type='artifact') has artifact dict", isinstance(e6.artifact, dict))
+
+    e7 = AdapterEvent(type="status", state="input-required", input_required=True)
+    check("AdapterEvent input_required flag", e7.input_required is True)
+except Exception as exc:
+    check("AdapterEvent Phase 4 types", False, str(exc))
+
+# 3. Factory — all three transports
 try:
     from app.adapters.factory import get_adapter
     from app.adapters.omni_ws_adapter import OmniWsAdapter
     from app.adapters.a2a_adapter import A2aAdapter
+    from app.adapters.a2a_async_adapter import A2aAsyncAdapter
 
-    agent = make_agent("omni_ws")
-    adapter = get_adapter(agent)
-    check("get_adapter('omni_ws') returns OmniWsAdapter", isinstance(adapter, OmniWsAdapter))
+    check("get_adapter('omni_ws') returns OmniWsAdapter",
+          isinstance(get_adapter(make_agent("omni_ws", endpoint_url="ws://localhost:9999/ws")), OmniWsAdapter))
 
-    agent = make_agent("a2a")
-    adapter = get_adapter(agent)
-    check("get_adapter('a2a') returns A2aAdapter", isinstance(adapter, A2aAdapter))
+    check("get_adapter('a2a') returns A2aAdapter",
+          isinstance(get_adapter(make_agent("a2a")), A2aAdapter))
 
-    agent = make_agent("ftp")
+    check("get_adapter('a2a_async') returns A2aAsyncAdapter",
+          isinstance(get_adapter(make_agent("a2a_async")), A2aAsyncAdapter))
+
     raised = False
     try:
-        get_adapter(agent)
+        get_adapter(make_agent("ftp"))
     except ValueError:
         raised = True
     check("get_adapter(unknown) raises ValueError", raised)
 
 except ImportError as exc:
     print(f"  [SKIP] factory tests — missing container deps ({exc})")
-    print(f"         Run inside them-bridge container for full coverage.")
 
-# 5. A2aAdapter yields error event on connection failure (real impl, not a stub)
+# 4. A2aAdapter yields error event on connection failure
 async def _test_a2a():
     from app.adapters.a2a_adapter import A2aAdapter
     adapter = A2aAdapter(agent_slug="test", endpoint_url="http://localhost:19999", auth_token_encrypted=None)
@@ -93,6 +109,26 @@ try:
     check("A2aAdapter yields error event on unreachable endpoint", result)
 except Exception as exc:
     check("A2aAdapter error event", False, str(exc))
+
+# 5. A2aAsyncAdapter yields error event on connection failure
+async def _test_a2a_async():
+    from app.adapters.a2a_async_adapter import A2aAsyncAdapter
+    adapter = A2aAsyncAdapter(
+        agent_slug="test",
+        endpoint_url="http://localhost:19999",
+        auth_token_encrypted=None,
+        max_poll_seconds=3,
+    )
+    events = []
+    async for ev in adapter.stream_invoke({"message": "hi"}, timeout=3):
+        events.append(ev)
+    return len(events) > 0 and events[-1].type == "error"
+
+try:
+    result = asyncio.run(_test_a2a_async())
+    check("A2aAsyncAdapter yields error event on unreachable endpoint", result)
+except Exception as exc:
+    check("A2aAsyncAdapter error event", False, str(exc))
 
 # 6. AgentAdapter is abstract
 try:

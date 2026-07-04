@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 
 import app.database as db_module
 from app.services.auth_client import validate_jwt
+from app.services import task_store
 from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
@@ -361,3 +362,71 @@ def _is_valid_uuid(value: str) -> bool:
         return True
     except (ValueError, AttributeError):
         return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Push webhook — receives state change notifications from remote A2A child agents
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/a2a/push/{task_id}")
+async def a2a_push(task_id: str, request: Request):
+    """
+    Push webhook for remote A2A child agent state transitions.
+
+    Called by a child agent when its task state changes. Body is a raw A2A Task
+    object (not JSON-RPC). Updates the corresponding them.tasks row.
+    """
+    token_payload = await _resolve_bearer(request)
+    if token_payload is None:
+        raise HTTPException(status_code=401, detail="Authorization required")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    if not _is_valid_uuid(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task_id")
+
+    child_task_id = uuid.UUID(task_id)
+
+    if db_module.AsyncSessionLocal is None:
+        raise HTTPException(status_code=503, detail="Database not ready")
+
+    async with db_module.AsyncSessionLocal() as db:
+        child_task = await task_store.get_task(db, child_task_id)
+        if child_task is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        # Guard against double-processing — if already terminal, return idempotently
+        _TERMINAL = {"completed", "failed", "canceled", "rejected"}
+        if child_task.state in _TERMINAL:
+            logger.info("a2a push: task already terminal, ignoring", task_id=task_id, state=child_task.state)
+            return JSONResponse(content={"ok": True})
+
+        # Extract new state from body
+        new_state = body.get("status", {}).get("state")
+        if not new_state:
+            raise HTTPException(status_code=400, detail="body.status.state is required")
+
+        logger.info("a2a push: transitioning task", task_id=task_id, new_state=new_state)
+
+        await task_store.transition(db, child_task_id, new_state)
+
+        # Record artifacts if the task completed
+        if new_state == "completed":
+            artifacts = body.get("artifacts", [])
+            for artifact in artifacts:
+                artifact_id = artifact.get("artifactId") or artifact.get("artifact_id") or str(uuid.uuid4())
+                parts = artifact.get("parts", [])
+                name = artifact.get("name")
+                await task_store.record_artifact(
+                    db,
+                    task_id=child_task_id,
+                    context_id=child_task.context_id,
+                    artifact_id=artifact_id,
+                    parts=parts,
+                    name=name,
+                )
+
+    return JSONResponse(content={"ok": True})

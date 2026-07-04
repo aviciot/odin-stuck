@@ -414,7 +414,7 @@ async def run(
         kind="root",
         run_id=run_id,
         orchestrator_id=orch.id,
-        budget_tokens=None,  # Phase 4 adds budget enforcement
+        budget_tokens=getattr(orch, "budget_tokens", None),
     )
     await task_store.transition(db, root_task.id, "working")
 
@@ -456,6 +456,15 @@ async def run(
             text_buffer = ""
 
             await _publish_dash(run_id, {"type": "iteration_start", "iteration": iteration})
+
+            # Check budget before each planning turn
+            if root_task.budget_tokens is not None:
+                refreshed = await task_store.get_task(db, root_task.id)
+                if refreshed and refreshed.tokens_used >= root_task.budget_tokens:
+                    run_error = f"Budget exceeded: {refreshed.tokens_used} tokens used (limit: {root_task.budget_tokens})"
+                    run_status = "failed"
+                    yield {"type": "error", "message": run_error}
+                    break
 
             # Rebuild context from DB (the durable-planner key property)
             messages = await _build_messages_from_store(provider, root_task, db)

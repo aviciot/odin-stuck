@@ -246,6 +246,7 @@ def test_07_adapter_factory():
     section("test_07_adapter_factory: Adapter Factory & Contract")
     sys.path.insert(0, str(ROOT))
 
+    # AdapterEvent — base types
     try:
         from app.adapters.base import AdapterEvent, AgentAdapter
         e = AdapterEvent(type="token", text="hello")
@@ -257,24 +258,43 @@ def test_07_adapter_factory():
     except Exception as exc:
         check("AdapterEvent import", False, str(exc)); return
 
+    # AdapterEvent — Phase 4 extended types
+    try:
+        from app.adapters.base import AdapterEvent
+        e4 = AdapterEvent(type="task_created", remote_task_id="abc-123")
+        check("AdapterEvent(type='task_created') has remote_task_id", e4.remote_task_id == "abc-123")
+        e5 = AdapterEvent(type="status", state="working")
+        check("AdapterEvent(type='status') has state", e5.state == "working")
+        e6 = AdapterEvent(type="artifact", artifact={"parts": []})
+        check("AdapterEvent(type='artifact') has artifact dict", isinstance(e6.artifact, dict))
+        e7 = AdapterEvent(type="status", state="input-required", input_required=True)
+        check("AdapterEvent input_required flag", e7.input_required is True)
+    except Exception as exc:
+        check("AdapterEvent Phase 4 types", False, str(exc))
+
+    # Factory — all three transports
     try:
         from app.adapters.factory import get_adapter
         from app.adapters.omni_ws_adapter import OmniWsAdapter
         from app.adapters.a2a_adapter import A2aAdapter
+        from app.adapters.a2a_async_adapter import A2aAsyncAdapter
         from unittest.mock import MagicMock
 
-        def make(transport):
+        def make(transport, url="http://localhost:9999/a2a"):
             a = MagicMock()
             a.transport = transport
             a.slug = "t"
-            a.endpoint_url = "ws://localhost:9999/ws"
+            a.endpoint_url = url
             a.auth_token_encrypted = None
+            a.supports_streaming = False
             return a
 
         check("get_adapter('omni_ws') returns OmniWsAdapter",
-              isinstance(get_adapter(make("omni_ws")), OmniWsAdapter))
+              isinstance(get_adapter(make("omni_ws", "ws://localhost:9999/ws")), OmniWsAdapter))
         check("get_adapter('a2a') returns A2aAdapter",
               isinstance(get_adapter(make("a2a")), A2aAdapter))
+        check("get_adapter('a2a_async') returns A2aAsyncAdapter",
+              isinstance(get_adapter(make("a2a_async")), A2aAsyncAdapter))
 
         raised = False
         try: get_adapter(make("ftp"))
@@ -284,6 +304,7 @@ def test_07_adapter_factory():
     except ImportError as exc:
         skip(f"factory tests — missing container deps: {exc}")
 
+    # A2aAdapter error on unreachable
     async def _test_a2a():
         from app.adapters.a2a_adapter import A2aAdapter
         adapter = A2aAdapter(agent_slug="test", endpoint_url="http://localhost:19999",
@@ -298,6 +319,22 @@ def test_07_adapter_factory():
         check("A2aAdapter yields error event on unreachable endpoint", result)
     except Exception as exc:
         check("A2aAdapter error event", False, str(exc))
+
+    # A2aAsyncAdapter error on unreachable
+    async def _test_a2a_async():
+        from app.adapters.a2a_async_adapter import A2aAsyncAdapter
+        adapter = A2aAsyncAdapter(agent_slug="test", endpoint_url="http://localhost:19999",
+                                  auth_token_encrypted=None, max_poll_seconds=3)
+        events = []
+        async for ev in adapter.stream_invoke({"message": "hi"}, timeout=3):
+            events.append(ev)
+        return len(events) > 0 and events[-1].type == "error"
+
+    try:
+        result = asyncio.run(_test_a2a_async())
+        check("A2aAsyncAdapter yields error event on unreachable endpoint", result)
+    except Exception as exc:
+        check("A2aAsyncAdapter error event", False, str(exc))
 
     try:
         from app.adapters.base import AgentAdapter

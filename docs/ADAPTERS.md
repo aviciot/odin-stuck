@@ -1,15 +1,35 @@
 # Agent Adapters
 # Last updated: 2026-07-04
 
-## AgentAdapter ABC (app/adapters/base.py)
+## AdapterEvent (app/adapters/base.py)
 
 ```python
+@dataclass
 class AdapterEvent:
-    type: str          # "token" | "done" | "error"
-    text: str | None   # streaming token text
-    result: str | None # full assembled result (on "done")
-    error: str | None  # error message (on "error")
+    type: str                        # see event types below
+    text: Optional[str] = None       # streaming token text (on "token")
+    result: Optional[str] = None     # assembled result text (on "done")
+    error: Optional[str] = None      # error message (on "error")
+    remote_task_id: Optional[str] = None  # A2A task id (on "task_created")
+    state: Optional[str] = None      # task state (on "status")
+    artifact: Optional[dict] = None  # full A2A artifact dict with parts (on "artifact")
+    input_required: bool = False     # True when remote task is in "input-required" state
+```
 
+**Event types:**
+
+| type | When yielded | Key fields |
+|---|---|---|
+| `token` | Each streaming chunk | `text` |
+| `done` | Task completed | `result` (assembled text) |
+| `error` | Task failed / network error | `error` |
+| `task_created` | Remote task submitted (non-blocking) | `remote_task_id` |
+| `status` | Remote task state changed | `state`, `input_required` |
+| `artifact` | Remote agent produced an artifact | `artifact` (full parts array) |
+
+## AgentAdapter ABC
+
+```python
 class AgentAdapter(ABC):
     @abstractmethod
     async def stream_invoke(
@@ -17,48 +37,94 @@ class AgentAdapter(ABC):
     ) -> AsyncGenerator[AdapterEvent, None]: ...
 ```
 
-The orchestrator collects all `token` events for streaming to the user,
-then uses the `done.result` as the tool result fed back to the LLM.
+All transports implement `stream_invoke()`. The orchestrator loop:
+- Collects `token` events for streaming to the user
+- Uses `done.result` as the tool result fed back to the LLM
+- Stores full `artifact.artifact` (all parts) in `them.artifacts`
 
-## OmniWsAdapter (app/adapters/omni_ws_adapter.py)
+---
+
+## OmniWsAdapter (transport: `omni_ws`)
 
 Connects to an Omni agentic gateway WebSocket endpoint.
 
 **Protocol:**
-1. `websockets.connect(endpoint_url, extra_headers={"Authorization": f"Bearer {token)"})`
+1. `websockets.connect(endpoint_url, extra_headers={"Authorization": f"Bearer {token}"})`
 2. Send: `{"type": "message", "content": input["message"]}`
-3. Parse incoming JSON events from Omni's WS stream:
-   - `{"type": "token", "text": "..."}` → emit `AdapterEvent(type="token", text=...)`
-   - `{"type": "done"}` → emit `AdapterEvent(type="done", result=assembled_text)`
-   - `{"type": "error", "message": "..."}` → emit `AdapterEvent(type="error", error=...)`
-4. Decrypts `agent.auth_token_encrypted` via `crypto.decrypt_value()` at connect time
-5. Honours `agent.timeout_seconds` via `asyncio.wait_for()`
+3. Parse incoming JSON events:
+   - `{"type": "token", "text": "..."}` → `AdapterEvent(type="token", text=...)`
+   - `{"type": "done"}` → `AdapterEvent(type="done", result=assembled_text)`
+   - `{"type": "error", "message": "..."}` → `AdapterEvent(type="error", error=...)`
+4. Decrypts `agent.auth_token_encrypted` at connect time
+5. Honours `agent.timeout_seconds`
 
-## A2aAdapter (app/adapters/a2a_adapter.py)
+---
 
-**Status: implemented.** Calls a generic A2A v1.0 JSON-RPC 2.0 HTTP endpoint.
+## A2aAdapter (transport: `a2a`)
+
+Synchronous A2A v1.0 JSON-RPC 2.0 over HTTP. Use for agents that complete quickly.
 
 **Protocol:**
-1. `POST {endpoint_url}` with JSON-RPC 2.0 `SendMessage` method
-2. Message body: `{"parts": [{"text": input["message"]}]}`
-3. Auth: `Authorization: Bearer <decrypted token>` header
-4. If the returned task state is not yet terminal (`WORKING`, `SUBMITTED`, or any other non-terminal state), polls via `GetTask` — up to 30s (60 polls × 0.5s interval)
+1. `POST {endpoint_url}` with JSON-RPC 2.0 `SendMessage`
+2. Message: `{"parts": [{"kind": "text", "text": input["message"]}]}`
+3. Auth: `Authorization: Bearer <decrypted token>`
+4. If task is not terminal: polls via `GetTask` up to 30s (60 × 0.5s)
 5. Terminal states: `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, `TASK_STATE_REJECTED`
-6. On `TASK_STATE_COMPLETED`: streams result word-by-word as `token` events, then emits `done`
-7. On `TASK_STATE_FAILED` or `TASK_STATE_REJECTED`: emits `error` event
+6. On completed: streams result word-by-word as `token` events, then `done`
+7. On failure: `error` event
 
-**Limitation:** no native streaming — the full result is collected first, then re-streamed word-by-word as `token` events.
+**Passes** `contextId` in message when `context_id` is set (enables A2A context threading).
 
-**To add an A2A agent in the-M:**
-- `transport`: `a2a`
-- `endpoint_url`: the A2A v1.0 endpoint URL (e.g. `http://<host>:<port>/`)
-- `auth_token_encrypted`: bearer token encrypted via `crypto.encrypt_value()`
+**Limitation:** No streaming — result assembled first, then re-streamed word-by-word.
+
+**Use for:** Fast agents, Omni A2A gateway, agents that complete synchronously.
+
+---
+
+## A2aAsyncAdapter (transport: `a2a_async`)
+
+**Phase 4.** Non-blocking A2A for long-running agents. Submits task, polls or streams.
+
+**Protocol:**
+1. `POST {endpoint_url}` with JSON-RPC 2.0 `SendMessage`
+2. Returns `remote_task_id` immediately → yields `task_created` event
+3. If `supports_streaming=True`: subscribes to SSE stream at `GET {endpoint}/tasks/{id}/events`
+4. Otherwise: polls `GetTask` every `poll_interval` (default 1s) up to `max_poll_seconds` (default 300s)
+5. Yields `status` events on state changes
+6. Yields `artifact` events with full parts array as each artifact arrives
+7. On `completed`: assembles all text parts → yields `done`
+8. On failure/timeout: yields `error`
+
+**Push notifications:** If `push_url` is set, includes it in `SendMessage` params so the remote
+agent can POST state changes to `POST /a2a/push/{task_id}` on the-M instead of being polled.
+
+**Preserves full artifact parts array** — no "first text part wins" truncation.
+
+**SSE fallback:** If the SSE stream returns a non-200, falls back to polling automatically.
+
+**Use for:** Slow agents (10s–5min), agents with streaming capability, deadline-governed tasks.
+
+### Constructor
+
+```python
+A2aAsyncAdapter(
+    agent_slug="...",
+    endpoint_url="http://agent-host/",
+    auth_token_encrypted=None,
+    context_id=None,
+    push_url=None,
+    supports_streaming=False,
+    poll_interval=1.0,
+    max_poll_seconds=300.0,
+)
+```
+
+---
 
 ## Adding a New Transport
 
 1. Create `app/adapters/{name}_adapter.py` implementing `AgentAdapter`
-2. Add `transport IN (...)` to the DB CHECK constraint in `db/001_schema.sql`
-3. Register in `app/adapters/factory.py` `get_adapter()` switch
-4. Add the transport name to `them.agents.transport` CHECK constraint
-5. Document the protocol here in this file
-6. Add a test in `tests/test_{name}_adapter.py`
+2. Add transport name to the `CHECK` constraint in `db/001_schema.sql`
+3. Register in `app/adapters/factory.py` `get_adapter()`
+4. Document here in ADAPTERS.md
+5. Add a test in `scripts/tests/test_07_adapter_factory.py`
