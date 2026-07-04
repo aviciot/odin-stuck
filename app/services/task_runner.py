@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.database as db_module
 from app.adapters.factory import get_adapter
 from app.models import Agent, Orchestrator, Task
-from app.services import run_recorder, task_store
+from app.services import context_service, run_recorder, task_store
 from app.services.providers.anthropic import AnthropicProvider
 from app.services.providers.base import (
     LLMStreamEvent, NeutralTool, ToolCall, TokenUsage,
@@ -250,13 +250,13 @@ async def _invoke_agent(
     # Update child task
     child_state = "completed" if status == "completed" else "failed"
     if child_state == "completed" and result_text:
-        await task_store.record_artifact(
-            db,
+        await context_service.record_and_cache_artifact(
             task_id=child_task.id,
             context_id=root_task.context_id,
             artifact_id=f"{agent.slug}-{tool_call.id}",
             parts=[{"kind": "text", "text": result_text}],
             name=f"{agent.slug} result",
+            db=db,
         )
     await task_store.transition(
         db, child_task.id, child_state,
@@ -600,13 +600,13 @@ async def run(
 
     # Record final answer as root task artifact
     if final_answer:
-        await task_store.record_artifact(
-            db,
+        await context_service.record_and_cache_artifact(
             task_id=root_task.id,
             context_id=context_id,
             artifact_id="final-answer",
             parts=[{"kind": "text", "text": final_answer}],
             name="Final Answer",
+            db=db,
         )
 
     final_task_state = "completed" if run_status == "completed" else "failed"
