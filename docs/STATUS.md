@@ -1,35 +1,43 @@
-# Odin Status
-# Last updated: 2026-07-03 (session 3)
+# the-M Status
+# Last updated: 2026-07-04
 
 ## Build Progress
 
 | Phase | Status | Notes |
 |---|---|---|
 | Phase 0 — Skeleton & infra | ✓ Complete | config, database, models, health, docker-compose |
-| Phase 1 — Auth | ✓ Complete | auth_service copied + adapted, httpOnly cookie auth |
-| Phase 2 — LLM providers admin | ✓ Complete | admin_llm_providers.py, providers/ copied from Omni |
+| Phase 1 — Auth | ✓ Complete | auth_service, httpOnly cookie auth (`them_access_token`, `them_refresh_token`) |
+| Phase 2 — LLM providers admin | ✓ Complete | admin_llm_providers.py, providers/ |
 | Phase 3 — Agent registry & adapters | ✓ Complete | adapters/, agent_registry.py, admin_agents.py, admin_orchestrators.py |
 | Phase 4 — Token cache & rate limiter | ✓ Complete | token_cache.py, rate_limiter.py, admin_tokens.py, _deps.py |
 | Phase 5 — Orchestrator loop | ✓ Complete | orchestrator_service.py, run_recorder.py, ws_orchestrator.py |
 | Phase 6 — Dashboard WS + runs API | ✓ Complete | ws_dashboard.py, runs.py, Redis pub/sub multiplexing |
 | Phase 6.5 — Frontend admin UI | ✓ Complete | Orchestrators, Agents, Tokens, Runs pages; per-orch LLM config |
 | Phase 6.6 — Playground UI | ✓ Complete | Split-pane chat + real-time Redis trace; mock agents |
-| Phase 7 — Full tests + compose finalize | ✓ Complete | 29/29 tests passing, .env.example, compose hardening |
+| Phase 7 — Tests + compose finalize | ✓ Complete | 140 tests passing (cross-platform Python runner), compose hardened |
+| Rename: Odin → the-M | ✓ Complete | All identifiers, schemas, containers, Redis keys, cookies renamed |
+| Local deployment | ✓ Complete | Stack running, DB seeded, users created, login works |
 
-## Infrastructure (as of 2026-07-03)
+## Infrastructure (as of 2026-07-04)
 
-Fully isolated — zero dependency on Omni containers.
+| Container | Image/Source | Data | Port |
+|---|---|---|---|
+| `them-postgres` | postgres:16-alpine | `./data/them-postgres/pgdata/` | 5432 (internal) |
+| `them-redis` | redis:7-alpine | `./data/them-redis/` | 6379 (internal) |
+| `them-auth-service` | `auth_service/` | — | 8701 (internal) |
+| `them-bridge` | `app/` | `./data/them-logs/` | 8001 (host + internal) |
+| `them-frontend` | `frontend/` | — | 3200 (host + internal) |
+| `mock-agent-assistant` | `mock_agent/` | — | 9000 (internal) |
+| `mock-agent-researcher` | `mock_agent/` | — | 9000 (internal) |
+| `mock-agent-coder` | `mock_agent/` | — | 9000 (internal) |
+| `vision-agent` | `agents/vision_agent/` | — | 9100 (internal) — **unhealthy** |
 
-| Container | Image/Source | Data |
+## Users Seeded
+
+| Username | Password | Role |
 |---|---|---|
-| odin-postgres | postgres:16-alpine | volumes/postgres/pgdata/ |
-| odin-redis | redis:7-alpine | volumes/redis/ |
-| odin-auth-service | auth_service/ | — |
-| odin-bridge | app/ | volumes/logs/ |
-| odin-frontend | frontend/ | — |
-| mock-agent-assistant | mock_agent/ | port 9000 |
-| mock-agent-researcher | mock_agent/ | port 9000 |
-| mock-agent-coder | mock_agent/ | port 9000 |
+| `admin` | `admin123` | super_admin |
+| `avi` | `avi123` | super_admin |
 
 ## API Routes (live)
 
@@ -41,37 +49,26 @@ Fully isolated — zero dependency on Omni containers.
 | `/api/v1/admin/orchestrators` | CRUD | ✓ Live |
 | `/api/v1/admin/orchestrators/{id}/test-llm` | POST | ✓ Live |
 | `/api/v1/admin/tokens` | CRUD | ✓ Live |
-| `/ws/orchestrate/{name}` | WebSocket | ✓ Live (accepts JWT or access token) |
-| `/ws/dashboard` | WebSocket | ✓ Live (static + dynamic `run:{uuid}` channels) |
+| `/ws/orchestrate/{name}` | WebSocket | ✓ Live |
+| `/ws/dashboard` | WebSocket | ✓ Live |
 | `/api/v1/runs` | GET/DELETE | ✓ Live |
 
-## Frontend Pages (live)
+## Frontend Pages (live, http://localhost:3200)
 
 | Page | Path | Status |
 |---|---|---|
-| Login | `/login` | ✓ |
+| Login | `/login` | ✓ — credentials pre-filled in dev mode |
 | Dashboard | `/dashboard` | ✓ |
 | Agents | `/agents` | ✓ |
 | Run History | `/runs` | ✓ |
-| Orchestrators | `/admin/orchestrators` | ✓ — includes LLM config + test button |
+| Orchestrators | `/admin/orchestrators` | ✓ |
 | Access Tokens | `/admin/tokens` | ✓ |
 | Playground | `/admin/playground` | ✓ — split chat + trace pane |
 
-## End-to-End Verified (2026-07-03)
-
-Full agentic loop confirmed working:
-- User sends message in Playground
-- Claude LLM picks `agent__assistant` tool
-- OmniWsAdapter connects to mock-agent-assistant (WS)
-- Mock agent streams word-by-word reply
-- Claude synthesizes final answer, streams to browser
-- Redis pub/sub delivers trace events (iteration, tool_start, tool_done, usage, run_end) to trace pane in real time
-- Run recorded to Postgres (when orchestrator row exists in DB — see Open Items)
-
 ## Open Items
 
-- **DB reset issue**: if Postgres is wiped but Redis survives, orchestrator cache references stale FK IDs → run INSERT fails silently. Fix: recreate orchestrators via UI after any DB reset. `init_db.sh` now flushes Redis after seeding to reduce window.
-- **A2A adapter**: stub only. `a2a_adapter.py` exists but is not functional. Real A2A agent card protocol work is pending (next topic).
-- Traefik hostname: needs `ODIN_HOSTNAME` + `ODIN_UI_HOSTNAME` env vars set per deployment.
-- mock agents need `docker compose build` (not just restart) to pick up code changes — no volume mount.
-- Replica-2 smoke test: optional, not yet run. Enable with `--profile replica`.
+- **`vision-agent` unhealthy**: needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` set in `.env`. Not blocking anything else.
+- **Git hooks not wired**: test runner exists (`python scripts/tests/run_tests.py`) but no pre-push hook. Planned as GitHub Actions.
+- **Replica 2**: compose profile `replica`, not running by default. Enable with `--profile replica`.
+- **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
+- **`them-frontend` shows unhealthy in `docker ps`**: false alarm — Docker healthcheck uses `curl -f -L` but Next.js dev mode takes >30s to compile first request. App works fine; healthcheck timing is aggressive.
