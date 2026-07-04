@@ -1,30 +1,36 @@
-# Odin Database Setup
+# the-M — Database
 
-Odin uses a separate PostgreSQL database (`odin`) inside the shared `omni-postgres` container.
+Postgres DB: `them`, schema: `them`. Runs in `them-postgres` container (own isolated instance).
 
-## Initialize from scratch
+## Init (run once after first `docker compose up`)
 
-```bash
-./scripts/init_db.sh
+```powershell
+# Windows PowerShell
+docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
+docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
+docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
+docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
 ```
 
-## Manual steps (if needed)
+## Access
 
-```bash
-# Create role + DB
-docker exec omni-postgres psql -U postgres -c "CREATE ROLE odin LOGIN PASSWORD 'change_me';"
-docker exec omni-postgres psql -U postgres -c "CREATE DATABASE odin OWNER odin;"
-
-# Copy schema files into container and apply
-docker cp db/001_schema.sql omni-postgres:/tmp/
-docker cp auth_service/SCHEMA.sql omni-postgres:/tmp/auth_schema.sql
-docker cp db/002_seed.sql omni-postgres:/tmp/
-
-docker exec omni-postgres psql -U odin -d odin -f /tmp/001_schema.sql
-docker exec omni-postgres psql -U odin -d odin -f /tmp/auth_schema.sql
-docker exec omni-postgres psql -U odin -d odin -f /tmp/002_seed.sql
+```powershell
+docker exec -it them-postgres psql -U them -d them
 ```
 
 ## Schema ownership
-- `odin` schema — owned by odin-bridge (app/)
-- `auth_service` schema — owned by odin-auth-service (auth_service/)
+
+- `them` schema — owned by `them-bridge` (`app/`)
+- `auth_service` schema — owned by `them-auth-service` (`auth_service/`)
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `001_schema.sql` | Full `them` schema DDL — source of truth |
+| `002_seed.sql` | Default LLM providers, agents, orchestrators |
+
+See `docs/SCHEMA.md` for full table reference.

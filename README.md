@@ -1,12 +1,12 @@
-# Odin — Multi-Agent Orchestration Platform
+# the-M — Multi-Agent Orchestration Platform
 
 > Route any user goal through a pool of AI agents. Each agent is a tool. The LLM decides which ones to call, in what order, in parallel — then streams the answer back.
 
 ---
 
-## What is Odin?
+## What is the-M?
 
-Odin is a production-grade **multi-agent orchestration platform** built on a clean agentic loop:
+**the-M** (them) is a production-grade multi-agent orchestration platform built on a clean agentic loop:
 
 ```
 User message
@@ -23,7 +23,7 @@ Agentic loop (≤ max_iterations)
 Stream final answer to client
 ```
 
-Agents are transport-agnostic. Today: WebSocket to Omni agents (`omni_ws`). Tomorrow: A2A, HTTP, gRPC — just add an adapter.
+Agents are transport-agnostic. Today: WebSocket (`omni_ws`), A2A (`a2a`). New transports: add an adapter.
 
 ---
 
@@ -31,31 +31,31 @@ Agents are transport-agnostic. Today: WebSocket to Omni agents (`omni_ws`). Tomo
 
 ```
                     ┌─────────────────────────────────────────┐
-                    │              odin-network                │
+                    │              them-network                │
                     │                                          │
   Browser / Client  │  ┌──────────────┐   ┌────────────────┐  │
-  ───────────────►  │  │ odin-bridge  │   │ odin-auth-svc  │  │
+  ───────────────►  │  │ them-bridge  │   │them-auth-svc   │  │
   WS + REST API     │  │  (FastAPI)   │◄──│  (FastAPI)     │  │
                     │  │  port 8001   │   │  port 8701     │  │
                     │  └──────┬───────┘   └───────┬────────┘  │
                     │         │                   │            │
                     │  ┌──────▼───────────────────▼────────┐  │
-                    │  │         odin-postgres (PG 16)      │  │
-                    │  │  schema: odin  +  auth_service     │  │
+                    │  │        them-postgres (PG 16)       │  │
+                    │  │  schema: them  +  auth_service     │  │
                     │  └────────────────────────────────────┘  │
                     │  ┌────────────────────────────────────┐  │
-                    │  │         odin-redis (Redis 7)        │  │
+                    │  │         them-redis (Redis 7)        │  │
                     │  │  token cache · rate limits · pubsub │  │
                     │  └────────────────────────────────────┘  │
                     │                                          │
                     │  ┌────────────────────────────────────┐  │
-                    │  │    odin-frontend (Next.js 16)       │  │
+                    │  │    them-frontend (Next.js 16)       │  │
                     │  │         port 3200                   │  │
                     │  └────────────────────────────────────┘  │
                     └─────────────────────────────────────────┘
 ```
 
-**Fully isolated.** Zero dependency on any external stack — own Postgres, own Redis, own network. All data is bind-mounted under `volumes/` and survives `docker compose down --build`.
+**Fully isolated.** Zero dependency on any external stack — own Postgres, own Redis, own network. All data bind-mounted under `data/` and survives `docker compose down --build`.
 
 ---
 
@@ -63,8 +63,8 @@ Agents are transport-agnostic. Today: WebSocket to Omni agents (`omni_ws`). Tomo
 
 | Layer | Technology |
 |---|---|
-| Orchestrator API | Python 3.12 · FastAPI · asyncpg · SQLAlchemy async |
-| Auth service | Python 3.12 · FastAPI · bcrypt · JWT (HS256) |
+| Orchestrator API | Python 3.13 · FastAPI · asyncpg · SQLAlchemy async |
+| Auth service | Python 3.11 · FastAPI · bcrypt · JWT (HS256) |
 | Database | PostgreSQL 16 |
 | Cache / PubSub | Redis 7 · AOF persistence |
 | Frontend | Next.js 16 · TypeScript · Tailwind CSS 4 · Zustand |
@@ -74,82 +74,71 @@ Agents are transport-agnostic. Today: WebSocket to Omni agents (`omni_ws`). Tomo
 
 ## Features
 
-### Core orchestration
 - **Agentic loop** — LLM drives tool selection over multiple iterations
-- **Parallel fan-out** — multiple tool calls in a single iteration via `asyncio.gather()`, bounded by `max_parallel_tools` and per-agent `max_concurrency`
-- **WebSocket streaming** — tokens stream to the client in real time; tool start/done events visible as they happen
-- **Run recording** — every run, step, token count and cost written to Postgres
-
-### Agent registry
-- CRUD API for agents with transport validation
-- Auth tokens stored **Fernet-encrypted** at rest
-- L1 (in-process) + L2 (Redis) cache with pub/sub invalidation — zero DB queries on the hot path
-
-### Auth & access control
-- **Two auth paths**: opaque Bearer tokens for WS orchestration; JWT for admin REST API
-- Bearer tokens: sha256 hashed at rest, L1+L2 cached (TTL 300s), `last_used_at` tracked
-- Rate limiting: Redis INCR fixed-window per user per hour
-- bcrypt (cost 12) for user passwords — same approach as production Omni
-
-### Dashboard
-- WebSocket `/ws/dashboard` — multiplexed channels: `runs`, `agents`, `metrics`
-- Redis pub/sub relay to connected clients in real time
-- REST `/api/v1/runs` — paginated run history, stats, per-run step detail
-
-### Frontend
-- Login page with animated SVG logo, mesh-gradient background, glass-morphism card
-- Dashboard: stat bento, infrastructure health, agent list, recent runs (30s auto-refresh)
-- Agents page: searchable table with transport badges
-- Runs page: full log with status, duration, token count, cost
+- **Parallel fan-out** — multiple tool calls per iteration via `asyncio.gather()`, bounded by `max_parallel_tools` and per-agent `max_concurrency`
+- **WebSocket streaming** — tokens stream to the client in real time; tool events visible as they happen
+- **Run recording** — every run, step, token count, and cost written to Postgres
+- **Agent registry** — CRUD API, auth tokens Fernet-encrypted at rest, L1+L2 Redis cache with pub/sub invalidation
+- **Two auth paths** — opaque Bearer tokens for WS orchestration; JWT for admin REST API
+- **Rate limiting** — Redis INCR fixed-window per user per hour
+- **Dashboard WS** — multiplexed channels (`runs`, `agents`, `metrics`) via Redis pub/sub
+- **Playground UI** — split-pane chat + real-time trace pane
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
-- Docker + Docker Compose
-- An Anthropic API key (for the LLM in the orchestrator)
+- Docker Desktop (Windows/Mac) or Docker Engine (Linux)
+- Python 3.x (for secret generation and test runner)
 
-### 1. Clone and configure
-```bash
+### 1. Clone and generate secrets
+
+```powershell
+# Windows
 git clone <repo>
 cd odin
-cp .env.example .env
-# Edit .env — fill in ODIN_DB_PASSWORD, ODIN_SECRET_KEY, ODIN_JWT_SECRET, ANTHROPIC_API_KEY
+.\generate-env.ps1        # creates .env from secrets.local
+```
+```bash
+# Linux / Mac
+git clone <repo>
+cd odin
+./generate-env.sh         # creates .env from secrets.local
 ```
 
 ### 2. Start the stack
+
 ```bash
-docker compose up -d
+# Local dev (no Traefik required)
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 ```
 
-### 3. Verify everything is healthy
-```bash
-bash scripts/tests/run_all_tests.sh
+### 3. Initialize the database
+
+```powershell
+docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
+docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
+docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
+docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
 ```
 
-### 4. Create your first admin user
+### 4. Run the tests
+
 ```bash
-# Generate bcrypt hash inside the auth container
-HASH=$(docker exec odin-auth-service python3 -c \
-  "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())")
-
-# Seed role + user
-docker exec odin-postgres psql -U odin -d odin -c "
-INSERT INTO auth_service.roles (name, description, mcp_access, tool_restrictions, dashboard_access, rate_limit, cost_limit_daily, token_expiry)
-VALUES ('super_admin', 'Full system access', ARRAY['*'], '{}', 'admin', 10000, 1000.00, 7200)
-ON CONFLICT (name) DO NOTHING;
-
-INSERT INTO auth_service.users (username, name, email, password_hash, role_id, active)
-SELECT 'admin', 'Admin', 'admin@odin.local', '$HASH', r.id, true
-FROM auth_service.roles r WHERE r.name = 'super_admin';
-"
+python scripts/tests/run_tests.py
 ```
 
 ### 5. Open the dashboard
+
 ```
 http://localhost:3200
 ```
+
+Login: `admin` / `admin123` (pre-filled in dev mode)
 
 ---
 
@@ -157,13 +146,12 @@ http://localhost:3200
 
 | Container | Role | Port |
 |---|---|---|
-| `odin-postgres` | PostgreSQL 16 | internal |
-| `odin-redis` | Redis 7 (AOF) | internal |
-| `odin-auth-service` | Auth / IAM microservice | 8701 (internal) |
-| `odin-bridge` | Orchestrator API + WebSocket | 8001 (internal) |
-| `odin-frontend` | Next.js dashboard | **3200** |
-
-Traefik labels are pre-configured. Set `ODIN_HOSTNAME` and `ODIN_UI_HOSTNAME` in `.env` for automatic routing.
+| `them-postgres` | PostgreSQL 16 | internal |
+| `them-redis` | Redis 7 (AOF) | internal |
+| `them-auth-service` | Auth / IAM microservice | 8701 (internal) |
+| `them-bridge` | Orchestrator API + WebSocket | **8001** |
+| `them-frontend` | Next.js dashboard | **3200** |
+| `mock-agent-*` | Mock WS agents for testing | internal |
 
 ---
 
@@ -172,9 +160,10 @@ Traefik labels are pre-configured. Set `ODIN_HOSTNAME` and `ODIN_UI_HOSTNAME` in
 ### Auth service (port 8701)
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/v1/auth/login` | Login → JWT + refresh token |
-| POST | `/api/v1/auth/refresh` | Refresh access token |
-| GET | `/api/v1/auth/validate` | Validate JWT |
+| POST | `/auth/login` | Login → sets `them_access_token` + `them_refresh_token` cookies |
+| POST | `/auth/refresh` | Refresh access token |
+| POST | `/auth/logout` | Clear cookies, blacklist tokens |
+| GET | `/auth/me` | Current user from JWT |
 
 ### Bridge (port 8001)
 | Method | Path | Auth | Description |
@@ -182,22 +171,22 @@ Traefik labels are pre-configured. Set `ODIN_HOSTNAME` and `ODIN_UI_HOSTNAME` in
 | GET | `/health` `/health/live` `/health/ready` | — | Health checks |
 | WS | `/ws/orchestrate/{name}` | Bearer token | Run an orchestrator |
 | WS | `/ws/dashboard` | JWT | Live event stream |
-| GET/POST/PATCH/DELETE | `/api/v1/admin/agents` | JWT admin | Agent registry |
-| GET/POST/PATCH/DELETE | `/api/v1/admin/orchestrators` | JWT admin | Orchestrator configs |
-| GET/POST/PATCH/DELETE | `/api/v1/admin/tokens` | JWT admin | Access token management |
+| CRUD | `/api/v1/admin/agents` | JWT | Agent registry |
+| CRUD | `/api/v1/admin/orchestrators` | JWT | Orchestrator configs |
+| CRUD | `/api/v1/admin/tokens` | JWT | Access token management |
 | GET | `/api/v1/runs` | JWT | Run history + stats |
 
 ### WebSocket orchestration protocol
 ```jsonc
-// Client connects with Authorization: Bearer <token>
+// Client connects: ws://host:8001/ws/orchestrate/{name}?token=<bearer>
 // Client sends:
 { "content": "Summarize last week's transactions" }
 
 // Server streams:
-{ "type": "ready", "orchestrator": "finance-agent" }
-{ "type": "tool_start", "tool": "agent__data_analyst", "iteration": 1 }
+{ "type": "ready", "orchestrator": "default" }
+{ "type": "tool_start", "tool": "agent__assistant", "iteration": 1 }
 { "type": "token", "text": "Based on the data..." }
-{ "type": "tool_done", "tool": "agent__data_analyst", "duration_ms": 1240 }
+{ "type": "tool_done", "tool": "agent__assistant", "duration_ms": 1240 }
 { "type": "done", "run_id": "...", "total_tokens": 1820, "iterations": 2 }
 ```
 
@@ -207,64 +196,78 @@ Traefik labels are pre-configured. Set `ODIN_HOSTNAME` and `ODIN_UI_HOSTNAME` in
 
 ```
 odin/
-├── app/                        # odin-bridge (FastAPI)
+├── app/                        # them-bridge (FastAPI)
 │   ├── adapters/               # Agent transport layer
 │   │   ├── base.py             # AgentAdapter ABC + AdapterEvent
-│   │   ├── omni_ws_adapter.py  # WebSocket → Omni agents
-│   │   ├── a2a_adapter.py      # A2A stub (future)
+│   │   ├── omni_ws_adapter.py  # WebSocket transport
+│   │   ├── a2a_adapter.py      # A2A JSON-RPC transport
 │   │   └── factory.py          # Transport → adapter routing
 │   ├── routers/                # API endpoints
 │   │   ├── ws_orchestrator.py  # /ws/orchestrate/{name}
 │   │   ├── ws_dashboard.py     # /ws/dashboard
-│   │   ├── admin_agents.py     # /api/v1/admin/agents
+│   │   ├── admin_agents.py
 │   │   ├── admin_orchestrators.py
 │   │   ├── admin_tokens.py
-│   │   └── runs.py             # /api/v1/runs
+│   │   └── runs.py
 │   └── services/
-│       ├── orchestrator_service.py  # Agentic loop
-│       ├── agent_registry.py        # L1+L2 cached agent list
-│       ├── token_cache.py           # Bearer token validation
-│       ├── rate_limiter.py          # Redis INCR rate limiting
-│       ├── run_recorder.py          # Postgres run logging
-│       └── dashboard_broadcaster.py # Redis pub/sub events
-├── auth_service/               # odin-auth-service (FastAPI)
-├── frontend/                   # odin-frontend (Next.js 16)
+│       ├── orchestrator_service.py   # Agentic loop
+│       ├── agent_registry.py         # L1+L2 cached agent list
+│       ├── token_cache.py            # Bearer token validation
+│       ├── rate_limiter.py           # Redis INCR rate limiting
+│       ├── run_recorder.py           # Postgres run logging
+│       └── dashboard_broadcaster.py  # Redis pub/sub events
+├── auth_service/               # them-auth-service (FastAPI)
+├── frontend/                   # them-frontend (Next.js 16)
 │   └── src/app/
 │       ├── login/              # Login page
 │       ├── dashboard/          # Command center
 │       ├── agents/             # Agent registry view
-│       └── runs/               # Run history
-├── postgres/init/              # DB schema auto-applied on first boot
-├── redis/config/               # Redis config (AOF, LRU eviction)
-├── volumes/                    # Bind-mounted persistent data
-│   ├── postgres/pgdata/
-│   ├── redis/
-│   └── logs/
-├── scripts/tests/              # 15-suite test framework
-│   ├── run_all_tests.sh        # Full suite runner
-│   └── test_01_db.sh … test_15_compose_health.sh
-└── docs/                       # Architecture, schema, lessons learned
+│       ├── runs/               # Run history
+│       └── admin/              # Orchestrators, tokens, playground
+├── agents/                     # Optional specialist agents
+│   └── vision_agent/
+├── mock_agent/                 # Lightweight WS mock agents for testing
+├── postgres/init/              # SQL auto-run on first Postgres boot
+├── redis/config/               # Redis config (AOF, memory limits)
+├── db/                         # Schema DDL + seed data
+│   ├── 001_schema.sql
+│   └── 002_seed.sql
+├── data/                       # Bind-mounted persistent data (git-ignored)
+│   ├── them-postgres/pgdata/
+│   ├── them-redis/
+│   └── them-logs/
+├── scripts/
+│   └── tests/
+│       ├── run_tests.py        # Cross-platform test runner (Windows + Linux)
+│       └── INDEX.md            # Test index — what each test covers
+├── docs/                       # Architecture, schema, Redis, lessons learned
+│   └── INDEX.md                # Doc index — what each doc covers + update triggers
+├── generate-env.ps1            # Secret derivation (Windows)
+├── generate-env.sh             # Secret derivation (Linux/Mac)
+├── secrets.local.example       # Template for secrets.local
+├── docker-compose.yml          # Production compose (Traefik-ready)
+└── docker-compose.local.yml    # Local dev override (no Traefik)
 ```
 
 ---
 
 ## Scalability
 
-Odin is multi-replica from day one:
+the-M is multi-replica from day one:
 
 | State | Where | Replica-safe |
 |---|---|---|
 | Token cache L1 | In-process per replica | Each replica caches independently |
-| Token cache L2 | Redis `odin:session:token:*` TTL 300s | ✓ Shared |
-| Rate limiting | Redis INCR `rl:odin:*` | ✓ Shared |
-| Agent registry | Redis `odin:agents:registry` + pub/sub | ✓ Shared, invalidated on write |
-| Orchestrator config | Redis `odin:orchestrators:{name}` TTL 600s | ✓ Shared |
-| Run state | Postgres `odin.runs` | ✓ Shared |
+| Token cache L2 | Redis `them:session:token:*` TTL 300s | Yes — shared |
+| Rate limiting | Redis INCR `rl:them:*` | Yes |
+| Agent registry | Redis `them:agents:registry` + pub/sub | Yes — invalidated on write |
+| Orchestrator config | Redis `them:orchestrators:{name}` TTL 600s | Yes |
+| Run state | Postgres `them.runs` | Yes |
 | WS connections | In-process per replica | By design — Traefik sticky sessions |
 
-Start replica 2:
+Enable replica 2:
 ```bash
-docker compose --profile replica up -d odin-bridge-2
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile replica up -d them-bridge-2
 ```
 
 ---
@@ -272,17 +275,33 @@ docker compose --profile replica up -d odin-bridge-2
 ## Testing
 
 ```bash
-# Full suite (all 15 test suites)
-bash scripts/tests/run_all_tests.sh
+# Full suite — cross-platform, 140 tests
+python scripts/tests/run_tests.py
 
-# Live end-to-end (requires admin JWT)
-ADMIN_JWT=<token> bash scripts/tests/test_14_e2e_orchestrate.sh
+# Sanity only (after docker compose up) — ~15s
+python scripts/tests/run_tests.py 01 02 03 04 15
 
-# Individual phase
-bash scripts/tests/run_phase7_tests.sh
+# E2E (requires admin JWT)
+ADMIN_JWT=<token> python scripts/tests/run_tests.py 14
 ```
 
-See `docs/tests/TEST_INDEX.md` for the full index and deployment checklist.
+See `scripts/tests/INDEX.md` for the full test index.
+
+---
+
+## Environment Variables
+
+All secrets are derived from a single master passphrase in `secrets.local`. Run `.\generate-env.ps1` (Windows) or `./generate-env.sh` (Linux) to generate `.env`.
+
+| Variable | Description |
+|---|---|
+| `THE_M_DB_PASSWORD` | Postgres password (derived) |
+| `THE_M_SECRET_KEY` | Bridge signing key (derived) |
+| `THE_M_JWT_SECRET` | Auth service JWT key (derived) |
+| `THE_M_REDIS_PASSWORD` | Redis password (optional) |
+| `ANTHROPIC_API_KEY` | LLM provider key (add manually) |
+| `THE_M_HOSTNAME` | Traefik hostname for bridge (prod) |
+| `THE_M_UI_HOSTNAME` | Traefik hostname for frontend (prod) |
 
 ---
 
@@ -292,41 +311,19 @@ See `docs/tests/TEST_INDEX.md` for the full index and deployment checklist.
 ```json
 {
   "slug": "my_agent",
-  "name": "My Agent",
+  "display_name": "My Agent",
   "description": "What this agent does — the LLM reads this to decide when to call it",
   "transport": "omni_ws",
-  "endpoint_url": "ws://omni-bridge:8500/ws/chat",
-  "auth_token_encrypted": "<plaintext — stored encrypted>",
+  "endpoint_url": "ws://my-agent-host:9000/ws",
+  "auth_token": "plaintext-token-stored-encrypted",
   "timeout_seconds": 30,
-  "max_concurrency": 3,
-  "enabled": true
+  "max_concurrency": 3
 }
 ```
 
-2. Create or update an orchestrator to include the agent's ID in `allowed_agents`.
+2. Add the agent's ID to an orchestrator's `allowed_agent_ids`.
 
-3. Connect to `ws://localhost:8001/ws/orchestrate/{orchestrator_name}` with a Bearer token and send `{"content": "your goal"}`.
-
----
-
-## Environment Variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `ODIN_DB_PASSWORD` | ✓ | Postgres password |
-| `ODIN_SECRET_KEY` | ✓ | Bridge signing key (min 32 chars) |
-| `ODIN_JWT_SECRET` | ✓ | Auth service JWT key (min 32 chars) |
-| `ANTHROPIC_API_KEY` | ✓ | LLM provider key |
-| `ODIN_HOSTNAME` | ✓ | Traefik hostname for bridge |
-| `ODIN_UI_HOSTNAME` | — | Traefik hostname for frontend |
-| `ODIN_REDIS_PASSWORD` | — | Redis password (optional on private network) |
-| `ANTHROPIC_MODEL` | — | Default: `claude-sonnet-4-6` |
-| `LOG_LEVEL` | — | Default: `INFO` |
-
-Generate secrets:
-```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
+3. Connect: `ws://localhost:8001/ws/orchestrate/{orchestrator_name}?token=<bearer>`
 
 ---
 
