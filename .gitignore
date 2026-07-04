@@ -1,7 +1,8 @@
-# Environment
+# Environment & secrets (never commit these)
 .env
 .env.test
 .env.local
+secrets.local
 
 # Python
 __pycache__/
