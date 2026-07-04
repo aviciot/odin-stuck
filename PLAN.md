@@ -501,7 +501,7 @@ Confirm the platform handles them correctly. Fix anything that breaks.
 ## Progress Tracking
 
 - [x] Phase 1 — A2A Server
-- [ ] Phase 2 — Task Graph Schema
+- [x] Phase 2 — Task Graph Schema
 - [ ] Phase 3 — Durable Planner
 - [ ] Phase 4 — Async Delegation + Governance
 - [ ] Phase 5 — Shared Context / Memory

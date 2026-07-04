@@ -138,6 +138,65 @@ CREATE TABLE IF NOT EXISTS them.audit_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_created ON them.audit_logs(created_at DESC);
 
+-- ── Phase 2: Task graph ───────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS them.tasks (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id          UUID REFERENCES them.runs(id) ON DELETE SET NULL,
+    parent_task_id  UUID REFERENCES them.tasks(id) ON DELETE CASCADE,
+    orchestrator_id UUID REFERENCES them.orchestrators(id),
+    agent_id        UUID REFERENCES them.agents(id),
+    context_id      UUID NOT NULL,
+    state           TEXT NOT NULL DEFAULT 'submitted'
+                    CHECK (state IN ('submitted','working','input-required',
+                                     'completed','failed','canceled','rejected')),
+    kind            TEXT NOT NULL DEFAULT 'root'
+                    CHECK (kind IN ('root','delegated')),
+    remote_task_id  TEXT,
+    push_url        TEXT,
+    status_message  JSONB,
+    input_message   JSONB NOT NULL DEFAULT '{}',
+    budget_tokens   INTEGER,
+    deadline        TIMESTAMPTZ,
+    max_depth       INTEGER NOT NULL DEFAULT 5,
+    tokens_used     INTEGER NOT NULL DEFAULT 0,
+    error           TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_context   ON them.tasks(context_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_parent    ON them.tasks(parent_task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_state     ON them.tasks(state)
+    WHERE state IN ('submitted','working','input-required');
+CREATE INDEX IF NOT EXISTS idx_tasks_remote    ON them.tasks(remote_task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_run       ON them.tasks(run_id);
+
+CREATE TABLE IF NOT EXISTS them.artifacts (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id       UUID NOT NULL REFERENCES them.tasks(id) ON DELETE CASCADE,
+    context_id    UUID NOT NULL,
+    artifact_id   TEXT NOT NULL,
+    name          TEXT,
+    parts         JSONB NOT NULL,
+    append_index  INTEGER NOT NULL DEFAULT 0,
+    last_chunk    BOOLEAN NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (task_id, artifact_id, append_index)
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_ctx  ON them.artifacts(context_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_task ON them.artifacts(task_id);
+
+CREATE TABLE IF NOT EXISTS them.task_messages (
+    id          BIGSERIAL PRIMARY KEY,
+    task_id     UUID NOT NULL REFERENCES them.tasks(id) ON DELETE CASCADE,
+    role        TEXT NOT NULL CHECK (role IN ('user','agent','system')),
+    parts       JSONB NOT NULL,
+    seq         INTEGER NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (task_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_task_messages ON them.task_messages(task_id, seq);
+
 -- A2A server support
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS a2a_exposed BOOLEAN NOT NULL DEFAULT FALSE;
 

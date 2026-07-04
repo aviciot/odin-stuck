@@ -194,3 +194,64 @@ class AuditLog(Base):
     entity_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     details: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Phase 2: Task graph ───────────────────────────────────────────────────────
+
+class Task(Base):
+    __tablename__ = "tasks"
+    __table_args__ = {"schema": "them"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("them.runs.id", ondelete="SET NULL"), nullable=True)
+    parent_task_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("them.tasks.id", ondelete="CASCADE"), nullable=True)
+    orchestrator_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("them.orchestrators.id"), nullable=True)
+    agent_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("them.agents.id"), nullable=True)
+    context_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, default="submitted")
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default="root")
+    remote_task_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    push_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status_message: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    input_message: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    budget_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    deadline: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    max_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    artifacts: Mapped[List["Artifact"]] = relationship("Artifact", back_populates="task", cascade="all, delete-orphan")
+    messages: Mapped[List["TaskMessage"]] = relationship("TaskMessage", back_populates="task", cascade="all, delete-orphan")
+
+
+class Artifact(Base):
+    __tablename__ = "artifacts"
+    __table_args__ = {"schema": "them"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("them.tasks.id", ondelete="CASCADE"), nullable=False)
+    context_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    artifact_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parts: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    append_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_chunk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    task: Mapped["Task"] = relationship("Task", back_populates="artifacts")
+
+
+class TaskMessage(Base):
+    __tablename__ = "task_messages"
+    __table_args__ = {"schema": "them"}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("them.tasks.id", ondelete="CASCADE"), nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    parts: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    task: Mapped["Task"] = relationship("Task", back_populates="messages")
