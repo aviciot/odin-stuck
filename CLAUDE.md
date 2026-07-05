@@ -15,6 +15,7 @@ Before touching any code, read these docs if you haven't this session:
 | `docs/SCHEMA.md` | Touching `models.py` or writing queries |
 | `docs/REDIS.md` | Touching anything that reads/writes Redis |
 | `docs/ADAPTERS.md` | Adding/changing an agent transport |
+| `docs/A2A_AGENTS.md` | Working with A2A test agents — start/stop, enable, test commands |
 | `docs/STATUS.md` | Know what's broken/pending before you start |
 | `docs/LESSONS.md` | Before any judgment call — read what burned us before |
 | `scripts/tests/INDEX.md` | Before running or writing tests |
@@ -74,6 +75,9 @@ bounded by `orchestrator.max_parallel_tools` and per-agent `max_concurrency` sem
 | `them-frontend` | Next.js dashboard | **3200** | `frontend/` |
 | `mock-agent-*` | WS mock agents for testing | 9000 (internal) | `mock_agent/` |
 | `vision-agent` | Vision/maps agent | 9100 (internal) | `agents/vision_agent/` |
+| `a2a-echo` | A2A v1.0 echo test agent (`profiles: [test-agents]`) | 9200 (internal) | `agents/a2a_echo/` |
+| `a2a-slow` | A2A v1.0 slow test agent (5s delay) (`profiles: [test-agents]`) | 9201 (internal) | `agents/a2a_slow/` |
+| `a2a-stream` | A2A v1.0 streaming test agent (`profiles: [test-agents]`) | 9202 (internal) | `agents/a2a_stream/` |
 
 ---
 
@@ -139,6 +143,33 @@ python scripts/tests/run_tests.py 01 02 03 04 15   # sanity only
 
 # Enable replica 2
 docker compose -f docker-compose.yml -f docker-compose.local.yml --profile replica up -d them-bridge-2
+
+# A2A test agents (profile: test-agents)
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents up -d
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents ps
+
+# Enable A2A agents in DB (required before using them in orchestrator)
+docker exec them-postgres psql -U them -d them -c "UPDATE them.agents SET enabled=true WHERE slug IN ('a2a_echo','a2a_slow','a2a_stream');"
+
+# Disable A2A agents (when stopping test-agents profile)
+docker exec them-postgres psql -U them -d them -c "UPDATE them.agents SET enabled=false WHERE slug IN ('a2a_echo','a2a_slow','a2a_stream');"
+
+# Bust Redis cache after enabling/disabling agents or changing a2a_test orchestrator
+docker exec them-redis redis-cli DEL them:orchestrators:a2a_test them:agents:registry
+
+# Rebuild A2A agents after code change (no volume mount — must rebuild)
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents build a2a-echo a2a-slow a2a-stream
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile test-agents up -d a2a-echo a2a-slow a2a-stream
+
+# Test A2A adapter directly (no LLM) from inside bridge container
+docker exec them-bridge python3 -c "
+import asyncio, sys; sys.path.insert(0, '/app')
+from app.adapters.a2a_async_adapter import A2aAsyncAdapter
+async def t(slug, url, msg):
+    adapter = A2aAsyncAdapter(agent_slug=slug, endpoint_url=url, auth_token_encrypted=None, poll_interval=1.0, max_poll_seconds=30.0)
+    async for e in adapter.stream_invoke({'message': msg}, timeout=30.0): print(e)
+asyncio.run(t('a2a_echo', 'http://a2a-echo:9200', 'hello'))
+"
 ```
 
 ---
@@ -224,12 +255,14 @@ DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
 
 ---
 
-## Known State (2026-07-04)
+## Known State (2026-07-05)
 
 - **Stack:** fully deployed locally. All core containers healthy.
 - **Users seeded:** `admin` / `admin123` (super_admin), `avi` / `avi123` (super_admin)
-- **Agents seeded:** assistant, coder, researcher (all mock WS agents)
-- **Orchestrators seeded:** `default` (claude-sonnet-4-6)
+- **Agents seeded:** assistant, coder, researcher (mock WS) + a2a_echo, a2a_slow, a2a_stream (A2A test agents)
+- **Orchestrators seeded:** `default` (claude-sonnet-4-6), `a2a_test` (haiku, all 3 A2A agents)
+- **A2A test agents:** running (`--profile test-agents`), all enabled in DB, ready to use via `a2a_test` orchestrator
+- **ANTHROPIC_API_KEY:** set in `.env` — bridge picks it up on restart
 - **Dev login:** pre-filled in login page when `NODE_ENV=development`
 - **`vision-agent`:** unhealthy — needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` in `.env`
 - **Replica 2:** compose profile `replica`, not running by default
