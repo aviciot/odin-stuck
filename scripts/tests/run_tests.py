@@ -769,6 +769,92 @@ def test_16_a2a_agents():
         except Exception as exc:
             check(f"{agent} requirements.txt", False, str(exc))
 
+def test_17_memory():
+    section("test_17_memory: Phase 8.4 Context Summarization Memory")
+    sys.path.insert(0, str(ROOT))
+
+    def src(path): return (ROOT / path).read_text(encoding="utf-8")
+    def fns(path):
+        tree = ast.parse(src(path))
+        return [n.name for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))]
+
+    # memory_service.py
+    try:
+        s = src("app/services/memory_service.py")
+        fn_names = fns("app/services/memory_service.py")
+        check("memory_service.py exists", True)
+        check("get_injected_context defined", "get_injected_context" in fn_names)
+        check("summarize_context defined", "summarize_context" in fn_names)
+        check("resolve_summarizer defined", "resolve_summarizer" in fn_names)
+        check("Redis key prefix them:ctx:", "them:ctx:" in s)
+        check("summary TTL defined", "_SUMMARY_TTL" in s)
+        check("never raises in summarize_context", "return None" in s)
+        check("raw artifacts preserved (no DB delete)", ".delete(" not in s and "DELETE FROM" not in s)
+    except Exception as exc:
+        check("memory_service.py", False, str(exc))
+
+    # models.py
+    try:
+        s = src("app/models.py")
+        check("memory_enabled column", "memory_enabled" in s)
+        check("summarize_every_n_calls column", "summarize_every_n_calls" in s)
+        check("memory_raw_fallback_n column", "memory_raw_fallback_n" in s)
+        check("summarizer_provider column", "summarizer_provider" in s)
+        check("summarizer_model column", "summarizer_model" in s)
+        check("summarizer_api_key_encrypted column", "summarizer_api_key_encrypted" in s)
+    except Exception as exc:
+        check("models.py memory columns", False, str(exc))
+
+    # admin_orchestrators.py
+    try:
+        s = src("app/routers/admin_orchestrators.py")
+        check("OrchestratorCreate has memory_enabled", "memory_enabled" in s)
+        check("OrchestratorOut has memory_enabled", s.count("memory_enabled") >= 2)
+        check("summarize_every_n_calls in router", "summarize_every_n_calls" in s)
+        check("summarizer_provider in router", "summarizer_provider" in s)
+    except Exception as exc:
+        check("admin_orchestrators.py memory fields", False, str(exc))
+
+    # task_runner.py
+    try:
+        s = src("app/services/task_runner.py")
+        check("memory_service imported", "memory_service" in s)
+        check("get_injected_context called", "get_injected_context" in s)
+        check("summarize_context called", "summarize_context" in s)
+        check("agent_calls_since_summary tracked", "agent_calls_since_summary" in s)
+        check("memory_enabled checked", "memory_enabled" in s)
+        check("summarize_every_n_calls checked", "summarize_every_n_calls" in s)
+        check("injected context prepended", "_injected_ctx" in s)
+    except Exception as exc:
+        check("task_runner.py memory integration", False, str(exc))
+
+    # REDIS.md
+    try:
+        s = src("docs/REDIS.md")
+        check("them:ctx: summary key documented", "them:ctx:" in s and ":summary" in s)
+        check("memory_service.py listed as owner", "memory_service" in s)
+    except Exception as exc:
+        check("REDIS.md", False, str(exc))
+
+    # db/003_phase8.sql
+    try:
+        s = src("db/003_phase8.sql")
+        check("003_phase8.sql has memory_enabled", "memory_enabled" in s)
+        check("003_phase8.sql has summarize_every_n_calls", "summarize_every_n_calls" in s)
+        check("003_phase8.sql has summarizer_provider", "summarizer_provider" in s)
+    except Exception as exc:
+        check("db/003_phase8.sql", False, str(exc))
+
+    # frontend types
+    try:
+        s = src("frontend/src/lib/api.ts")
+        check("OrchestratorFull has memory_enabled", "memory_enabled" in s)
+        check("OrchestratorFull has summarize_every_n_calls", "summarize_every_n_calls" in s)
+        check("OrchestratorFull has summarizer_provider", "summarizer_provider" in s)
+    except Exception as exc:
+        check("frontend/src/lib/api.ts memory fields", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -788,6 +874,7 @@ ALL_TESTS = [
     ("14", test_14_e2e_orchestrate),
     ("15", test_15_compose_health),
     ("16", test_16_a2a_agents),
+    ("17", test_17_memory),
 ]
 
 if __name__ == "__main__":

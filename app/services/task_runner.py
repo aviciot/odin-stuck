@@ -78,6 +78,12 @@ async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orches
                 p.llm_api_key_encrypted = data.get("llm_api_key_encrypted")
                 p.llm_base_url = data.get("llm_base_url")
                 p.a2a_exposed = data.get("a2a_exposed", False)
+                p.memory_enabled = data.get("memory_enabled", False)
+                p.summarize_every_n_calls = data.get("summarize_every_n_calls", 3)
+                p.memory_raw_fallback_n = data.get("memory_raw_fallback_n", 5)
+                p.summarizer_provider = data.get("summarizer_provider")
+                p.summarizer_model = data.get("summarizer_model")
+                p.summarizer_api_key_encrypted = data.get("summarizer_api_key_encrypted")
                 return p  # type: ignore[return-value]
         except Exception as exc:
             logger.warning("task_runner: orchestrator cache miss", name=name, error=str(exc))
@@ -107,6 +113,12 @@ async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orches
                 "rate_limit_rpm": row.rate_limit_rpm,
                 "daily_budget_usd": str(row.daily_budget_usd),
                 "a2a_exposed": getattr(row, "a2a_exposed", False),
+                "memory_enabled": getattr(row, "memory_enabled", False),
+                "summarize_every_n_calls": getattr(row, "summarize_every_n_calls", 3),
+                "memory_raw_fallback_n": getattr(row, "memory_raw_fallback_n", 5),
+                "summarizer_provider": getattr(row, "summarizer_provider", None),
+                "summarizer_model": getattr(row, "summarizer_model", None),
+                "summarizer_api_key_encrypted": getattr(row, "summarizer_api_key_encrypted", None),
             }
             await db_module.redis_client.setex(f"{_ORCH_PREFIX}{name}", _ORCH_TTL, json.dumps(payload))
         except Exception:
@@ -452,8 +464,8 @@ async def run(
     final_answer = ""
     run_status = "completed"
     run_error = None
-    # seq tracks the next message sequence number for task_messages
     msg_seq = 0
+    agent_calls_since_summary = 0  # memory: incremented per agent call batch
 
     try:
         while iteration < orch.max_iterations:
@@ -553,11 +565,22 @@ async def run(
                     "iteration": iteration,
                 })
 
+            # Inject memory context into each agent call when available
+            _injected_ctx: Optional[str] = None
+            if getattr(orch, "memory_enabled", False):
+                from app.services.memory_service import get_injected_context
+                _injected_ctx = await get_injected_context(context_id)
+
             async def _run_one(tc: ToolCall) -> tuple[ToolCall, str]:
                 slug = tc.name.removeprefix("agent__")
                 agent = agent_by_slug.get(slug)
                 if agent is None:
                     return tc, f"[Unknown agent: {slug}]"
+                # Prepend summary context to message when available
+                tc_input = dict(tc.input)
+                if _injected_ctx and "message" in tc_input:
+                    tc_input["message"] = f"[Context summary]\n{_injected_ctx}\n\n{tc_input['message']}"
+                    tc = ToolCall(id=tc.id, name=tc.name, input=tc_input)
                 async with parallel_sem:
                     result = await _invoke_agent(
                         agent, tc, semaphores, run_id, root_task, iteration, db
@@ -581,6 +604,23 @@ async def run(
             await _persist_tool_results(db, root_task.id, tool_calls_this_iter, results, seq=msg_seq)
             msg_seq += 1
             provider.append_tool_results(messages, tool_calls_this_iter, results)
+
+            # Memory: summarize after N agent calls
+            agent_calls_since_summary += len(tool_calls_this_iter)
+            if getattr(orch, "memory_enabled", False):
+                threshold = getattr(orch, "summarize_every_n_calls", 3)
+                if agent_calls_since_summary >= threshold:
+                    from app.services import context_service as _cs
+                    from app.services.memory_service import summarize_context
+                    artifacts = await _cs.get_context_artifacts(context_id, db, limit=20)
+                    await summarize_context(
+                        context_id=context_id,
+                        orch=orch,
+                        artifacts=artifacts,
+                        root_task_id=root_task.id,
+                        db=db,
+                    )
+                    agent_calls_since_summary = 0
 
         else:
             run_status = "stopped"

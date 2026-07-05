@@ -34,6 +34,12 @@ const EMPTY_FORM = {
   tts_provider: 'openai',
   tts_voice: 'nova',
   tts_api_key: '',
+  memory_enabled: false,
+  summarize_every_n_calls: 3,
+  memory_raw_fallback_n: 5,
+  summarizer_provider: '',
+  summarizer_model: '',
+  summarizer_api_key: '',
 };
 
 // ── Sub-components ─────────────────────────────────────────────────────────
@@ -119,6 +125,12 @@ export default function OrchestratorsPage() {
       tts_provider: o.tts_provider ?? 'openai',
       tts_voice: o.tts_voice ?? 'nova',
       tts_api_key: '',
+      memory_enabled: o.memory_enabled ?? false,
+      summarize_every_n_calls: o.summarize_every_n_calls ?? 3,
+      memory_raw_fallback_n: o.memory_raw_fallback_n ?? 5,
+      summarizer_provider: o.summarizer_provider ?? '',
+      summarizer_model: o.summarizer_model ?? '',
+      summarizer_api_key: '',
     });
     setFormError(''); setTestState({ loading: false }); setVoiceTestState({ loading: false }); setTtsTestState({ loading: false });
     setShowForm(true);
@@ -200,6 +212,11 @@ export default function OrchestratorsPage() {
         tts_enabled: form.tts_enabled,
         tts_provider: form.tts_enabled ? form.tts_provider : null,
         tts_voice: form.tts_enabled ? form.tts_voice : null,
+        memory_enabled: form.memory_enabled,
+        summarize_every_n_calls: Number(form.summarize_every_n_calls),
+        memory_raw_fallback_n: Number(form.memory_raw_fallback_n),
+        summarizer_provider: form.memory_enabled ? (form.summarizer_provider || null) : null,
+        summarizer_model: form.memory_enabled ? (form.summarizer_model || null) : null,
       };
       if (form.transcription_api_key) {
         body.transcription_api_key = form.transcription_api_key;
@@ -210,6 +227,11 @@ export default function OrchestratorsPage() {
         body.tts_api_key = form.tts_api_key;
       } else {
         delete body.tts_api_key;
+      }
+      if (form.summarizer_api_key) {
+        body.summarizer_api_key = form.summarizer_api_key;
+      } else {
+        delete body.summarizer_api_key;
       }
       if (editing) {
         await themApi.updateOrchestrator(editing.id, body);
@@ -510,6 +532,55 @@ export default function OrchestratorsPage() {
                         )}
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+
+              {/* Memory */}
+              <div style={{ borderTop: '1px solid var(--tm-border)', paddingTop: 18, marginTop: 4 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tm-text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 14 }}>Context Memory</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 14 }}>
+                  <input type="checkbox" checked={form.memory_enabled} onChange={(e) => f('memory_enabled', e.target.checked)} style={{ width: 16, height: 16 }} />
+                  <span style={{ fontSize: 13 }}>Enable context summarization memory</span>
+                </label>
+                {form.memory_enabled && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <Field label="Summarize every N agent calls">
+                        <input type="number" min={1} value={form.summarize_every_n_calls} onChange={(e) => f('summarize_every_n_calls', e.target.value)} style={INP} />
+                      </Field>
+                      <Field label="Raw context fallback N">
+                        <input type="number" min={1} value={form.memory_raw_fallback_n} onChange={(e) => f('memory_raw_fallback_n', e.target.value)} style={INP} />
+                      </Field>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <Field label="Summarizer provider (optional override)">
+                        <select
+                          value={form.summarizer_provider}
+                          onChange={(e) => {
+                            f('summarizer_provider', e.target.value);
+                            if (e.target.value && MODELS[e.target.value]) {
+                              f('summarizer_model', MODELS[e.target.value][0]);
+                            } else {
+                              f('summarizer_model', '');
+                            }
+                          }}
+                          style={INP}
+                        >
+                          <option value="">env default (anthropic / haiku)</option>
+                          {Object.keys(MODELS).map((p) => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="Summarizer model">
+                        <select value={form.summarizer_model} onChange={(e) => f('summarizer_model', e.target.value)} style={INP} disabled={!form.summarizer_provider}>
+                          <option value="">{form.summarizer_provider ? 'select model' : '—'}</option>
+                          {(form.summarizer_provider ? (MODELS[form.summarizer_provider] ?? []) : []).map((m) => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </Field>
+                    </div>
+                    <Field label="Summarizer API key (optional override)">
+                      <input type="password" value={form.summarizer_api_key} onChange={(e) => f('summarizer_api_key', e.target.value)} placeholder="optional override" style={INP} />
+                    </Field>
                   </div>
                 )}
               </div>

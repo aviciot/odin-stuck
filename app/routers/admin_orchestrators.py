@@ -51,6 +51,12 @@ class OrchestratorCreate(BaseModel):
     tts_provider: Optional[str] = None
     tts_voice: Optional[str] = None
     tts_api_key: Optional[str] = None
+    memory_enabled: bool = False
+    summarize_every_n_calls: int = 3
+    memory_raw_fallback_n: int = 5
+    summarizer_provider: Optional[str] = None
+    summarizer_model: Optional[str] = None
+    summarizer_api_key: Optional[str] = None
 
 
 class OrchestratorUpdate(BaseModel):
@@ -74,6 +80,12 @@ class OrchestratorUpdate(BaseModel):
     tts_provider: Optional[str] = None
     tts_voice: Optional[str] = None
     tts_api_key: Optional[str] = None
+    memory_enabled: Optional[bool] = None
+    summarize_every_n_calls: Optional[int] = None
+    memory_raw_fallback_n: Optional[int] = None
+    summarizer_provider: Optional[str] = None
+    summarizer_model: Optional[str] = None
+    summarizer_api_key: Optional[str] = None
 
 
 class OrchestratorOut(BaseModel):
@@ -99,6 +111,12 @@ class OrchestratorOut(BaseModel):
     tts_provider: Optional[str]
     tts_voice: Optional[str]
     tts_api_key_hint: Optional[str]
+    memory_enabled: bool = False
+    summarize_every_n_calls: int = 3
+    memory_raw_fallback_n: int = 5
+    summarizer_provider: Optional[str] = None
+    summarizer_model: Optional[str] = None
+    summarizer_api_key_hint: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -145,6 +163,12 @@ def _row_to_out(row: Orchestrator) -> OrchestratorOut:
         tts_provider=row.tts_provider,
         tts_voice=row.tts_voice,
         tts_api_key_hint=key_hint(row.tts_api_key_encrypted) if row.tts_api_key_encrypted else None,
+        memory_enabled=getattr(row, "memory_enabled", False),
+        summarize_every_n_calls=getattr(row, "summarize_every_n_calls", 3),
+        memory_raw_fallback_n=getattr(row, "memory_raw_fallback_n", 5),
+        summarizer_provider=getattr(row, "summarizer_provider", None),
+        summarizer_model=getattr(row, "summarizer_model", None),
+        summarizer_api_key_hint=key_hint(row.summarizer_api_key_encrypted) if getattr(row, "summarizer_api_key_encrypted", None) else None,
     )
 
 
@@ -247,6 +271,12 @@ async def create_orchestrator(body: OrchestratorCreate, db: AsyncSession = Depen
         tts_provider=body.tts_provider or None,
         tts_voice=body.tts_voice or None,
         tts_api_key_encrypted=encrypt_value(body.tts_api_key) if body.tts_api_key else None,
+        memory_enabled=body.memory_enabled,
+        summarize_every_n_calls=body.summarize_every_n_calls,
+        memory_raw_fallback_n=body.memory_raw_fallback_n,
+        summarizer_provider=body.summarizer_provider or None,
+        summarizer_model=body.summarizer_model or None,
+        summarizer_api_key_encrypted=encrypt_value(body.summarizer_api_key) if body.summarizer_api_key else None,
     )
     db.add(row)
     await db.commit()
@@ -305,6 +335,18 @@ async def update_orchestrator(orch_id: uuid.UUID, body: OrchestratorUpdate, db: 
         row.tts_voice = body.tts_voice or None
     if body.tts_api_key:
         row.tts_api_key_encrypted = encrypt_value(body.tts_api_key)
+    if body.memory_enabled is not None:
+        row.memory_enabled = body.memory_enabled
+    if body.summarize_every_n_calls is not None:
+        row.summarize_every_n_calls = body.summarize_every_n_calls
+    if body.memory_raw_fallback_n is not None:
+        row.memory_raw_fallback_n = body.memory_raw_fallback_n
+    if body.summarizer_provider is not None:
+        row.summarizer_provider = body.summarizer_provider or None
+    if body.summarizer_model is not None:
+        row.summarizer_model = body.summarizer_model or None
+    if body.summarizer_api_key:
+        row.summarizer_api_key_encrypted = encrypt_value(body.summarizer_api_key)
 
     name = row.name
     await db.commit()

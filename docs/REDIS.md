@@ -13,6 +13,7 @@
 | `rl:them:{user_id}:{hour_slot}` | 7200s | rate_limiter.py | Yes | Rate limit counter (INCR) |
 | `them:bridge:{instance_id}:heartbeat` | 30s | heartbeat bg task | Yes | Per-replica liveness |
 | `them:ctx:{context_id}:heads` | 300s | context_service.py | Yes | Hot cache of recent artifacts for a context (Phase 5) |
+| `them:ctx:{context_id}:summary` | 3600s | memory_service.py | Yes | Latest context summary text for injecting into agent messages (Phase 8.4) |
 
 ## Pub/Sub Channels
 

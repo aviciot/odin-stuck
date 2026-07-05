@@ -58,6 +58,20 @@ Named orchestrator configs. One row per WS endpoint `/ws/orchestrate/{name}`.
 | rate_limit_rpm | INT | per-user rate limit |
 | daily_budget_usd | NUMERIC | 0 = unlimited |
 | enabled | BOOL | |
+| voice_enabled | BOOL | enable STT transcription |
+| transcription_provider | TEXT | e.g. "openai", "groq" |
+| transcription_model | TEXT | e.g. "whisper-1" |
+| transcription_api_key_encrypted | TEXT | optional override |
+| tts_enabled | BOOL | enable text-to-speech |
+| tts_provider | TEXT | e.g. "openai" |
+| tts_voice | TEXT | e.g. "nova" |
+| tts_api_key_encrypted | TEXT | optional override |
+| memory_enabled | BOOL | enable context summarization (Phase 8.4) |
+| summarize_every_n_calls | INT | trigger summary after N agent calls (default 3) |
+| memory_raw_fallback_n | INT | raw artifact fallback count (default 5) |
+| summarizer_provider | TEXT | NULL = env default (anthropic/haiku) |
+| summarizer_model | TEXT | NULL = env default |
+| summarizer_api_key_encrypted | TEXT | optional key override for summarizer |
 
 ## odin.access_tokens
 Opaque bearer tokens for WS orchestrator access. Token stored as SHA-256 hash.

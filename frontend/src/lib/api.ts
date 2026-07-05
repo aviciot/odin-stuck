@@ -113,6 +113,11 @@ export interface OrchestratorFull {
   tts_enabled: boolean;
   tts_provider: string | null;
   tts_voice: string | null;
+  memory_enabled: boolean;
+  summarize_every_n_calls: number;
+  memory_raw_fallback_n: number;
+  summarizer_provider: string | null;
+  summarizer_model: string | null;
 }
 
 export interface AccessToken {

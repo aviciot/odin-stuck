@@ -97,6 +97,12 @@ class Orchestrator(Base):
     tts_provider: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tts_voice: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tts_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    memory_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    summarize_every_n_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    memory_raw_fallback_n: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    summarizer_provider: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summarizer_model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summarizer_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
