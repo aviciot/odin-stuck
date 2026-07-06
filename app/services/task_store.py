@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.database as db_module
@@ -68,6 +68,7 @@ async def create_task(
     budget_tokens: Optional[int] = None,
     deadline: Optional[datetime] = None,
     max_depth: int = 5,
+    user_id: Optional[int] = None,
 ) -> Task:
     task = Task(
         id=uuid.uuid4(),
@@ -83,6 +84,7 @@ async def create_task(
         deadline=deadline,
         max_depth=max_depth,
         tokens_used=0,
+        user_id=user_id,
     )
     db.add(task)
     try:
@@ -299,3 +301,29 @@ async def add_tokens_used(
     except Exception as exc:
         await db.rollback()
         logger.error("task_store: add_tokens_used failed", task_id=str(task_id), error=str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fork-bomb guard
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def count_context_tasks(db: AsyncSession, context_id: uuid.UUID) -> int:
+    """Count active (non-terminal) tasks in a context. Used for fork-bomb guard."""
+    result = await db.execute(
+        select(func.count()).select_from(Task).where(
+            Task.context_id == context_id,
+            Task.state.notin_(["completed", "failed", "canceled"])
+        )
+    )
+    return result.scalar_one()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ownership check
+# ─────────────────────────────────────────────────────────────────────────────
+
+def owns_task(task: Task, user_id: Optional[int]) -> bool:
+    """True if user_id owns the task. NULL task.user_id = legacy task, always allowed."""
+    if task.user_id is None:
+        return True
+    return task.user_id == user_id

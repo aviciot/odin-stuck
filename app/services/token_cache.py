@@ -61,6 +61,7 @@ def _row_to_payload(row: AccessToken) -> dict:
         "label": row.label,
         "orchestrator_id": str(row.orchestrator_id) if row.orchestrator_id else None,
         "enabled": row.enabled,
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
     }
 
 

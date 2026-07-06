@@ -229,6 +229,7 @@ class Task(Base):
     max_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -265,3 +266,21 @@ class TaskMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     task: Mapped["Task"] = relationship("Task", back_populates="messages")
+
+
+# ── Phase 9: Applications (pluggable entry points) ────────────────────────────
+
+class Application(Base):
+    __tablename__ = "applications"
+    __table_args__ = {"schema": "them"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    entry_point_type: Mapped[str] = mapped_column(Text, nullable=False)
+    orchestrator_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("them.orchestrators.id", ondelete="CASCADE"), nullable=False)
+    access_policy: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {"mode": "token"})
+    presentation: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

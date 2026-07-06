@@ -1,5 +1,5 @@
 # the-M Status
-# Last updated: 2026-07-06
+# Last updated: 2026-07-07
 
 ## Build Progress
 
@@ -32,6 +32,7 @@
 | **Persistent context threading** | ✓ Complete | Frontend passes context_id on follow-up messages; server reuses it so memory summary carries across turns |
 | **Traefik reverse proxy** | ✓ Complete | traefik:v3.6, single port 8088, path-based routing, sticky sessions (`them_lb` cookie), Docker provider label discovery |
 | **JWT auto-refresh** | ✓ Complete | `/api/auth/token` auto-refreshes when token has < 30s left; WS URL derived from `window.location` (no hardcoded port) |
+| **Phase 9 — A2A production hardening** | ✓ Complete | Token expiry enforcement, ownership isolation (owns_task), rate limiting (10 rpm), agent card strips system_prompt, default 30-min task deadline, 512 KB body + 10-item batch limits, TOCTOU scope check; `them.tasks.user_id` + `them.applications` schema; test_21 (47 checks) |
 
 ## Infrastructure (as of 2026-07-06)
 
@@ -96,6 +97,8 @@
 - **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
 - **Mock agents removed**: `mock-agent-assistant`, `mock-agent-researcher`, `mock-agent-coder` disabled in DB and stopped. Only real A2A agents remain.
 - **Tests 17/18/19 not in CLAUDE.md trigger map**: structural tests for Phase 8 memory, orchestrator-as-agent, and edges. Add to trigger map when updating CLAUDE.md.
+- **Phase 9 Phase 2 pending**: `them.applications` admin CRUD API (`app/routers/admin_applications.py`) not yet implemented.
+- **Phase 9 Phase 3 pending**: `/apps/{slug}/ws` WebSocket chat entry point and `POST /apps/{slug}` REST entry point not yet implemented.
 - **RestEdge / VoiceEdge stubs**: `app/edges/rest_edge.py` and `app/edges/voice_edge.py` raise `NotImplementedError` — not yet implemented.
 - **Persistent multi-turn chat**: playground opens a new WS per message. The LLM itself does not see prior turns — only agents see the memory summary. True multi-turn requires maintaining conversation history across connections.
 - **User management UI**: no frontend for managing auth_service users/teams.

@@ -1386,6 +1386,118 @@ asyncio.run(t())
         skip("bridge-2 replica tests (them-bridge-2 not running — start with --profile replica)")
 
 
+# ─── test 21: A2A Phase 9 hardening ─────────────────────────────────────────
+
+def test_21_a2a_hardening():
+    section("test_21_a2a_hardening: Phase 9 A2A Security Hardening")
+    sys.path.insert(0, str(ROOT))
+
+    def src(path): return (ROOT / path).read_text(encoding="utf-8")
+    def fns(path):
+        tree = ast.parse(src(path))
+        return [n.name for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))]
+
+    # ── a2a_server.py hardening ───────────────────────────────────────────────
+    try:
+        s = src("app/routers/a2a_server.py")
+
+        # Rate limiting
+        check("rate_limiter imported in a2a_server", "check_rate_limit" in s)
+        check("_A2A_RATE_LIMIT_RPM defined", "_A2A_RATE_LIMIT_RPM" in s)
+        check("rate limit enforced in a2a_rpc", "check_rate_limit(user_id" in s)
+        check("429 on rate limit exceeded", "429" in s)
+
+        # Body size guards
+        check("_MAX_BODY_BYTES defined", "_MAX_BODY_BYTES" in s)
+        check("body size checked", "_MAX_BODY_BYTES" in s and "len(raw)" in s)
+        check("413 on oversized body", "413" in s)
+
+        # Batch limit
+        check("_MAX_BATCH_SIZE defined", "_MAX_BATCH_SIZE" in s)
+        check("batch size enforced", "len(body) > _MAX_BATCH_SIZE" in s)
+
+        # Token expiry
+        check("expires_at checked in _resolve_bearer", "expires_at" in s)
+        check("expired token returns None", "expires_at < datetime.now(timezone.utc)" in s)
+
+        # Agent card strips system_prompt
+        check("system_prompt NOT in agent card description", "system_prompt[:200]" not in s)
+        check("safe_desc used in agent card", "safe_desc" in s)
+
+        # Default deadline
+        check("_DEFAULT_TASK_DEADLINE_MINUTES defined", "_DEFAULT_TASK_DEADLINE_MINUTES" in s)
+        check("deadline passed to create_task", "deadline=deadline" in s)
+        check("timedelta used for deadline", "timedelta(minutes=_DEFAULT_TASK_DEADLINE_MINUTES)" in s)
+
+        # Ownership isolation
+        check("owns_task called in GetTask", "task_store.owns_task(task" in s)
+        check("ownership 404 in GetTask", s.count("Task {task_id} not found") >= 2)
+        check("owns_task called in CancelTask", s.count("task_store.owns_task") >= 2)
+        check("owns_task called in push webhook", s.count("task_store.owns_task") >= 3)
+
+        # TOCTOU scope check
+        check("orchestrator scope check inside task creation session", "Token is not authorized for orchestrator" in s)
+        check("token_orch_id extracted for scope check", "token_orch_id" in s)
+
+        # GetTask/CancelTask receive token_payload
+        check("_handle_get_task accepts token_payload", "_handle_get_task(rpc_id, params, token_payload)" in s)
+        check("_handle_cancel_task accepts token_payload", "_handle_cancel_task(rpc_id, params, token_payload)" in s)
+
+    except Exception as exc:
+        check("a2a_server.py hardening", False, str(exc))
+
+    # ── task_store.py ─────────────────────────────────────────────────────────
+    try:
+        fn_names = fns("app/services/task_store.py")
+        check("count_context_tasks defined", "count_context_tasks" in fn_names)
+        check("owns_task defined", "owns_task" in fn_names)
+
+        s = src("app/services/task_store.py")
+        check("user_id param in create_task", "user_id: Optional[int] = None" in s)
+        check("user_id passed to Task constructor", "user_id=user_id" in s)
+        check("owns_task allows NULL user_id (legacy)", "task.user_id is None" in s)
+        check("count_context_tasks uses notin_ terminal states", "notin_" in s)
+    except Exception as exc:
+        check("task_store.py", False, str(exc))
+
+    # ── token_cache.py ────────────────────────────────────────────────────────
+    try:
+        s = src("app/services/token_cache.py")
+        check("expires_at included in token payload", "expires_at" in s)
+        check("expires_at serialized to ISO string", "isoformat()" in s)
+    except Exception as exc:
+        check("token_cache.py expires_at", False, str(exc))
+
+    # ── models.py ─────────────────────────────────────────────────────────────
+    try:
+        s = src("app/models.py")
+        check("Task.user_id column added", "user_id: Mapped[Optional[int]]" in s)
+        check("Application model defined", "class Application(Base)" in s)
+        check("Application.slug unique", "unique=True" in s and "Application" in s)
+        check("Application.entry_point_type defined", "entry_point_type" in s)
+        check("Application.orchestrator_id FK", "orchestrator_id" in s and "them.orchestrators.id" in s)
+        check("Application.access_policy JSONB", "access_policy" in s)
+    except Exception as exc:
+        check("models.py Phase 9", False, str(exc))
+
+    # ── migration ─────────────────────────────────────────────────────────────
+    try:
+        s = src("db/004_phase9.sql")
+        check("004_phase9.sql exists", True)
+        check("tasks.user_id in migration", "tasks ADD COLUMN IF NOT EXISTS user_id" in s)
+        check("FK to auth_service.users", "auth_service.users" in s)
+        check("applications table in migration", "CREATE TABLE IF NOT EXISTS them.applications" in s)
+        check("applications.slug unique check", "slug ~ '" in s or "UNIQUE" in s)
+        check("applications.entry_point_type check constraint", "entry_point_type IN" in s)
+        check("applications.orchestrator_id FK", "REFERENCES them.orchestrators" in s)
+        check("migration is idempotent", "IF NOT EXISTS" in s)
+        check("migration wrapped in transaction", "BEGIN;" in s and "COMMIT;" in s)
+    except FileNotFoundError:
+        check("004_phase9.sql exists", False, "file not found")
+    except Exception as exc:
+        check("db/004_phase9.sql", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1409,6 +1521,7 @@ ALL_TESTS = [
     ("18", test_18_orch_as_agent),
     ("19", test_19_edges),
     ("20", test_20_traefik),
+    ("21", test_21_a2a_hardening),
 ]
 
 if __name__ == "__main__":

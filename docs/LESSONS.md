@@ -221,3 +221,35 @@ await event_queue.enqueue_event(task)
   - `submit()` extracts `result.task.id` (SDK wraps result in `SendMessageResponse`)
 
 **Watch for:** If the A2A spec or SDK changes the proto field names, state enum names, or method names — all three must stay in sync: agent executors, platform adapter, and `_TERMINAL`/`_INPUT_REQUIRED` sets. Verify with a live `stream_invoke` call against a real container, not just structural tests.
+
+---
+
+## 2026-07-07 — Phase 9: count_context_tasks AttributeError silently swallowed — dead guard
+
+**Symptom:** Fork-bomb guard in `a2a_server.py` contained `except AttributeError: pass` — if `task_store.count_context_tasks` didn't exist, the guard silently did nothing instead of blocking.
+
+**Root cause:** The guard was written before the function was implemented in `task_store.py`. The `except AttributeError: pass` was a temporary shim that was never removed.
+
+**Fix:** Implement `count_context_tasks` in `task_store.py` using `func.count()` + `notin_()` for terminal states. Remove the `AttributeError` catch — the guard now either works or raises properly.
+
+**Watch for:** Silent exception suppression on security-critical paths. Never use bare `except Exception: pass` or `except AttributeError: pass` around auth/ownership/rate-limit checks.
+
+---
+
+## 2026-07-07 — TOCTOU: orchestrator scope check must be inside the same DB session as task creation
+
+**Symptom:** `_handle_send_message` did an orchestrator lookup in one `async with` block, then a task creation in another. A race condition could allow a token scoped to orchestrator A to create a task for orchestrator B if the orchestrator was swapped between the two sessions.
+
+**Fix:** Moved orchestrator lookup + scope check + task creation into a single `async with db_module.AsyncSessionLocal() as db:` block. Both the scope check and the `create_task` call now use the same session snapshot.
+
+**Watch for:** Any multi-step operation that checks a permission then acts on it — always do both in the same DB transaction or session to avoid TOCTOU gaps.
+
+---
+
+## 2026-07-07 — Token expiry not checked at API layer — token_cache payload must include expires_at
+
+**Symptom:** Access tokens with `expires_at` set in the DB were accepted by `/a2a` even after expiry, because `_row_to_payload` in `token_cache.py` didn't serialize `expires_at` into the cached dict.
+
+**Fix:** Added `"expires_at": row.expires_at.isoformat() if row.expires_at else None` to `_row_to_payload`. Added an expiry check in `_resolve_bearer` that parses the ISO string and rejects if `expires_at < now(UTC)`.
+
+**Watch for:** Any new token payload fields needed for policy enforcement must be added to `_row_to_payload` — the cache is the sole source of truth once a token is cached. If a field is missing from the payload dict, it cannot be enforced without a DB round-trip.

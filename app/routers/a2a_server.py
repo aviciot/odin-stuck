@@ -1,8 +1,8 @@
 """
-A2A Server — the-M as an A2A agent (Phase 8.5: durable inbound A2A).
+A2A Server — the-M as an A2A agent (Phase 9: production hardening).
 
 Endpoints:
-  GET  /.well-known/agent-card.json   → the-M's Agent Card
+  GET  /.well-known/agent-card.json   → the-M's Agent Card (public)
   POST /a2a                           → JSON-RPC 2.0 (SendMessage, GetTask, CancelTask)
   POST /a2a/push/{task_id}            → push webhook for child agent state changes
 
@@ -10,19 +10,19 @@ Protocol: A2A v1.0
 
 Auth: Bearer token (them.access_tokens) or admin JWT — same as /ws/orchestrate.
 
-Phase 8.5 changes vs Phase 1:
-  - _tasks in-memory dict DELETED; all task state lives in them.tasks
-  - SendMessage honors configuration.returnImmediately:
-      true  → creates task, launches run detached (asyncio.create_task), returns working Task
-      false → awaits completion before returning (default, backward-compat)
-  - GetTask / CancelTask read/transition via task_store
-  - Agent card url driven by config.BRIDGE_URL
-  - Recursion guard: rejects inbound call if parent task depth >= max_depth
+Phase 9 hardening vs Phase 8.5:
+  - Token expiry checked on every request
+  - Ownership isolation: GetTask/CancelTask/push require owns_task()
+  - Rate limiting on /a2a (10 req/min default, configurable via orchestrator)
+  - Agent card strips system_prompt; exposes only display_name + safe description
+  - Default task deadline (30 min) prevents hung tasks accumulating
+  - Request body capped at 512 KB; batch RPC capped at 10 items
+  - TOCTOU fix: orchestrator scope check re-verified inside same DB session as task creation
 """
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -32,6 +32,7 @@ import app.database as db_module
 from app.config import settings
 from app.services.auth_client import validate_jwt
 from app.services import task_store
+from app.services.rate_limiter import check_rate_limit
 from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
@@ -42,6 +43,18 @@ _TERMINAL = {"completed", "failed", "canceled", "rejected"}
 
 # Per-context task ceiling to prevent fork bombs
 _MAX_TASKS_PER_CONTEXT = 50
+
+# Request body size limit (bytes) — 512 KB
+_MAX_BODY_BYTES = 512 * 1024
+
+# Batch RPC item limit
+_MAX_BATCH_SIZE = 10
+
+# Default task lifetime before reaper collects it
+_DEFAULT_TASK_DEADLINE_MINUTES = 30
+
+# A2A rate limit — requests per minute (applied via existing rate_limiter)
+_A2A_RATE_LIMIT_RPM = 10
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -58,10 +71,20 @@ async def _resolve_bearer(request: Request) -> dict | None:
     async with db_module.AsyncSessionLocal() as db:
         payload = await validate_bearer_token(raw_token, db)
         if payload is not None:
+            # Reject if token has a hard expiry that has passed
+            expires_at_raw = payload.get("expires_at")
+            if expires_at_raw:
+                try:
+                    expires_at = datetime.fromisoformat(expires_at_raw)
+                    if expires_at < datetime.now(timezone.utc):
+                        logger.info("a2a: token expired", expires_at=expires_at_raw)
+                        return None
+                except (ValueError, TypeError):
+                    pass
             return payload
         jwt_payload = await validate_jwt(raw_token)
         if jwt_payload and jwt_payload.get("role") in ("admin", "super_admin"):
-            return {"user_id": jwt_payload.get("user_id", 0), "orchestrator_id": None}
+            return {"user_id": jwt_payload.get("user_id", 0), "orchestrator_id": None, "expires_at": None}
     return None
 
 
@@ -91,10 +114,12 @@ async def agent_card():
                 )
                 orchestrators = result.scalars().all()
                 for orch in orchestrators:
+                    # Use display_name + public description only — never expose system_prompt
+                    safe_desc = f"Orchestrator: {orch.display_name}"
                     skills.append({
                         "id": orch.name,
                         "name": orch.display_name,
-                        "description": orch.system_prompt[:200] if orch.system_prompt else f"Orchestrator: {orch.display_name}",
+                        "description": safe_desc,
                         "tags": ["orchestration"],
                         "inputModes": ["text/plain"],
                         "outputModes": ["text/plain"],
@@ -296,7 +321,7 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
         except Exception as exc:
             logger.warning("a2a: task ceiling check failed", error=str(exc))
 
-    # Create the durable task row
+    # Create the durable task row (TOCTOU fix: orchestrator scope check is inside same session)
     task_row = None
     if db_module.AsyncSessionLocal is not None:
         try:
@@ -310,8 +335,18 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
                     )
                 )
                 orch_row = orch_result.scalar_one_or_none()
+
+                # Scope check: if token is scoped to a specific orchestrator, enforce it
+                token_orch_id = token_payload.get("orchestrator_id")
+                if token_orch_id and orch_row and str(orch_row.id) != token_orch_id:
+                    return _rpc_error(
+                        rpc_id, -32003,
+                        f"Token is not authorized for orchestrator '{orchestrator_name}'"
+                    )
+
                 orch_id = orch_row.id if orch_row else None
                 budget = getattr(orch_row, "budget_tokens", None) if orch_row else None
+                deadline = datetime.now(timezone.utc) + timedelta(minutes=_DEFAULT_TASK_DEADLINE_MINUTES)
 
                 task_row = await task_store.create_task(
                     db,
@@ -320,6 +355,8 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
                     kind="root",
                     orchestrator_id=orch_id,
                     budget_tokens=budget,
+                    deadline=deadline,
+                    user_id=user_id,
                 )
                 await task_store.transition(db, task_row.id, "working")
         except Exception as exc:
@@ -379,7 +416,7 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
 # GetTask handler
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _handle_get_task(rpc_id: Any, params: dict) -> dict:
+async def _handle_get_task(rpc_id: Any, params: dict, token_payload: dict) -> dict:
     task_id_raw = params.get("id") or params.get("taskId")
     if not task_id_raw or not _is_valid_uuid(str(task_id_raw)):
         return _rpc_error(rpc_id, -32602, "id is required and must be a valid UUID")
@@ -393,6 +430,9 @@ async def _handle_get_task(rpc_id: Any, params: dict) -> dict:
         async with db_module.AsyncSessionLocal() as db:
             task = await task_store.get_task(db, task_id)
             if task is None:
+                return _rpc_error(rpc_id, -32001, f"Task {task_id} not found")
+            # Ownership check — prevent one user from reading another's task
+            if not task_store.owns_task(task, token_payload.get("user_id")):
                 return _rpc_error(rpc_id, -32001, f"Task {task_id} not found")
             artifacts = await task_store.get_context_artifacts(db, task.context_id)
     except Exception as exc:
@@ -419,7 +459,7 @@ async def _handle_get_task(rpc_id: Any, params: dict) -> dict:
 # CancelTask handler
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _handle_cancel_task(rpc_id: Any, params: dict) -> dict:
+async def _handle_cancel_task(rpc_id: Any, params: dict, token_payload: dict) -> dict:
     task_id_raw = params.get("id") or params.get("taskId")
     if not task_id_raw or not _is_valid_uuid(str(task_id_raw)):
         return _rpc_error(rpc_id, -32602, "id is required and must be a valid UUID")
@@ -433,6 +473,10 @@ async def _handle_cancel_task(rpc_id: Any, params: dict) -> dict:
         async with db_module.AsyncSessionLocal() as db:
             task = await task_store.get_task(db, task_id)
             if task is None:
+                return _rpc_error(rpc_id, -32001, f"Task {task_id} not found")
+
+            # Ownership check — only the owner can cancel
+            if not task_store.owns_task(task, token_payload.get("user_id")):
                 return _rpc_error(rpc_id, -32001, f"Task {task_id} not found")
 
             if task.state in _TERMINAL:
@@ -464,8 +508,37 @@ async def a2a_rpc(request: Request):
     if token_payload is None:
         raise HTTPException(status_code=401, detail="Authorization required")
 
+    # Rate limit per user
+    user_id = token_payload.get("user_id", 0)
+    allowed, _ = await check_rate_limit(user_id, _A2A_RATE_LIMIT_RPM)
+    if not allowed:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # Body size guard
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content=_rpc_error(None, -32600, "Request body too large"),
+        )
+
     try:
-        body = await request.json()
+        raw = await request.body()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content=_rpc_error(None, -32700, "Parse error"),
+        )
+
+    if len(raw) > _MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content=_rpc_error(None, -32600, "Request body too large"),
+        )
+
+    try:
+        import json as _json
+        body = _json.loads(raw)
     except Exception:
         return JSONResponse(
             status_code=400,
@@ -473,6 +546,11 @@ async def a2a_rpc(request: Request):
         )
 
     if isinstance(body, list):
+        if len(body) > _MAX_BATCH_SIZE:
+            return JSONResponse(
+                status_code=400,
+                content=_rpc_error(None, -32600, f"Batch size exceeds limit ({_MAX_BATCH_SIZE})"),
+            )
         responses = []
         for item in body:
             resp = await _dispatch_single(item, token_payload)
@@ -496,9 +574,9 @@ async def _dispatch_single(body: dict, token_payload: dict) -> dict:
     if method == "SendMessage":
         return await _handle_send_message(rpc_id, params, token_payload)
     elif method == "GetTask":
-        return await _handle_get_task(rpc_id, params)
+        return await _handle_get_task(rpc_id, params, token_payload)
     elif method == "CancelTask":
-        return await _handle_cancel_task(rpc_id, params)
+        return await _handle_cancel_task(rpc_id, params, token_payload)
     else:
         return _rpc_error(rpc_id, -32601, f"Method not found: {method}")
 
@@ -548,6 +626,10 @@ async def a2a_push(task_id: str, request: Request):
     async with db_module.AsyncSessionLocal() as db:
         child_task = await task_store.get_task(db, child_task_id)
         if child_task is None:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+        # Ownership check — 404 to avoid leaking task existence
+        if not task_store.owns_task(child_task, token_payload.get("user_id")):
             raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
         if child_task.state in _TERMINAL:

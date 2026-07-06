@@ -1,9 +1,11 @@
-# Odin Database Schema
-# Last updated: 2026-06-28
-# Source of truth: db/001_schema.sql
+# the-M Database Schema
+# Last updated: 2026-07-07
+# Source of truth: db/001_schema.sql + db/003_phase8.sql + db/004_phase9.sql
 
-Schema: `odin` (owned by odin-bridge)
-Auth schema: `auth_service` (owned by odin-auth-service — never touch from bridge)
+Schema: `them` (owned by them-bridge)
+Auth schema: `auth_service` (owned by them-auth-service — never touch from bridge; use auth_client.py)
+
+> **Note:** table headers below say `odin.*` — this is a doc lag; all tables live in `them.*` schema.
 
 ## odin.llm_providers
 LLM provider credentials and config. Encrypted API keys via crypto.py.
@@ -120,3 +122,58 @@ Per-LLM-call token and cost tracking.
 
 ## odin.audit_logs
 Admin actions: agent/orchestrator/token CRUD.
+
+---
+
+## them.tasks ⭐ (A2A Phase 3+)
+Durable task graph. One row per A2A task (root or child). State machine: `submitted → working → completed/failed/canceled/rejected`.
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| run_id | UUID FK→runs | NULL for inbound A2A tasks |
+| parent_task_id | UUID FK→tasks | for sub-task chains |
+| orchestrator_id | UUID FK→orchestrators | which orchestrator owns this task |
+| agent_id | UUID FK→agents | set for child tasks |
+| context_id | UUID | shared context across tasks in one conversation |
+| state | TEXT | `submitted/working/input-required/completed/failed/canceled/rejected` |
+| kind | TEXT | `root` or `subtask` |
+| input_message | JSONB | A2A message parts |
+| status_message | JSONB | agent status message on failure |
+| remote_task_id | TEXT | task ID on the child A2A agent |
+| error | TEXT | error string on failure |
+| budget_tokens | INT | token budget for this task |
+| tokens_used | INT | running total |
+| deadline | TIMESTAMPTZ | reaper collects hung tasks past this (Phase 9: default +30 min) |
+| max_depth | INT | recursion depth limit |
+| **user_id** | INT FK→auth_service.users | task owner — NULL for legacy tasks (Phase 9) |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |
+
+## them.artifacts (A2A Phase 3+)
+Output artifacts produced by agent tasks.
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| task_id | UUID FK→tasks | producing task |
+| context_id | UUID | inherited from task (for cross-context queries) |
+| artifact_id | TEXT | agent-assigned artifact identifier |
+| name | TEXT | human label |
+| parts | JSONB | A2A part list `[{kind, text/data/...}]` |
+| append_index | INT | chunk ordering for streaming artifacts |
+| last_chunk | BOOL | true = final chunk |
+| created_at | TIMESTAMPTZ | |
+
+## them.applications ⭐ (Phase 9)
+User-composable agentic applications. Each row is one deployable entry point bound to an orchestrator.
+| Column | Type | Purpose |
+|---|---|---|
+| id | UUID PK | |
+| name | TEXT | display name |
+| slug | TEXT UNIQUE | URL-safe ID `^[a-z0-9_-]{1,64}$` |
+| entry_point_type | TEXT | `websocket_chat` / `rest` / `voice` / `webrtc` |
+| orchestrator_id | UUID FK→orchestrators | target orchestrator (cascade delete) |
+| access_policy | JSONB | `{"mode":"token"}` or `{"mode":"public"}` |
+| presentation | JSONB | UI metadata (title, theme, icon, etc.) |
+| enabled | BOOL | |
+| created_at | TIMESTAMPTZ | |
+| updated_at | TIMESTAMPTZ | |

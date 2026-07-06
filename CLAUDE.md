@@ -1,6 +1,6 @@
 # the-M — Claude Session Guide
 # multi-agent orchestration platform
-# Last updated: 2026-07-06
+# Last updated: 2026-07-07
 
 ---
 
@@ -207,6 +207,7 @@ Full suite, ~30s. Zero failures required before committing.
 | Any infrastructure change | 15 (compose health) |
 | `agents/a2a_*`, docker-compose test-agents profile | 16 (A2A agent structure) |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
+| `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 (A2A Phase 9 hardening) |
 | Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) |
 
 **E2E test (14) — needs a JWT:**
@@ -258,20 +259,21 @@ ADMIN_JWT=<token> python scripts/tests/run_tests.py 14
 Tables: `roles`, `users`, `teams`, `team_members`, `user_overrides`, `auth_audit`, `user_sessions`, `blacklisted_tokens`
 
 **`them` schema** — owned by `them-bridge`.
-Tables: `llm_providers`, `config`, `agents`, `orchestrators`, `access_tokens`, `runs`, `run_steps`, `run_usage`, `audit_logs`
+Tables: `llm_providers`, `config`, `agents`, `orchestrators`, `access_tokens`, `runs`, `run_steps`, `run_usage`, `audit_logs`, `tasks`, `artifacts`, `task_messages`, `applications`
 
 **Credentials:** derived via HMAC-SHA256 from `secrets.local`. Re-run `.\generate-env.ps1` to regenerate `.env`.
 DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
 
 ---
 
-## Known State (2026-07-05)
+## Known State (2026-07-07)
 
 - **Stack:** fully deployed locally. All core containers healthy.
 - **Users seeded:** `admin` / `admin123` (super_admin), `avi` / `avi123` (super_admin)
 - **Agents seeded:** assistant, coder, researcher (mock WS) + a2a_echo, a2a_slow, a2a_stream (A2A test agents)
 - **Orchestrators seeded:** `default` (claude-sonnet-4-6), `a2a_test` (haiku, all 3 A2A agents)
 - **A2A test agents:** running (`--profile test-agents`), all enabled in DB, ready to use via `a2a_test` orchestrator
+- **Phase 9 applied:** `db/004_phase9.sql` migrated to running Postgres (tasks.user_id + them.applications table)
 - **ANTHROPIC_API_KEY:** set in `.env` — bridge picks it up on restart
 - **Dev login:** pre-filled in login page when `NODE_ENV=development`
 - **`vision-agent`:** unhealthy — needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` in `.env`
