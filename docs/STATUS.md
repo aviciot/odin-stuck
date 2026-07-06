@@ -1,5 +1,5 @@
 # the-M Status
-# Last updated: 2026-07-05
+# Last updated: 2026-07-06
 
 ## Build Progress
 
@@ -30,16 +30,19 @@
 | **Phase 8.6** | ✓ Complete | Pluggable edge adapters: app/edges/ (EdgeAdapter ABC, WebsocketEdge, VoiceEdge stub, RestEdge stub), ws_orchestrator uses WebsocketEdge |
 | **Agent discovery UI** | ✓ Complete | Row Discover button: fetches card, diffs vs stored, shows popup with changes highlighted, pulsing Save, orchestrator impact warning |
 | **Persistent context threading** | ✓ Complete | Frontend passes context_id on follow-up messages; server reuses it so memory summary carries across turns |
+| **Traefik reverse proxy** | ✓ Complete | traefik:v3.6, single port 8088, path-based routing, sticky sessions (`them_lb` cookie), Docker provider label discovery |
+| **JWT auto-refresh** | ✓ Complete | `/api/auth/token` auto-refreshes when token has < 30s left; WS URL derived from `window.location` (no hardcoded port) |
 
-## Infrastructure (as of 2026-07-05)
+## Infrastructure (as of 2026-07-06)
 
 | Container | Image/Source | Data | Port |
 |---|---|---|---|
+| `them-traefik` | traefik:v3.6 | — | **8088** (host, all traffic), 127.0.0.1:8089 (dashboard) |
 | `them-postgres` | postgres:16-alpine | `./data/them-postgres/pgdata/` | 5432 (internal) |
 | `them-redis` | redis:7-alpine | `./data/them-redis/` | 6379 (internal) |
 | `them-auth-service` | `auth_service/` | — | 8701 (internal) |
-| `them-bridge` | `app/` | `./data/them-logs/` | 8001 (host + internal) |
-| `them-frontend` | `frontend/` | — | 3200 (host + internal) |
+| `them-bridge` | `app/` | `./data/them-logs/` | 8001 (internal only) |
+| `them-frontend` | `frontend/` | — | 3200 (internal only) |
 | `vision-agent` | `agents/vision_agent/` | — | 9100 (internal) — **unhealthy** |
 | `a2a-echo` | `agents/a2a_echo/` | — | 9200 (internal) — **profile: test-agents** |
 | `a2a-slow` | `agents/a2a_slow/` | — | 9201 (internal) — **profile: test-agents** |
@@ -73,7 +76,7 @@
 | `/a2a/push/{task_id}` | POST | ✓ Live (A2A Phase 4) |
 | `/.well-known/agent-card.json` | GET | ✓ Live (A2A Phase 4) |
 
-## Frontend Pages (live, http://localhost:3200)
+## Frontend Pages (live, http://localhost:8088)
 
 | Page | Path | Status |
 |---|---|---|
@@ -91,7 +94,6 @@
 - **Git hooks not wired**: test runner exists (`python scripts/tests/run_tests.py`) but no pre-push hook. Planned as GitHub Actions.
 - **Replica 2**: compose profile `replica`, not running by default. Enable with `--profile replica`.
 - **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
-- **`them-frontend` shows unhealthy in `docker ps`**: false alarm — Docker healthcheck uses `curl -f -L` but Next.js dev mode takes >30s to compile first request. App works fine; healthcheck timing is aggressive.
 - **Mock agents removed**: `mock-agent-assistant`, `mock-agent-researcher`, `mock-agent-coder` disabled in DB and stopped. Only real A2A agents remain.
 - **Tests 17/18/19 not in CLAUDE.md trigger map**: structural tests for Phase 8 memory, orchestrator-as-agent, and edges. Add to trigger map when updating CLAUDE.md.
 - **RestEdge / VoiceEdge stubs**: `app/edges/rest_edge.py` and `app/edges/voice_edge.py` raise `NotImplementedError` — not yet implemented.

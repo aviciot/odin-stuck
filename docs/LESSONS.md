@@ -167,6 +167,33 @@ await event_queue.enqueue_event(task)
 
 ---
 
+## 2026-07-06 — JWT "Invalid or disabled token" in playground WS
+
+**Symptom:** Playground shows "Error: Invalid or disabled token" immediately when trying to connect the WebSocket, even though the user was logged in.
+**Root cause:** `/api/auth/token` returned the JWT from the httpOnly cookie without checking expiry. JWTs have a 2-hour TTL. A user who logged in and left the tab open would silently get an expired token passed to the WS `?token=` parameter.
+**Fix:** Added `jwtExpiresIn()` in `frontend/src/app/api/auth/token/route.ts` — if the token has < 30s left, call `/api/v1/auth/refresh`, set fresh cookies, and return the new token. Expired tokens are never returned to JS.
+**Watch for:** Any place that hands a JWT to client-side JS for WS auth must check expiry first. The browser cannot refresh JWTs on its own because they live in httpOnly cookies.
+
+---
+
+## 2026-07-06 — Traefik v3.x fails on Docker 29 with "client version 1.24 is too old"
+
+**Symptom:** Traefik v3.1/v3.3 Docker provider logged `Error 400: client version 1.24 is too old. Minimum supported API version is 1.44` and failed to discover any containers.
+**Root cause:** Traefik's Go Docker client hard-codes `/v1.24/_ping` for initial API version negotiation. Docker 29 raised its minimum supported API version to 1.44 and rejects the v1.24 request. Setting `DOCKER_API_VERSION` env var on Traefik has no effect on this negotiation path.
+**Fix:** Use `traefik:v3.6` (v3.6.1+). PR #12256 added `WithAPIVersionNegotiation()` to Traefik's Docker client — it now performs a proper version handshake instead of hardcoding v1.24.
+**Watch for:** If Traefik is ever downgraded below v3.6 on Docker 29+, the Docker provider will silently fail to discover containers. `tecnativa/docker-socket-proxy` does NOT fix this — it doesn't rewrite the URL version path.
+
+---
+
+## 2026-07-06 — Traefik Docker provider silently skips unhealthy containers
+
+**Symptom:** Traefik DEBUG logs showed `"Filtering unhealthy or starting container: them-frontend-..."`. The `them-ui` router never appeared in the Traefik API even though the labels were correct.
+**Root cause:** Traefik's Docker provider skips containers that are not in `healthy` state (i.e., `starting` or `unhealthy`). The `them-frontend` healthcheck used `curl -f -L` but the Node.js Alpine container doesn't have `curl` — every check returned exit code -1 (executable not found), keeping the container perpetually `unhealthy`.
+**Fix:** Changed healthcheck to `wget -q -O/dev/null http://localhost:3200/login || exit 1`. `wget` is available in Alpine busybox. Also: `docker compose restart` does NOT pick up a changed healthcheck — must use `docker compose up -d --force-recreate`.
+**Watch for:** Never use `curl` in healthchecks for Node.js Alpine containers. Always check that the healthcheck binary exists in the target image before writing the check. A container that is `unhealthy` is invisible to Traefik.
+
+---
+
 ## 2026-07-05 — A2A v1.0 wire protocol: role is int, part has no "kind", method is "SendMessage"
 
 **Symptom:** Live test of `A2aAsyncAdapter` got three successive RPC errors when calling SDK v1.1 agents:

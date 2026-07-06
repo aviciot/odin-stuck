@@ -1,5 +1,5 @@
 # the-M Architecture
-# Last updated: 2026-07-05
+# Last updated: 2026-07-06
 
 ## Core Mental Model
 
@@ -9,6 +9,27 @@ The agent's `description` is the tool description — the LLM uses it to decide 
 The platform runs two orchestration paths in parallel:
 - **Legacy path** (`orchestrator_service.py`): in-RAM loop, run/step recorded to Postgres
 - **A2A-native path** (`task_runner.py`): durable task graph, tasks/artifacts stored in Postgres; the default for new deployments
+
+## Network Topology (Traefik)
+
+All external traffic enters on a single port (default **8088**) via `them-traefik` (Traefik v3.6).
+The frontend and bridge are never exposed directly.
+
+```
+Browser → :8088 (them-traefik)
+  PathPrefix(/api/v1)  → them-bridge-svc  (priority 100, sticky cookie them_lb)
+  PathPrefix(/ws)      → them-bridge-svc  (priority 100, sticky cookie them_lb)
+  PathPrefix(/health)  → them-bridge-svc  (priority 90)
+  PathPrefix(/)        → them-ui-svc      (priority 10)
+
+Sticky session: Traefik injects Set-Cookie: them_lb=<server> on first request.
+All subsequent requests from the same browser hit the same bridge replica — required for WS.
+```
+
+Traefik config: `traefik/traefik.yml` (static), Docker labels on services (dynamic).
+Dashboard (read-only): `http://localhost:8089` (127.0.0.1 only).
+
+**Local dev:** `docker-compose.local.yml` overrides router rules to `PathPrefix(...)` only (no `Host` constraint) so any IP/hostname works.
 
 ## Entry Points
 
@@ -41,15 +62,18 @@ Browser
   └─ GET /api/them/[...path]  (Next.js route handler)
        └─ reads httpOnly cookie server-side
        └─ adds Authorization: Bearer header
-       └─ proxies to them-bridge
+       └─ proxies to them-bridge (via Traefik)
 
 WebSocket connections (can't use httpOnly cookies):
   └─ Browser fetches GET /api/auth/token → returns raw JWT as JSON (playground only)
-  └─ Opens ws://bridge:8001/ws/orchestrate/{name}?token=<jwt>
-  └─ Opens ws://bridge:8001/ws/dashboard?token=<jwt>
+       └─ auto-refreshes if token has < 30s left (uses them_refresh_token cookie)
+  └─ Opens ws://<host>:8088/ws/orchestrate/{name}?token=<jwt>  ← derived from window.location
+  └─ Opens ws://<host>:8088/ws/dashboard?token=<jwt>
 ```
 
 **Security note:** `/api/auth/token` returns the raw JWT to JS — acceptable only for the admin playground where the token is used transiently for WS connection and never stored.
+
+**WS URL derivation:** `NEXT_PUBLIC_BRIDGE_WS_URL` is set to `""` in docker-compose. The playground derives the WS base from `window.location.host` at runtime so it always uses the correct host/port regardless of environment — no hardcoded `:8001`.
 
 ## A2A-Native Orchestrator (task_runner.py) — Primary Path
 
@@ -269,7 +293,7 @@ Handler (`a2a_server.py`):
 | Task + artifact state | task_store.py | Yes | Postgres `them.tasks`, `them.artifacts` |
 | Context artifact cache | context_service.py | Yes | Redis `them:ctx:{context_id}:heads` TTL 300s |
 | Run state (legacy) | run_recorder.py | Yes | Postgres `them.runs` |
-| WS connections | ws_orchestrator.py | No (by design) | Traefik sticky sessions `them_sticky` |
+| WS connections | ws_orchestrator.py | No (by design) | Traefik sticky sessions cookie `them_lb` |
 | Replica heartbeat | main.py bg task | Yes | Redis `them:bridge:{ID}:heartbeat` 30s TTL |
 
 ## Background Tasks (main.py lifespan)

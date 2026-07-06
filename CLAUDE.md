@@ -1,6 +1,6 @@
 # the-M — Claude Session Guide
 # multi-agent orchestration platform
-# Last updated: 2026-07-04
+# Last updated: 2026-07-06
 
 ---
 
@@ -67,13 +67,13 @@ bounded by `orchestrator.max_parallel_tools` and per-agent `max_concurrency` sem
 
 | Container | Role | Port | Source dir |
 |---|---|---|---|
+| `them-traefik` | Reverse proxy — single entry point, path-based routing, sticky LB | **8088** (host), 127.0.0.1:**8089** (dashboard) | `traefik/` |
 | `them-postgres` | PG16 — DB: `them` | 5432 (internal) | bind mount `./data/them-postgres/pgdata` |
 | `them-redis` | Redis DB 0 | 6379 (internal) | bind mount `./data/them-redis` |
-| `them-auth-service` | Auth/IAM microservice | **8701** | `auth_service/` |
-| `them-bridge` | Orchestrator API + WS (replica 1) | **8001** | `app/` |
-| `them-bridge-2` | Replica 2 (`profiles: [replica]`) | **8001** | `app/` |
-| `them-frontend` | Next.js dashboard | **3200** | `frontend/` |
-| `mock-agent-*` | WS mock agents for testing | 9000 (internal) | `mock_agent/` |
+| `them-auth-service` | Auth/IAM microservice | 8701 (internal) | `auth_service/` |
+| `them-bridge` | Orchestrator API + WS (replica 1) | 8001 (internal) | `app/` |
+| `them-bridge-2` | Replica 2 (`profiles: [replica]`) | 8001 (internal) | `app/` |
+| `them-frontend` | Next.js dashboard | 3200 (internal) | `frontend/` |
 | `vision-agent` | Vision/maps agent | 9100 (internal) | `agents/vision_agent/` |
 | `a2a-echo` | A2A v1.0 echo test agent (`profiles: [test-agents]`) | 9200 (internal) | `agents/a2a_echo/` |
 | `a2a-slow` | A2A v1.0 slow test agent (5s delay) (`profiles: [test-agents]`) | 9201 (internal) | `agents/a2a_slow/` |
@@ -276,5 +276,6 @@ DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
 - **`vision-agent`:** unhealthy — needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` in `.env`
 - **Replica 2:** compose profile `replica`, not running by default
 - **Git hooks:** not wired — planned as GitHub Actions (future)
-- **Frontend URL:** http://localhost:3200
-- **Bridge API:** http://localhost:8001
+- **Frontend URL:** http://localhost:8088
+- **Bridge API (direct, internal):** http://localhost:8001 — use http://localhost:8088 from browser
+- **Traefik dashboard:** http://localhost:8089
