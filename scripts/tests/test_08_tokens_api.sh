@@ -69,6 +69,35 @@ check "DELETE returns 204" "$STATUS" "204"
 STATUS=$(dcurl -o /dev/null -w "%{http_code}" "$BASE/$TOKEN_ID")
 check "GET deleted token returns 404" "$STATUS" "404"
 
+# 7. Revocation: disabled token is immediately rejected on WS connect
+echo ""
+echo "  -- Revocation test --"
+WS_BASE="http://localhost:$PORT"
+
+RESP=$(dcurl -X POST "$BASE" -H "Content-Type: application/json" -d '{"label":"revoke-test-token","user_id":1}')
+REV_TOKEN_ID=$(echo "$RESP" | py_field id)
+REV_TOKEN_VAL=$(echo "$RESP" | py_field token)
+
+if [ "$REV_TOKEN_ID" = "MISSING" ] || [ "$REV_TOKEN_VAL" = "MISSING" ]; then
+    echo "  [FAIL] could not create token for revocation test"; ((FAIL++)) || true
+else
+    # Disable the token
+    dcurl -X PATCH "$BASE/$REV_TOKEN_ID" -H "Content-Type: application/json" -d '{"enabled":false}' > /dev/null
+
+    # Attempt WS upgrade with disabled token — expect 403
+    WS_STATUS=$(dcurl -o /dev/null -w "%{http_code}" \
+        -H "Authorization: Bearer $REV_TOKEN_VAL" \
+        -H "Connection: Upgrade" \
+        -H "Upgrade: websocket" \
+        -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+        -H "Sec-WebSocket-Version: 13" \
+        "$WS_BASE/ws/orchestrate/default")
+    check "disabled token rejected on WS connect" "$WS_STATUS" "403"
+
+    # Cleanup
+    dcurl -X DELETE "$BASE/$REV_TOKEN_ID" > /dev/null
+fi
+
 echo ""
 echo "Result: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -364,6 +364,37 @@ def test_08_tokens_api():
     s = http_status(C, f"{BASE}/{token_id}", P)
     check("GET deleted token returns 404", s == "404", f"got {s}")
 
+    # Revocation: disabled token sends error message on WS connect
+    d2 = http_json(C, BASE, P, method="POST", body='{"label":"revoke-test","user_id":1}')
+    rev_id = d2.get("id", "")
+    rev_val = d2.get("token", "")
+    if rev_id and rev_val:
+        # Disable — PATCH calls invalidate_token which flushes L1 + L2 cache
+        http_json(C, f"{BASE}/{rev_id}", P, method="PATCH", body='{"enabled":false}')
+        # Use Python websockets to connect and read the error message
+        ws_script = (
+            f"import asyncio\n"
+            f"async def t():\n"
+            f"    import websockets\n"
+            f"    try:\n"
+            f"        async with websockets.connect('ws://localhost:{P}/ws/orchestrate/default',\n"
+            f"            additional_headers={{'Authorization': 'Bearer {rev_val}'}}) as ws:\n"
+            f"            msg = await asyncio.wait_for(ws.recv(), timeout=3)\n"
+            f"            print(msg)\n"
+            f"    except Exception as e:\n"
+            f"        print('closed:', type(e).__name__)\n"
+            f"asyncio.run(t())\n"
+        )
+        ws_out = dexec(C, "python3", "-c", ws_script).strip()
+        check(
+            "disabled token rejected with error message",
+            "Invalid or disabled token" in ws_out or "closed:" in ws_out,
+            ws_out[:80],
+        )
+        http_status(C, f"{BASE}/{rev_id}", P, method="DELETE")
+    else:
+        check("revocation test token created", False, "token creation failed")
+
 # ─── test 09: rate limiter (structural) ───────────────────────────────────────
 
 def test_09_rate_limiter():
@@ -418,6 +449,49 @@ def test_09_rate_limiter():
         check("require_bearer defined in _deps.py", "require_bearer" in fns)
     except Exception as exc:
         check("_deps.py structure", False, str(exc))
+
+    # token_cache structure — verify new functions and user-active check are present
+    try:
+        tc_src = src("app/services/token_cache.py")
+        tc_tree = ast.parse(tc_src)
+        tc_fns = [n.name for n in ast.walk(tc_tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))]
+        check("invalidate_token defined", "invalidate_token" in tc_fns)
+        check("invalidate_user_active defined", "invalidate_user_active" in tc_fns)
+        check("_is_user_active defined", "_is_user_active" in tc_fns)
+        check("validate_bearer_token defined", "validate_bearer_token" in tc_fns)
+        check("_is_user_active wired into validate_bearer_token", "_is_user_active" in tc_src)
+        check("_USER_ACTIVE_PREFIX defined", "_USER_ACTIVE_PREFIX" in tc_src)
+        check("fail-open comment present", "fail open" in tc_src)
+    except Exception as exc:
+        check("token_cache structure", False, str(exc))
+
+    # token_cache L1 logic — run inside bridge container (needs sqlalchemy)
+    try:
+        script = (
+            "import sys, types, time, asyncio\n"
+            "sys.path.insert(0, '/app')\n"
+            "fake_db = types.ModuleType('app.database')\n"
+            "fake_db.redis_client = None\n"
+            "fake_db.Base = type('Base', (), {})\n"
+            "sys.modules['app.database'] = fake_db\n"
+            "fake_models = types.ModuleType('app.models')\n"
+            "fake_models.AccessToken = type('AccessToken', (), {})\n"
+            "sys.modules['app.models'] = fake_models\n"
+            "from app.services import token_cache as tc\n"
+            "tc._l1_set('x', {'enabled': True})\n"
+            "assert tc._l1_get('x') == {'enabled': True}, 'L1 set/get failed'\n"
+            "tc._l1_delete('x')\n"
+            "assert tc._l1_get('x') is None, 'L1 delete failed'\n"
+            "tc._l1['exp'] = ({'enabled': True}, time.monotonic() - 1)\n"
+            "assert tc._l1_get('exp') is None, 'TTL expiry failed'\n"
+            "assert 'exp' not in tc._l1, 'cleanup failed'\n"
+            "asyncio.run(tc.invalidate_token('tok1'))\n"
+            "print('OK')\n"
+        )
+        out = dexec("them-bridge", "python3", "-c", script).strip()
+        check("L1 set/get/delete/TTL/invalidate", out == "OK", out)
+    except Exception as exc:
+        check("token_cache L1 logic", False, str(exc))
 
 # ─── test 10: run recorder + task_runner + task_store (structural) ────────────
 

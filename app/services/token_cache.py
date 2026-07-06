@@ -5,6 +5,10 @@ Access token cache — two levels:
 
 On miss: DB lookup via SQLAlchemy, then populate both caches.
 On revoke: delete from DB + Redis; L1 expires naturally within TTL.
+
+User-active check: on DB miss, verify user is still active in auth-service.
+Result cached alongside token payload — deactivated users are rejected even
+if their token is otherwise valid.
 """
 
 import hashlib
@@ -18,6 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.database as db_module
 from app.models import AccessToken
 from app.utils.logger import logger
+
+# Separate prefix for user-active cache to allow independent invalidation
+_USER_ACTIVE_PREFIX = "them:session:user_active:"
+_USER_ACTIVE_TTL = 60  # re-check auth-service every 60s
 
 _TOKEN_PREFIX = "them:session:token:"
 _TTL = 300
@@ -88,10 +96,44 @@ async def _l2_delete(token_hash: str) -> None:
         logger.warning("token_cache: L2 delete failed", error=str(exc))
 
 
+async def _is_user_active(user_id: int) -> bool:
+    """
+    Check auth-service that user_id is still active.
+    Result cached in Redis for _USER_ACTIVE_TTL seconds.
+    Fails open (returns True) if auth-service is unreachable.
+    """
+    cache_key = f"{_USER_ACTIVE_PREFIX}{user_id}"
+    try:
+        if db_module.redis_client is not None:
+            cached = await db_module.redis_client.get(cache_key)
+            if cached is not None:
+                return cached == b"1"
+    except Exception as exc:
+        logger.warning("token_cache: user_active cache get failed", error=str(exc))
+
+    # Call auth-service
+    try:
+        from app.services.auth_client import get_user
+        user = await get_user(user_id)
+        active = bool(user and user.get("active", False))
+    except Exception as exc:
+        logger.warning("token_cache: auth_client.get_user failed — failing open", error=str(exc))
+        return True  # fail open: don't block if auth-service is down
+
+    try:
+        if db_module.redis_client is not None:
+            await db_module.redis_client.setex(cache_key, _USER_ACTIVE_TTL, b"1" if active else b"0")
+    except Exception as exc:
+        logger.warning("token_cache: user_active cache set failed", error=str(exc))
+
+    return active
+
+
 async def validate_bearer_token(token: str, db: AsyncSession) -> Optional[dict]:
     """
     Validate a bearer token. Returns user/token payload or None if invalid.
-    L1 → L2 → DB. Updates last_used_at on DB hit.
+    L1 → L2 → DB. On DB hit, also checks user is still active in auth-service.
+    Updates last_used_at on DB hit.
     """
     token_hash = _hash(token)
 
@@ -112,6 +154,11 @@ async def validate_bearer_token(token: str, db: AsyncSession) -> Optional[dict]:
     )
     row = result.scalar_one_or_none()
     if row is None or not row.enabled:
+        return None
+
+    # Verify user is still active in auth-service
+    if not await _is_user_active(row.user_id):
+        logger.warning("token_cache: token rejected — user deactivated", user_id=row.user_id)
         return None
 
     # Update last_used_at (fire-and-forget style — don't block on it)
@@ -136,3 +183,12 @@ async def invalidate_token(token_hash: str) -> None:
     """Remove token from both caches. Call after DB delete/disable."""
     _l1_delete(token_hash)
     await _l2_delete(token_hash)
+
+
+async def invalidate_user_active(user_id: int) -> None:
+    """Remove user-active cache entry. Call when a user is deactivated."""
+    try:
+        if db_module.redis_client is not None:
+            await db_module.redis_client.delete(f"{_USER_ACTIVE_PREFIX}{user_id}")
+    except Exception as exc:
+        logger.warning("token_cache: user_active invalidate failed", error=str(exc))
