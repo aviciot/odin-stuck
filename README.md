@@ -93,30 +93,117 @@ Agents are transport-agnostic. Supported today: WebSocket (`omni_ws`), A2A sync 
 
 ---
 
-## Quick Start
+## Deploying on a Linux Server
 
 ### Prerequisites
-- Docker Desktop (Windows/Mac) or Docker Engine (Linux)
-- Python 3.x (for secret generation and test runner)
+
+```bash
+# Docker Engine + Compose plugin
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER   # log out and back in after this
+
+# Python 3 (for secret generation)
+sudo apt install -y python3 openssl git
+```
+
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/aviciot/odin-stuck.git
+cd odin-stuck
+```
+
+### 2. Set up secrets
+
+The file `secrets.local` is **never in git** — you must create it manually.
+
+**Option A — same secrets as your Windows machine (recommended):**
+Copy `secrets.local` from your Windows machine to the server:
+```bash
+# From Windows PowerShell:
+scp C:\Users\acohen.SHIFT4CORP\Desktop\PythonProjects\theM\odin\secrets.local user@server:/path/to/odin-stuck/secrets.local
+```
+
+**Option B — fresh secrets (new independent deployment):**
+```bash
+# Generate a strong master passphrase
+openssl rand -hex 32
+
+# Create secrets.local
+echo "THE_M_MASTER_SECRET=<paste-passphrase-here>" > secrets.local
+```
+
+> ⚠️ If you use fresh secrets, encrypted agent auth tokens from your Windows DB will not work on the new server. Users and runs are unaffected.
+
+### 3. Generate .env
+
+```bash
+chmod +x generate-env.sh
+./generate-env.sh
+```
+
+Then add your LLM API key:
+```bash
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+```
+
+### 4. Start the stack
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+```
+
+### 5. Initialize the database
+
+Run once after first boot (or after wiping `data/`):
+
+```bash
+docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
+docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
+docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+docker cp db/003_users_seed.sql them-postgres:/tmp/them_003_users_seed.sql
+
+docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
+docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_003_users_seed.sql
+```
+
+### 6. Verify
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml ps
+python3 scripts/tests/run_tests.py 01 02 03 04 15
+```
+
+### 7. Open the dashboard
+
+```
+http://<server-ip>:3200
+```
+
+Login: `admin` / `admin123`
+
+---
+
+## Quick Start (Windows / Local Dev)
+
+### Prerequisites
+- Docker Desktop
+- Python 3.x
 
 ### 1. Clone and generate secrets
 
 ```powershell
-# Windows
-git clone <repo>
-cd odin
-.\generate-env.ps1        # creates .env from secrets.local
-```
-```bash
-# Linux / Mac
-git clone <repo>
-cd odin
-./generate-env.sh         # creates .env from secrets.local
+git clone https://github.com/aviciot/odin-stuck.git
+cd odin-stuck
+.\generate-env.ps1
 ```
 
 ### 2. Start the stack
 
-```bash
+```powershell
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 ```
 
@@ -126,19 +213,15 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 docker cp db/001_schema.sql them-postgres:/tmp/them_001_schema.sql
 docker cp auth_service/SCHEMA.sql them-postgres:/tmp/them_auth_schema.sql
 docker cp db/002_seed.sql them-postgres:/tmp/them_002_seed.sql
+docker cp db/003_users_seed.sql them-postgres:/tmp/them_003_users_seed.sql
 docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
 docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_002_seed.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_003_users_seed.sql
 ```
 
-### 4. Run the tests
-
-```bash
-python scripts/tests/run_tests.py
-```
-
-### 5. Open the dashboard
+### 4. Open the dashboard
 
 ```
 http://localhost:3200
