@@ -208,6 +208,7 @@ Full suite, ~30s. Zero failures required before committing.
 | `agents/a2a_*`, docker-compose test-agents profile | 16 (A2A agent structure) |
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 (A2A Phase 9 hardening) |
+| `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 (applications CRUD + entry points) |
 | Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) |
 
 **E2E test (14) — needs a JWT:**

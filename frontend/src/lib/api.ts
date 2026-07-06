@@ -147,6 +147,20 @@ export interface OrchestratorFull {
   summarizer_model: string | null;
 }
 
+export interface Application {
+  id: string;
+  name: string;
+  slug: string;
+  entry_point_type: string;
+  orchestrator_id: string;
+  orchestrator_name: string | null;
+  access_policy: Record<string, unknown>;
+  presentation: Record<string, unknown>;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AccessToken {
   id: string;
   label: string;
@@ -254,6 +268,10 @@ export const themApi = {
     if (!res.ok) throw new Error(await res.text());
     return res.json();
   },
+  applications: () => api.get<Application[]>('/admin/applications'),
+  createApplication: (body: unknown) => api.post<Application>('/admin/applications', body),
+  updateApplication: (id: string, body: unknown) => api.patch<Application>(`/admin/applications/${id}`, body),
+  deleteApplication: (id: string) => api.delete<void>(`/admin/applications/${id}`),
   tokens: () => api.get<AccessToken[]>('/admin/tokens'),
   createToken: (body: unknown) => api.post<AccessToken>('/admin/tokens', body),
   updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),

@@ -27,6 +27,7 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 16 | `run_tests.py::test_16_a2a_agents` | structural | no | A2A test agents exist (echo/slow/stream), docker-compose test-agents profile, seed SQL, A2aAsyncAdapter importable |
 | 20 | `run_tests.py::test_20_traefik` | live + structural | yes | Traefik routing (bridge + frontend), sticky session cookie, docker-compose label correctness, multi-replica LB + shared Postgres (skips replica checks if bridge-2 not running) |
 | 21 | `run_tests.py::test_21_a2a_hardening` | structural | no | Phase 9 A2A hardening: rate limit, body+batch limits, token expiry, ownership isolation, agent card system_prompt strip, default deadline, TOCTOU scope fix, task_store helpers, Application model, 004_phase9.sql migration |
+| 22 | `run_tests.py::test_22_applications` | structural | no | Phase 9 Phase 2+3: admin_applications.py CRUD, apps.py entry points (REST + WS + poll), main.py wiring, api.ts Application type + methods, frontend applications page, Sidebar nav |
 
 **Types:**
 - **live** — makes real HTTP/Docker calls against the running stack
@@ -67,6 +68,7 @@ python scripts/tests/run_tests.py
 | `agents/a2a_*`, `docker-compose.yml` test-agents profile | 16 |
 | `docker-compose.yml` (bridge/frontend labels), `traefik/traefik.yml`, `docker-compose.local.yml` | 20 |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 |
+| `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 |
 | Before release / PR merge | all + 14 (with JWT) |
 
 ---

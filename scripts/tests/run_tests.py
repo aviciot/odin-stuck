@@ -1498,6 +1498,107 @@ def test_21_a2a_hardening():
         check("db/004_phase9.sql", False, str(exc))
 
 
+# ─── test 22: Applications CRUD + entry points ───────────────────────────────
+
+def test_22_applications():
+    section("test_22_applications: Phase 9 Applications CRUD + Entry Points")
+    sys.path.insert(0, str(ROOT))
+
+    def src(path): return (ROOT / path).read_text(encoding="utf-8")
+    def fns(path):
+        tree = ast.parse(src(path))
+        return [n.name for n in ast.walk(tree) if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))]
+
+    # ── admin_applications.py ─────────────────────────────────────────────────
+    try:
+        fn_names = fns("app/routers/admin_applications.py")
+        check("list_applications defined", "list_applications" in fn_names)
+        check("create_application defined", "create_application" in fn_names)
+        check("get_application defined", "get_application" in fn_names)
+        check("update_application defined", "update_application" in fn_names)
+        check("delete_application defined", "delete_application" in fn_names)
+        check("_get_or_404 defined", "_get_or_404" in fn_names)
+
+        s = src("app/routers/admin_applications.py")
+        check("prefix /admin/applications", "/admin/applications" in s)
+        check("slug regex validation", "_SLUG_RE" in s)
+        check("entry_point_type validation", "VALID_ENTRY_POINT_TYPES" in s)
+        check("409 on duplicate slug", "409" in s or "HTTP_409_CONFLICT" in s)
+        check("orchestrator FK verified on create", "Orchestrator" in s)
+        check("orchestrator_name join in list", "orch_map" in s)
+        check("ApplicationCreate defined", "ApplicationCreate" in s)
+        check("ApplicationUpdate defined", "ApplicationUpdate" in s)
+        check("ApplicationOut defined", "ApplicationOut" in s)
+        check("ApplicationOut has orchestrator_name", "orchestrator_name" in s)
+    except Exception as exc:
+        check("admin_applications.py", False, str(exc))
+
+    # ── apps.py entry points ──────────────────────────────────────────────────
+    try:
+        fn_names = fns("app/routers/apps.py")
+        check("list_apps defined", "list_apps" in fn_names)
+        check("get_app defined", "get_app" in fn_names)
+        check("rest_entry defined", "rest_entry" in fn_names)
+        check("poll_task defined", "poll_task" in fn_names)
+        check("ws_entry defined", "ws_entry" in fn_names)
+        check("_resolve_bearer defined", "_resolve_bearer" in fn_names)
+        check("_resolve_bearer_ws defined", "_resolve_bearer_ws" in fn_names)
+
+        s = src("app/routers/apps.py")
+        check("GET /apps route", '"/apps"' in s or "'/apps'" in s)
+        check("POST /apps/{slug} route", '"/apps/{slug}"' in s or "'/apps/{slug}'" in s)
+        check("WS /apps/{slug}/ws route", '"/apps/{slug}/ws"' in s or "'/apps/{slug}/ws'" in s)
+        check("GET /apps/{slug}/tasks/{task_id}", "tasks/{task_id}" in s)
+        check("public access_policy supported", '"public"' in s)
+        check("token expiry checked in apps bearer", "expires_at" in s)
+        check("owns_task called in poll", "task_store.owns_task" in s)
+        check("task_runner_run called in ws_entry", "task_runner_run" in s)
+        check("asyncio.create_task for REST detach", "asyncio.create_task" in s)
+        check("deadline set in REST entry", "_DEFAULT_DEADLINE_MINUTES" in s)
+        check("orchestrator scope check in REST", "Token not authorized for this application" in s)
+        check("RestResponse has poll_url", "poll_url" in s)
+    except Exception as exc:
+        check("apps.py", False, str(exc))
+
+    # ── main.py wiring ────────────────────────────────────────────────────────
+    try:
+        s = src("app/main.py")
+        check("admin_applications imported in main.py", "admin_applications" in s)
+        check("admin_applications.router included", "admin_applications.router" in s)
+        check("apps_router imported in main.py", "apps_router" in s or "apps as apps_router" in s)
+        check("apps_router.router included", "apps_router.router" in s)
+    except Exception as exc:
+        check("main.py wiring", False, str(exc))
+
+    # ── frontend ──────────────────────────────────────────────────────────────
+    try:
+        s = src("frontend/src/lib/api.ts")
+        check("Application interface in api.ts", "interface Application" in s)
+        check("applications() API method", "applications()" in s or "applications: ()" in s)
+        check("createApplication() API method", "createApplication" in s)
+        check("updateApplication() API method", "updateApplication" in s)
+        check("deleteApplication() API method", "deleteApplication" in s)
+
+        s2 = src("frontend/src/app/admin/applications/page.tsx")
+        check("applications page exists", True)
+        check("ApplicationsPage exported", "export default function ApplicationsPage" in s2)
+        check("entry_point_type selector", "ENTRY_POINT_TYPES" in s2)
+        check("orchestrator dropdown in form", "orchestrators" in s2)
+        check("access_mode selector", "access_mode" in s2)
+        check("URL copy panel", "CopyBox" in s2)
+    except FileNotFoundError as exc:
+        check("frontend applications page", False, str(exc))
+    except Exception as exc:
+        check("frontend", False, str(exc))
+
+    # ── Sidebar nav ───────────────────────────────────────────────────────────
+    try:
+        s = src("frontend/src/components/Sidebar.tsx")
+        check("Applications link in Sidebar", "/admin/applications" in s)
+    except Exception as exc:
+        check("Sidebar nav", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1522,6 +1623,7 @@ ALL_TESTS = [
     ("19", test_19_edges),
     ("20", test_20_traefik),
     ("21", test_21_a2a_hardening),
+    ("22", test_22_applications),
 ]
 
 if __name__ == "__main__":
