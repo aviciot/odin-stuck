@@ -203,6 +203,8 @@ ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS a2a_exposed BOOLEAN NOT 
 -- A2A agent card cache + capability flags
 ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS agent_card JSONB;
 ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS agent_card_url TEXT;
+ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS card_fetched_at TIMESTAMPTZ;
+ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS skills JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS supports_streaming BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE them.agents ADD COLUMN IF NOT EXISTS supports_push BOOLEAN NOT NULL DEFAULT FALSE;
 
@@ -223,3 +225,13 @@ ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS tts_enabled BOOLEAN NOT 
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS tts_provider TEXT;
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS tts_voice TEXT;
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS tts_api_key_encrypted TEXT;
+
+-- Memory / context threading
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS memory_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS summarize_every_n_calls INTEGER NOT NULL DEFAULT 3;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS memory_raw_fallback_n INTEGER NOT NULL DEFAULT 5;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS summarizer_provider TEXT;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS summarizer_model TEXT;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS summarizer_api_key_encrypted TEXT;
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS edges TEXT[] NOT NULL DEFAULT ARRAY['websocket'];
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS budget_tokens INTEGER;
