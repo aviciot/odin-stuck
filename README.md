@@ -31,40 +31,40 @@ graph TD
     Browser["Browser / Client"]
 
     subgraph Proxy["Reverse Proxy"]
-        Traefik["them-traefik\nTraefik v3.6\n:8088"]
+        Traefik["them-traefik — Traefik v3.6 — :8088"]
     end
 
-    subgraph App["Application Layer  —  them-network"]
-        Bridge["them-bridge\nFastAPI orchestrator\nport 8001"]
-        Bridge2["them-bridge-2\nReplica 2\n(profile: replica)"]
-        Auth["them-auth-service\nJWT · bcrypt\nport 8701"]
-        Frontend["them-frontend\nNext.js 16\nport 3200"]
+    subgraph App["Application Layer — them-network"]
+        Bridge["them-bridge — FastAPI — :8001"]
+        Bridge2["them-bridge-2 — Replica 2"]
+        Auth["them-auth-service — JWT — :8701"]
+        Frontend["them-frontend — Next.js 16 — :3200"]
     end
 
     subgraph Data["Data Layer"]
-        PG[("them-postgres\nPostgreSQL 16")]
-        Redis[("them-redis\nRedis 7\nToken cache · Rate limits\nPub/Sub · Context memory")]
+        PG[("them-postgres — PostgreSQL 16")]
+        Redis[("them-redis — Redis 7")]
     end
 
-    subgraph Agents["Agent Pool  —  A2A v1.0"]
-        Echo["a2a-echo\n:9200"]
-        Slow["a2a-slow\n:9201"]
-        Stream["a2a-stream\n:9202"]
-        Custom["your-agent\n:any"]
+    subgraph Agents["Agent Pool — A2A v1.0"]
+        Echo["a2a-echo :9200"]
+        Slow["a2a-slow :9201"]
+        Stream["a2a-stream :9202"]
+        Custom["your-agent :any"]
     end
 
-    Browser -->|"HTTP · WS\nport 8088"| Traefik
-    Traefik -->|"/api/v1  /ws  /health\nsticky cookie them_lb"| Bridge
+    Browser -->|"HTTP / WS  :8088"| Traefik
+    Traefik -->|"/api/v1  /ws  /health — sticky: them_lb"| Bridge
     Traefik -->|"/api/v1  /ws  /health"| Bridge2
     Traefik -->|"/* catch-all"| Frontend
 
-    Frontend -->|"server-side proxy\nBearer header"| Bridge
+    Frontend -->|"server-side proxy + Bearer"| Bridge
     Bridge -->|"auth validation"| Auth
-    Bridge -->|"runs · tasks · artifacts"| PG
-    Bridge -->|"cache · pub/sub · rate-limit"| Redis
-    Auth -->|"users · sessions"| PG
+    Bridge -->|"runs / tasks / artifacts"| PG
+    Bridge -->|"cache / pub-sub / rate-limit"| Redis
+    Auth -->|"users / sessions"| PG
 
-    Bridge -->|"A2A async\nHTTP JSON-RPC"| Echo
+    Bridge -->|"A2A async — HTTP JSON-RPC"| Echo
     Bridge -->|"A2A async"| Slow
     Bridge -->|"A2A async + SSE"| Stream
     Bridge -->|"A2A async"| Custom
