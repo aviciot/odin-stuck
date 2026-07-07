@@ -32,10 +32,12 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 21 | `run_tests.py::test_21_a2a_hardening` | structural | no | Phase 9 A2A hardening: rate limit, body+batch limits, token expiry, ownership isolation, agent card system_prompt strip, default deadline, TOCTOU scope fix, task_store helpers, Application model, 004_phase9.sql migration |
 | 22 | `run_tests.py::test_22_applications` | structural | no | Phase 9 Phase 2+3: admin_applications.py CRUD, apps.py entry points (REST + WS + poll), main.py wiring, api.ts Application type + methods, frontend applications page, Sidebar nav |
 
+| MT | `scripts/test_multiturn.py` | e2e | yes + JWT (auto-fetched) | Multi-turn conversation history: recall across fresh WS connections, `history_window` behavioral proof (window=1 forgets old turns) |
+
 **Types:**
 - **live** — makes real HTTP/Docker calls against the running stack
 - **structural** — AST + import checks, no containers needed
-- **e2e** — full integration, requires `ADMIN_JWT` env var
+- **e2e** — full integration, requires `ADMIN_JWT` env var (or auto-fetches via admin credentials)
 
 ---
 
@@ -75,7 +77,8 @@ python scripts/tests/run_tests.py
 | `docker-compose.yml` (bridge/frontend labels), `traefik/traefik.yml`, `docker-compose.local.yml` | 20 |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 |
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 |
-| Before release / PR merge | all + 14 (with JWT) |
+| `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT |
+| Before release / PR merge | all + 14 (with JWT) + MT |
 
 ---
 
@@ -91,6 +94,10 @@ python scripts/tests/run_tests.py 01 02 03 04 15
 # E2E (needs a JWT — get one from auth service first)
 ADMIN_JWT=<token> python scripts/tests/run_tests.py 14   # Linux/Mac
 $env:ADMIN_JWT="<token>"; python scripts/tests/run_tests.py 14   # Windows PowerShell
+
+# Multi-turn behavioral test (auto-fetches JWT, must run inside bridge container)
+docker cp scripts/test_multiturn.py them-bridge:/tmp/test_multiturn.py
+docker exec them-bridge python3 /tmp/test_multiturn.py
 ```
 
 ## Adding a New Test

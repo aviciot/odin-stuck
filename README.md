@@ -117,6 +117,7 @@ Any edge (WebSocket / SSE / REST) → auth + orchestrator load
 - **Parallel fan-out** — multiple tool calls per iteration via `asyncio.gather()`, bounded by `max_parallel_tools` and per-agent `max_concurrency`
 - **A2A v1.0 protocol** — native async adapter; push webhooks; automatic task reaping for timed-out tasks
 - **Durable task graph** — every run, task, and artifact stored in Postgres; survives WS disconnects and replica restarts
+- **Multi-turn conversation** — full dialogue history reconstructed from Postgres on every turn; survives WS reconnects and replica changes; `history_window` per orchestrator bounds token cost (default 20 turns, -1 = unlimited)
 - **Context memory** — rolling LLM-generated summary injected at the start of each turn; cross-session continuity
 - **Pluggable edges** — WebSocket (chat, Slack socket-mode), SSE (streaming HTTP for TTS/voice pipelines), WebRTC planned; same orchestrator and agents behind every edge
 - **Applications** — named entry points (`them.applications`) bind an orchestrator to an edge; `websocket`, `sse`, or `webrtc`; public or token access policy
@@ -377,6 +378,10 @@ python3 scripts/tests/run_tests.py
 
 # E2E (requires admin JWT)
 ADMIN_JWT=<token> python3 scripts/tests/run_tests.py 14
+
+# Multi-turn behavioral test (runs inside bridge container, auto-fetches JWT)
+docker cp scripts/test_multiturn.py them-bridge:/tmp/test_multiturn.py
+docker exec them-bridge python3 /tmp/test_multiturn.py
 ```
 
 See `scripts/tests/INDEX.md` for the full test index and trigger map.

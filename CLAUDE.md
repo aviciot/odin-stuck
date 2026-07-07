@@ -145,6 +145,10 @@ docker exec -it them-postgres psql -U them -d them
 python scripts/tests/run_tests.py            # full suite
 python scripts/tests/run_tests.py 01 02 03 04 15   # sanity only
 
+# Multi-turn behavioral test (runs inside bridge; auto-fetches JWT)
+docker cp scripts/test_multiturn.py them-bridge:/tmp/test_multiturn.py
+docker exec them-bridge python3 /tmp/test_multiturn.py
+
 # Secrets / .env (run before first up)
 .\generate-env.ps1    # Windows
 ./generate-env.sh     # Linux/Mac
@@ -220,7 +224,8 @@ Full suite, ~30s. Zero failures required before committing.
 | `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 (A2A Phase 9 hardening) |
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 (applications CRUD + entry points) |
-| Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) |
+| `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT (multi-turn behavioral) |
+| Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT |
 
 **E2E test (14) — needs a JWT:**
 ```
