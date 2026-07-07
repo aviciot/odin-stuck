@@ -230,8 +230,6 @@ Open **http://localhost:8088** — login with `admin` / `admin123` (credentials 
 | POST | `/a2a/push/{task_id}` | Bearer | A2A push webhook |
 | GET | `/.well-known/agent-card.json` | — | the-M's own A2A agent card |
 | GET | `/apps` | — | Public application catalogue |
-| POST | `/apps/{slug}` | Bearer / public | Fire-and-forget REST entry point |
-| GET | `/apps/{slug}/tasks/{task_id}` | Bearer / public | Poll task state |
 | GET | `/apps/{slug}/sse` | Bearer / public | SSE streaming entry point |
 | WS | `/apps/{slug}/ws` | Bearer / public | WebSocket streaming entry point |
 
@@ -277,21 +275,6 @@ data: {"tool": "agent__coder", "duration_ms": 843}
 
 event: done
 data: {}
-```
-
-**REST + poll** — fire-and-forget. Ideal for webhooks and serverless callers that can't hold a connection open:
-```bash
-# Submit → get task_id immediately
-curl -X POST http://<host>:8088/apps/{slug} \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Summarize today'\''s data"}'
-# → {"task_id": "...", "context_id": "...", "state": "working", "poll_url": "..."}
-
-# Poll until completed
-curl http://<host>:8088/apps/{slug}/tasks/{task_id} \
-  -H "Authorization: Bearer <token>"
-# → {"state": "completed", "result": "Today'\''s summary: ..."}
 ```
 
 ---
@@ -424,7 +407,6 @@ Any service that implements the [A2A v1.0 protocol](https://google.github.io/A2A
 3. **Connect** via any edge:
    - WebSocket: `ws://localhost:8088/ws/orchestrate/{name}?token=<bearer>`
    - SSE: `GET http://localhost:8088/apps/{slug}/sse?message=<text>&token=<bearer>`
-   - REST: `POST http://localhost:8088/apps/{slug}`
 
 Or use the **Playground** (`/admin/playground`) to test interactively.
 
