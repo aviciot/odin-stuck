@@ -287,3 +287,32 @@ await event_queue.enqueue_event(task)
 **Fix:** Added `"expires_at": row.expires_at.isoformat() if row.expires_at else None` to `_row_to_payload`. Added an expiry check in `_resolve_bearer` that parses the ISO string and rejects if `expires_at < now(UTC)`.
 
 **Watch for:** Any new token payload fields needed for policy enforcement must be added to `_row_to_payload` — the cache is the sole source of truth once a token is cached. If a field is missing from the payload dict, it cannot be enforced without a DB round-trip.
+
+---
+
+## 2026-07-09 — A2A typed input: `Part.data` vs string concatenation
+
+**Symptom:** `docu_writer` received `FORMAT: html\nTITLE: ...\nCONTENT:\n...` as plain text and parsed it with regex — brittle, breaks if LLM varies the format, and requires agent-specific instructions in the orchestrator system prompt.
+
+**Root cause:** The adapter always sent `{"parts": [{"text": message}]}`. The agent card had no `input_modes` declaration. The LLM had no way to know the agent expected structured input.
+
+**Fix:**
+1. Declare `input_modes: ["application/json"]` on agent skills so the LLM and adapter know the contract.
+2. `_build_parts()` in the adapter sends `{"data": input_dict}` when `application/json` is declared.
+3. Agent reads `part.HasField("data")` + `json_format.MessageToDict(part.data.struct_value)` — no regex.
+4. `_ensure_agent_skills` stores `input_modes`/`output_modes` from the fetched card so the factory can wire them.
+5. Orchestrator system prompt only describes the goal — never agent-specific format strings.
+
+**Watch for:** Any new A2A agent that expects structured fields: declare `input_modes: ["application/json"]` on its skills. Never encode format contracts in the orchestrator system prompt — the agent card is the sole contract.
+
+---
+
+## 2026-07-09 — `_Proxy` + `setattr` for orchestrator cache is a silent bug magnet
+
+**Symptom:** Adding a new field to the orchestrator cache required updating: the Redis write payload, the `setattr` loop, AND `getattr()` calls at each use site — three places that could drift.
+
+**Root cause:** The `_Proxy` class had no schema — any missing field silently returned `None` or raised `AttributeError` at runtime, not at construction.
+
+**Fix:** Replaced with `@dataclass _OrchestratorProxy` with typed fields and explicit defaults. Missing fields are caught at construction time, not at use.
+
+**Watch for:** When adding a new orchestrator config field: add it to `_OrchestratorProxy`, the cache write payload in `_load_orchestrator_row`, and the DB schema — three places, same as before, but now the dataclass guards the runtime contract.

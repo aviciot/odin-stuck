@@ -17,6 +17,7 @@ import asyncio
 import json
 import time
 import uuid
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import AsyncGenerator, Callable, Optional
 
@@ -57,6 +58,33 @@ async def _publish_dash(run_id: uuid.UUID, event: dict) -> None:
         logger.warning("task_runner: dash publish failed", error=str(exc))
 
 
+@dataclass
+class _OrchestratorProxy:
+    """Typed cache proxy — replaces the old _Proxy + setattr pattern."""
+    id: uuid.UUID
+    name: str
+    display_name: str
+    system_prompt: str
+    allowed_agent_ids: list
+    llm_provider: str
+    llm_model: str
+    llm_api_key_encrypted: Optional[str]
+    llm_base_url: Optional[str]
+    max_iterations: int
+    max_parallel_tools: int
+    rate_limit_rpm: int
+    daily_budget_usd: Decimal
+    a2a_exposed: bool = False
+    memory_enabled: bool = False
+    summarize_every_n_calls: int = 3
+    memory_raw_fallback_n: int = 5
+    summarizer_provider: Optional[str] = None
+    summarizer_model: Optional[str] = None
+    summarizer_api_key_encrypted: Optional[str] = None
+    history_window: int = 20
+    budget_tokens: Optional[int] = None
+
+
 async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orchestrator]:
     """Load orchestrator from Redis cache → DB."""
     # Try Redis cache first
@@ -65,26 +93,30 @@ async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orches
             cached = await db_module.redis_client.get(f"{_ORCH_PREFIX}{name}")
             if cached:
                 data = json.loads(cached)
-                # Build a lightweight proxy from cache
-                class _Proxy:
-                    pass
-                p = _Proxy()
-                for k, v in data.items():
-                    setattr(p, k, v)
-                p.id = uuid.UUID(data["id"])
-                p.allowed_agent_ids = [uuid.UUID(x) for x in data.get("allowed_agent_ids", [])]
-                p.daily_budget_usd = Decimal(str(data.get("daily_budget_usd", "0")))
-                p.llm_api_key_encrypted = data.get("llm_api_key_encrypted")
-                p.llm_base_url = data.get("llm_base_url")
-                p.a2a_exposed = data.get("a2a_exposed", False)
-                p.memory_enabled = data.get("memory_enabled", False)
-                p.summarize_every_n_calls = data.get("summarize_every_n_calls", 3)
-                p.memory_raw_fallback_n = data.get("memory_raw_fallback_n", 5)
-                p.summarizer_provider = data.get("summarizer_provider")
-                p.summarizer_model = data.get("summarizer_model")
-                p.summarizer_api_key_encrypted = data.get("summarizer_api_key_encrypted")
-                p.history_window = data.get("history_window", 20)
-                return p  # type: ignore[return-value]
+                return _OrchestratorProxy(
+                    id=uuid.UUID(data["id"]),
+                    name=data["name"],
+                    display_name=data.get("display_name", ""),
+                    system_prompt=data.get("system_prompt", ""),
+                    allowed_agent_ids=[uuid.UUID(x) for x in data.get("allowed_agent_ids", [])],
+                    llm_provider=data.get("llm_provider", "anthropic"),
+                    llm_model=data.get("llm_model", ""),
+                    llm_api_key_encrypted=data.get("llm_api_key_encrypted"),
+                    llm_base_url=data.get("llm_base_url"),
+                    max_iterations=data.get("max_iterations", 10),
+                    max_parallel_tools=data.get("max_parallel_tools", 4),
+                    rate_limit_rpm=data.get("rate_limit_rpm", 60),
+                    daily_budget_usd=Decimal(str(data.get("daily_budget_usd", "0"))),
+                    a2a_exposed=data.get("a2a_exposed", False),
+                    memory_enabled=data.get("memory_enabled", False),
+                    summarize_every_n_calls=data.get("summarize_every_n_calls", 3),
+                    memory_raw_fallback_n=data.get("memory_raw_fallback_n", 5),
+                    summarizer_provider=data.get("summarizer_provider"),
+                    summarizer_model=data.get("summarizer_model"),
+                    summarizer_api_key_encrypted=data.get("summarizer_api_key_encrypted"),
+                    history_window=data.get("history_window", 20),
+                    budget_tokens=data.get("budget_tokens"),
+                )  # type: ignore[return-value]
         except Exception as exc:
             logger.warning("task_runner: orchestrator cache miss", name=name, error=str(exc))
 
@@ -773,11 +805,21 @@ async def run(
                 agent = agent_by_slug.get(slug)
                 if agent is None:
                     return tc, f"[Unknown agent: {slug}]"
-                # Prepend summary context to message when available
                 tc_input = dict(tc.input)
-                if _injected_ctx and "message" in tc_input:
-                    tc_input["message"] = f"[Context summary]\n{_injected_ctx}\n\n{tc_input['message']}"
-                    tc = ToolCall(id=tc.id, name=tc.name, input=tc_input)
+                # For typed agents (application/json input_mode): pass structured dict.
+                # Context summary travels as __context__ key — adapter sends it as a
+                # separate text part alongside the data part (never concatenated into data).
+                skills = getattr(agent, "skills", None) or []
+                agent_input_modes = {m for s in skills for m in (s.get("input_modes") or [])}
+                if "application/json" in agent_input_modes:
+                    # LLM already fills the typed fields; inject context as separate key
+                    if _injected_ctx:
+                        tc_input["__context__"] = _injected_ctx
+                else:
+                    # Text-only agent: prepend context to message string as before
+                    if _injected_ctx and "message" in tc_input:
+                        tc_input["message"] = f"[Context summary]\n{_injected_ctx}\n\n{tc_input['message']}"
+                tc = ToolCall(id=tc.id, name=tc.name, input=tc_input)
                 async with parallel_sem:
                     result = await _invoke_agent(
                         agent, tc, semaphores, run_id, root_task, iteration, db

@@ -1848,6 +1848,99 @@ def test_24_code_agent_live():
         skip("test_24_code_agent_live", f"missing: {e}")
 
 
+def test_25_true_a2a():
+    """Structural: verify true A2A typed-input implementation (Steps 1-5)."""
+    section("test_25_true_a2a: True A2A typed input + orchestrator proxy")
+
+    # ── Step 1: docu_writer — typed input ───────────────────────────────────
+    try:
+        s = src("agents/docu_writer/main.py")
+        # regex _parse_input removed
+        check("docu_writer: _parse_input (regex) removed", "_parse_input" not in s)
+        # new _extract_input uses HasField + MessageToDict
+        check("docu_writer: _extract_input defined", "_extract_input" in s)
+        check("docu_writer: HasField('data') check", "HasField(\"data\")" in s)
+        check("docu_writer: json_format.MessageToDict used", "MessageToDict" in s)
+        check("docu_writer: google.protobuf json_format imported", "from google.protobuf import json_format" in s)
+        # import re removed
+        check("docu_writer: import re removed", "import re" not in s)
+    except Exception as exc:
+        check("docu_writer typed input structure", False, str(exc))
+
+    try:
+        s = src("agents/docu_writer/main.py")
+        # all skills declare application/json
+        check("docu_writer: application/json in skill input_modes", 'skill.input_modes.append("application/json")' in s)
+        check("docu_writer: text/plain fallback still present", 'skill.input_modes.append("text/plain")' in s)
+        # richer skill description mentions JSON fields
+        check("docu_writer: skill description mentions format field", '"format"' in s and "title" in s and "content" in s)
+    except Exception as exc:
+        check("docu_writer skill input_modes", False, str(exc))
+
+    # ── Step 2: A2aAsyncAdapter — input_modes + typed parts ─────────────────
+    try:
+        s = src("app/adapters/a2a_async_adapter.py")
+        check("adapter: input_modes param in __init__", "input_modes" in s)
+        check("adapter: _build_parts method defined", "_build_parts" in s)
+        check("adapter: sends data part for application/json", '"application/json" in self._input_modes' in s)
+        check("adapter: __context__ key for context separation", "__context__" in s)
+        check("adapter: submit accepts str|dict input", "str | dict" in s)
+        check("adapter: stream_invoke passes full input dict", "dict(input)" in s)
+    except Exception as exc:
+        check("adapter typed parts structure", False, str(exc))
+
+    # ── Step 2b: factory passes input_modes from agent skills ────────────────
+    try:
+        s = src("app/adapters/factory.py")
+        check("factory: reads input_modes from agent.skills", "input_modes" in s)
+        check("factory: passes input_modes to A2aAsyncAdapter", "input_modes=input_modes" in s)
+        check("factory: deduplicates input_modes", "seen" in s)
+    except Exception as exc:
+        check("factory input_modes wiring", False, str(exc))
+
+    # ── Step 2c: _ensure_agent_skills stores input_modes + output_modes ──────
+    try:
+        s = src("app/services/task_runner.py")
+        check("task_runner: input_modes stored in skills dict", '"input_modes"' in s)
+        check("task_runner: output_modes stored in skills dict", '"output_modes"' in s)
+        check("task_runner: inputModes camelCase fallback", "inputModes" in s)
+    except Exception as exc:
+        check("_ensure_agent_skills input_modes storage", False, str(exc))
+
+    # ── Step 3: _run_one uses typed input for application/json agents ────────
+    try:
+        s = src("app/services/task_runner.py")
+        check("task_runner: agent_input_modes set built from skills", "agent_input_modes" in s)
+        check("task_runner: typed branch for application/json", '"application/json" in agent_input_modes' in s)
+        check("task_runner: __context__ injected for typed agents", '__context__' in s)
+        check("task_runner: text concat only for text-only agents", "Context summary" in s)
+    except Exception as exc:
+        check("_run_one typed input branch", False, str(exc))
+
+    # ── Step 5: _OrchestratorProxy dataclass replaces _Proxy + setattr ───────
+    try:
+        s = src("app/services/task_runner.py")
+        check("task_runner: _OrchestratorProxy dataclass defined", "_OrchestratorProxy" in s)
+        check("task_runner: @dataclass decorator used", "@dataclass" in s)
+        check("task_runner: dataclass imported", "from dataclasses import dataclass" in s)
+        check("task_runner: _Proxy class removed", "class _Proxy" not in s)
+        check("task_runner: setattr loop removed", "setattr(p," not in s)
+        # typed fields present
+        check("task_runner: proxy has typed id field", "id: uuid.UUID" in s)
+        check("task_runner: proxy has budget_tokens field", "budget_tokens" in s)
+    except Exception as exc:
+        check("_OrchestratorProxy dataclass", False, str(exc))
+
+    # ── Step 4: seed SQL no longer has FORMAT:/TITLE:/CONTENT: ───────────────
+    try:
+        s = src("db/007_docu_stack.sql")
+        check("seed SQL: FORMAT: instruction removed", "FORMAT: html" not in s)
+        check("seed SQL: TITLE: instruction removed", "TITLE: <title>" not in s)
+        check("seed SQL: JSON object instruction present", "JSON object" in s)
+    except Exception as exc:
+        check("seed SQL system prompt", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -1875,6 +1968,7 @@ ALL_TESTS = [
     ("22", test_22_applications),
     ("23", test_23_a2a_skill_discovery),
     ("24", test_24_code_agent_live),
+    ("25", test_25_true_a2a),
 ]
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 
 | 23 | `run_tests.py::test_23_a2a_skill_discovery` | structural | no | A2A agent card auto-discovery: `_ensure_agent_skills` helper, TTL constant, httpx fetch, A2A-Version header, Bearer auth, write-back to DB (skills/agent_card/card_fetched_at), failure handling, call order before tool list, docu_writer agent files, 007_docu_stack.sql seed |
 | 24 | `run_tests.py::test_24_code_agent_live` | live | yes | code_agent A2A live call: agent card reachable, list_repos + query_graph skills present, SendMessage returns real repo data, no TextContent serialization error |
+| 25 | `run_tests.py::test_25_true_a2a` | structural | no | True A2A typed input: docu_writer data parts + no regex, adapter input_modes + _build_parts, factory wiring, task_runner _OrchestratorProxy dataclass + typed _run_one branch, seed SQL prompt cleanup |
 
 | MT | `scripts/test_multiturn.py` | e2e | yes + JWT (auto-fetched) | Multi-turn conversation history: recall across fresh WS connections, `history_window` behavioral proof (window=1 forgets old turns) |
 

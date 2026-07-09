@@ -1,5 +1,5 @@
 # the-M Status
-# Last updated: 2026-07-07
+# Last updated: 2026-07-09
 
 ## Build Progress
 
@@ -38,6 +38,7 @@
 | **Phase 9 Phase 3 — Pluggable entry points** | ✓ Complete | `app/routers/apps.py`: `GET /apps`, `POST /apps/{slug}` (REST fire-and-forget), `GET /apps/{slug}/tasks/{task_id}` (poll), `WS /apps/{slug}/ws` (streaming chat); public/token access policy; ownership isolation; frontend Applications page + Sidebar nav; test_22 (51 checks) |
 | **Phase 10 — SSE edge** | ✓ Complete | `app/edges/sse_edge.py`: asyncio queue-backed streaming; `GET /apps/{slug}/sse` route; `entry_point_type` updated to `websocket\|sse\|webrtc`; DB migration 005_phase10.sql; test_19 + test_22 updated |
 | **Phase 11 — Multi-turn chat** | ✓ Complete | `task_runner.py`: user message saved as `task_message seq=0`; `_load_context_history()` loads prior root tasks' messages for `context_id`; prior history prepended to LLM messages each turn; `history_window` (default 20) limits turns loaded; test_10 updated |
+| **True A2A typed input** | ✓ Complete | `docu_writer`: typed data parts, no regex; adapter: `input_modes`-aware `_build_parts()`; factory: reads `input_modes` from agent skills; `task_runner`: `_OrchestratorProxy` dataclass, typed branch in `_run_one`, context as separate part; orchestrator prompt generic; test_25 (35 checks) |
 
 ## Infrastructure (as of 2026-07-06)
 
@@ -111,3 +112,4 @@
 - **WebRTCEdge**: planned future phase — real-time audio, needs ASR + TTS + signaling server.
 - **Multi-turn chat**: implemented — `task_runner.py` loads prior turns via `_load_context_history()` and prepends to LLM context. Frontend already threads `context_id`. Works across reconnects.
 - **User management UI**: no frontend for managing auth_service users/teams.
+- **`tool_done` latency_ms hardcoded 0**: `task_runner.py` line ~795 yields `latency_ms: 0` for all tool_done WS events. Real latency is computed in `_invoke_agent` but not returned to the loop. Minor — dashboard shows 0ms for all agent calls.
