@@ -29,6 +29,13 @@ MODEL = os.getenv("MODEL", "claude-sonnet-4-6")
 PORT = int(os.getenv("PORT", "9402"))
 
 
+def _normalize_arg(a) -> dict:
+    """Normalize an opponent_arguments entry to a dict regardless of whether the LLM passed a string or object."""
+    if isinstance(a, dict):
+        return a
+    return {"agent": "opponent", "argument": str(a)}
+
+
 def _parse_json(text: str) -> dict:
     t = text.strip()
     if t.startswith("```"):
@@ -108,8 +115,9 @@ class LogicExecutor(AgentExecutor):
         try:
             user_content = f"Question: {question}\nPosition to argue: {position}"
             if round_num == 2 and opponent_args:
-                user_content += f"\n\nOpponent arguments to counter:\n" + "\n---\n".join(
-                    f"{a.get('agent', 'opponent')}: {a.get('argument', '')[:500]}" for a in opponent_args
+                user_content += "\n\nOpponent arguments to counter:\n" + "\n---\n".join(
+                    f"{a.get('agent', 'opponent')}: {a.get('argument', '')[:500]}"
+                    for a in (_normalize_arg(x) for x in opponent_args)
                 )
 
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)

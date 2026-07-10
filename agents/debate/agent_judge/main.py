@@ -29,6 +29,13 @@ MODEL = os.getenv("MODEL", "claude-sonnet-4-6")
 PORT = int(os.getenv("PORT", "9404"))
 
 
+def _normalize_arg(a) -> dict:
+    """Normalize an arguments entry to a dict regardless of whether the LLM passed a string or object."""
+    if isinstance(a, dict):
+        return a
+    return {"agent": "opponent", "argument": str(a), "approach": "unknown"}
+
+
 def _parse_json(text: str) -> dict:
     t = text.strip()
     if t.startswith("```"):
@@ -118,7 +125,7 @@ class JudgeExecutor(AgentExecutor):
         try:
             args_text = "\n\n".join(
                 f"=== {a.get('agent', f'agent_{i}')} (approach: {a.get('approach', 'unknown')}) ===\n{a.get('argument', '')}"
-                for i, a in enumerate(arguments)
+                for i, a in enumerate(_normalize_arg(x) for x in arguments)
             )
 
             user_content = (
