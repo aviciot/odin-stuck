@@ -35,8 +35,12 @@ def _parse_json(text: str) -> dict:
         lines = t.splitlines()
         t = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
     t = t.strip()
-    obj, _ = json.JSONDecoder().raw_decode(t)
-    return obj
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(t)
+        return obj
+    except json.JSONDecodeError:
+        return {"argument": text.strip(), "logical_chain": [], "confidence": 0.5,
+                "main_point": text.strip()[:120], "approach": "logic-based"}
 
 SYSTEM_PROMPT = """You are an expert logic-based debater. Your role is to construct the strongest possible argument using pure reasoning, first principles, logical deduction, and structured thinking.
 
@@ -118,7 +122,7 @@ class LogicExecutor(AgentExecutor):
 
             response = client.messages.create(
                 model=MODEL,
-                max_tokens=1024,
+                max_tokens=2048,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_content}],
             )

@@ -39,8 +39,12 @@ def _parse_json(text: str) -> dict:
         lines = t.splitlines()
         t = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
     t = t.strip()
-    obj, _ = json.JSONDecoder().raw_decode(t)
-    return obj
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(t)
+        return obj
+    except json.JSONDecodeError:
+        return {"argument": text.strip(), "field": "unknown", "insight": "", "confidence": 0.5,
+                "main_point": text.strip()[:120], "approach": "creative/unknown"}
 
 DEFAULT_FIELDS = [
     "evolutionary biology", "behavioral economics", "ancient history",
@@ -144,7 +148,7 @@ class CreativeExecutor(AgentExecutor):
 
                 response = client.messages.create(
                     model=MODEL,
-                    max_tokens=512,
+                    max_tokens=1024,
                     system=SUGGEST_TOPIC_PROMPT,
                     messages=[{"role": "user", "content": user_content}],
                 )
@@ -205,7 +209,7 @@ class CreativeExecutor(AgentExecutor):
 
             response = client.messages.create(
                 model=MODEL,
-                max_tokens=1024,
+                max_tokens=2048,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_content}],
             )

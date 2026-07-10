@@ -35,8 +35,11 @@ def _parse_json(text: str) -> dict:
         lines = t.splitlines()
         t = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
     t = t.strip()
-    obj, _ = json.JSONDecoder().raw_decode(t)
-    return obj
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(t)
+        return obj
+    except json.JSONDecodeError:
+        return {"scores": [], "winner": "unknown", "winner_reason": text.strip()[:200], "synthesis": ""}
 
 SYSTEM_PROMPT = """You are an impartial debate judge. You evaluate arguments strictly on merit.
 

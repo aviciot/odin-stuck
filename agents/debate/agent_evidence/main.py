@@ -31,14 +31,19 @@ PORT = int(os.getenv("PORT", "9401"))
 
 
 def _parse_json(text: str) -> dict:
-    """Parse the first JSON object from model output, tolerating fences and trailing text."""
+    """Parse the first JSON object from model output, tolerating fences, trailing text, and malformed JSON."""
     t = text.strip()
     if t.startswith("```"):
         lines = t.splitlines()
         t = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
     t = t.strip()
-    obj, _ = json.JSONDecoder().raw_decode(t)
-    return obj
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(t)
+        return obj
+    except json.JSONDecodeError:
+        # Malformed JSON — return degraded object so the run doesn't fail
+        return {"argument": text.strip(), "key_evidence": [], "confidence": 0.5,
+                "main_point": text.strip()[:120], "approach": "evidence-based"}
 
 SYSTEM_PROMPT = """You are an expert evidence-based debater. Your role is to construct the strongest possible argument using empirical evidence, data, studies, and documented facts.
 
@@ -123,7 +128,7 @@ class EvidenceExecutor(AgentExecutor):
 
             response = client.messages.create(
                 model=MODEL,
-                max_tokens=1024,
+                max_tokens=2048,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_content}],
             )
