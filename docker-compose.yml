@@ -455,6 +455,116 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ── Debate Agents — enable with: docker compose --profile debate up -d ───────
+
+  agent-evidence:
+    build:
+      context: ./agents/debate/agent_evidence
+      dockerfile: Dockerfile
+    container_name: agent-evidence
+    profiles: [debate]
+    expose:
+      - "9401"
+    environment:
+      PORT: "9401"
+      ANTHROPIC_API_KEY: "${DEBATE_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+      MODEL: "claude-haiku-4-5-20251001"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9401/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  agent-logic:
+    build:
+      context: ./agents/debate/agent_logic
+      dockerfile: Dockerfile
+    container_name: agent-logic
+    profiles: [debate]
+    expose:
+      - "9402"
+    environment:
+      PORT: "9402"
+      ANTHROPIC_API_KEY: "${DEBATE_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+      MODEL: "claude-sonnet-4-6"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9402/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  agent-creative:
+    build:
+      context: ./agents/debate/agent_creative
+      dockerfile: Dockerfile
+    container_name: agent-creative
+    profiles: [debate]
+    expose:
+      - "9403"
+    environment:
+      PORT: "9403"
+      ANTHROPIC_API_KEY: "${DEBATE_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+      MODEL: "claude-haiku-4-5-20251001"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9403/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  agent-judge:
+    build:
+      context: ./agents/debate/agent_judge
+      dockerfile: Dockerfile
+    container_name: agent-judge
+    profiles: [debate]
+    expose:
+      - "9404"
+    environment:
+      PORT: "9404"
+      ANTHROPIC_API_KEY: "${DEBATE_ANTHROPIC_API_KEY:-${ANTHROPIC_API_KEY:-}}"
+      MODEL: "claude-sonnet-4-6"
+    networks:
+      - them-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9404/.well-known/agent-card.json')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ── Vision Agent — Location Visualizer ──────────────────────────────────────
   vision-agent:
     build:

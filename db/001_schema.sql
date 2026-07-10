@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS them.runs (
     user_id INTEGER NOT NULL,
     session_id UUID NOT NULL,
     goal TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','completed','failed','cancelled','stopped')),
+    status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','completed','failed','canceled','cancelled','stopped')),
     final_output TEXT,
     error TEXT,
     iterations INTEGER NOT NULL DEFAULT 0,

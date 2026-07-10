@@ -56,6 +56,11 @@ THE_M_REDIS_PASSWORD=
 # ─── LLM (add your key here — not derived) ───────────────────
 ANTHROPIC_API_KEY=
 
+# ─── Agent-specific API keys (override ANTHROPIC_API_KEY per agent group) ────
+# Leave blank to fall back to ANTHROPIC_API_KEY
+DOCU_WRITER_ANTHROPIC_API_KEY=
+DEBATE_ANTHROPIC_API_KEY=
+
 # ─── Network ─────────────────────────────────────────────────
 THE_M_HOSTNAME=them.example.com
 THE_M_UI_HOSTNAME=them-ui.example.com

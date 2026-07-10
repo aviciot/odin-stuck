@@ -409,6 +409,7 @@ async def _invoke_agent(
     root_task: Task,
     iteration: int,
     db: AsyncSession,  # kept for signature compat — parallel calls open their own sessions
+    status_queue: asyncio.Queue = None,
 ) -> tuple[str, list[dict]]:
     """Returns (result_text, file_parts) where file_parts are A2A artifact parts with filename/media_type."""
     sem = semaphores.get(str(agent.id))
@@ -456,11 +457,32 @@ async def _invoke_agent(
                 ):
                     if event.type == "token":
                         result_text += event.text or ""
+                    elif event.type == "status" and event.state:
+                        if status_queue is not None:
+                            elapsed = int((time.monotonic() - t0) * 1000)
+                            await status_queue.put({
+                                "type": "agent_status",
+                                "agent": agent.slug,
+                                "state": event.state,
+                                "elapsed_ms": elapsed,
+                            })
                     elif event.type == "artifact":
-                        # Collect file parts (parts with filename/media_type) from A2A artifacts
+                        # Collect file parts (parts with filename/media_type) from A2A artifacts.
+                        # Normalize camelCase mediaType → media_type so DB and WS are consistent.
+                        # JSON data parts (application/json, no filename) feed result_text so the
+                        # LLM can read the structured output as a tool result.
                         for p in (event.artifact or {}).get("parts", []):
-                            if p.get("filename") or p.get("media_type"):
-                                file_parts.append(p)
+                            media_type = p.get("media_type") or p.get("mediaType")
+                            filename = p.get("filename")
+                            is_json_data = media_type == "application/json" and not filename
+                            if is_json_data:
+                                # Data artifact — expose text to LLM, don't treat as file download
+                                result_text += p.get("text", "")
+                            elif filename or media_type:
+                                normalized = {**p}
+                                if media_type:
+                                    normalized["media_type"] = media_type
+                                file_parts.append(normalized)
                             elif p.get("text") and not file_parts:
                                 result_text += p.get("text", "")
                     elif event.type == "done":
@@ -813,11 +835,16 @@ async def run(
                 from app.services.memory_service import get_injected_context
                 _injected_ctx = await get_injected_context(context_id)
 
-            async def _run_one(tc: ToolCall) -> tuple[ToolCall, str, list[dict]]:
+            # Queue for agent_status events emitted by parallel _invoke_agent calls.
+            # We run each invocation as a Task and poll the queue between awaits so
+            # status events stream to the client live instead of batching after gather.
+            _status_q: asyncio.Queue = asyncio.Queue()
+
+            async def _run_one(tc: ToolCall) -> tuple[ToolCall, str, list[dict], int]:
                 slug = tc.name.removeprefix("agent__")
                 agent = agent_by_slug.get(slug)
                 if agent is None:
-                    return tc, f"[Unknown agent: {slug}]", []
+                    return tc, f"[Unknown agent: {slug}]", [], 0
                 tc_input = dict(tc.input)
                 # Typed agents (explicit input_schema with properties) get context as a
                 # separate __context__ key so the adapter sends it as a text part alongside
@@ -830,17 +857,24 @@ async def run(
                     if _injected_ctx and "message" in tc_input:
                         tc_input["message"] = f"[Context summary]\n{_injected_ctx}\n\n{tc_input['message']}"
                 tc = ToolCall(id=tc.id, name=tc.name, input=tc_input)
+                t_start = time.monotonic()
                 async with parallel_sem:
                     result_text, file_parts = await _invoke_agent(
-                        agent, tc, semaphores, run_id, root_task, iteration, db
+                        agent, tc, semaphores, run_id, root_task, iteration, db,
+                        status_queue=_status_q,
                     )
-                return tc, result_text, file_parts
+                elapsed_ms = int((time.monotonic() - t_start) * 1000)
+                return tc, result_text, file_parts, elapsed_ms
 
             results_pairs = await asyncio.gather(*[_run_one(tc) for tc in tool_calls_this_iter])
 
+            # Drain status events collected during agent execution
+            while not _status_q.empty():
+                yield _status_q.get_nowait()
+
             results: list[str] = []
-            for tc, result, fp in results_pairs:
-                yield {"type": "tool_done", "tool": tc.name, "latency_ms": 0}
+            for tc, result, fp, elapsed_ms in results_pairs:
+                yield {"type": "tool_done", "tool": tc.name, "latency_ms": elapsed_ms}
                 await _publish_dash(run_id, {
                     "type": "tool_done",
                     "tool": tc.name,
