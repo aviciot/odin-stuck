@@ -497,6 +497,7 @@ export default function RunsPage() {
   const [stats, setStats] = useState<{ total: number; by_status: Record<string, number>; total_cost_usd: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
+  const [canceling, setCanceling] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     Promise.allSettled([themApi.runs(50), themApi.runStats()]).then(([r, s]) => {
@@ -504,6 +505,19 @@ export default function RunsPage() {
       if (s.status === 'fulfilled') setStats(s.value);
       setLoading(false);
     });
+  }, []);
+
+  const handleCancel = useCallback(async (e: React.MouseEvent, runId: string) => {
+    e.stopPropagation();
+    setCanceling(prev => new Set(prev).add(runId));
+    try {
+      const updated = await themApi.cancelRun(runId);
+      setRuns(prev => prev.map(r => r.id === runId ? { ...r, ...updated } : r));
+    } catch {
+      // ignore — run may have already finished
+    } finally {
+      setCanceling(prev => { const s = new Set(prev); s.delete(runId); return s; });
+    }
   }, []);
 
   const closeModal = useCallback(() => setSelectedRun(null), []);
@@ -607,7 +621,21 @@ export default function RunsPage() {
                           {run.cost_usd != null ? `$${Number(run.cost_usd).toFixed(4)}` : '—'}
                         </span>
                       </td>
-                      <td style={{ padding: '12px 16px' }}>
+                      <td style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {run.status === 'running' && (
+                          <button
+                            onClick={(e) => handleCancel(e, run.id)}
+                            disabled={canceling.has(run.id)}
+                            title="Force cancel this run"
+                            style={{
+                              padding: '3px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600,
+                              border: '1px solid #f87171', background: 'rgba(248,113,113,0.1)',
+                              color: '#f87171', cursor: 'pointer', opacity: canceling.has(run.id) ? 0.5 : 1,
+                            }}
+                          >
+                            {canceling.has(run.id) ? '…' : 'Cancel'}
+                          </button>
+                        )}
                         <span className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-text-muted)' }}>chevron_right</span>
                       </td>
                     </tr>

@@ -420,9 +420,81 @@ function TabBtn({ label, active, onClick }: { label: string; active: boolean; on
   );
 }
 
+// Parse a value that might be a JSON string or already an object
+function tryParseJson(v: unknown): unknown {
+  if (typeof v === 'string') {
+    try { return JSON.parse(v); } catch { return v; }
+  }
+  return v;
+}
+
+// Render a tool input/output in a human-readable way
+function TracePayload({ value, label }: { value: unknown; label: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const parsed = tryParseJson(value);
+
+  // Build a summary line from known fields
+  function summarize(obj: unknown): string {
+    if (typeof obj !== 'object' || obj === null) return String(obj).slice(0, 120);
+    const o = obj as Record<string, unknown>;
+    const parts: string[] = [];
+    if (o.main_point)    parts.push(`"${String(o.main_point).slice(0, 80)}"`);
+    if (o.question)      parts.push(`Q: ${String(o.question).slice(0, 80)}`);
+    if (o.winner)        parts.push(`winner: ${o.winner}`);
+    if (o.winner_reason) parts.push(`reason: ${String(o.winner_reason).slice(0, 60)}`);
+    if (o.field)         parts.push(`field: ${o.field}`);
+    if (o.approach)      parts.push(`approach: ${o.approach}`);
+    if (o.confidence != null) parts.push(`confidence: ${o.confidence}`);
+    if (o.agent)         parts.push(`agent: ${o.agent}`);
+    if (o.round != null) parts.push(`round: ${o.round}`);
+    if (o.position)      parts.push(`position: ${o.position}`);
+    if (o.message && typeof o.message === 'string') parts.push(`"${o.message.slice(0, 80)}"`);
+    if (parts.length === 0) {
+      const keys = Object.keys(o).slice(0, 4);
+      for (const k of keys) {
+        const v = o[k];
+        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+          parts.push(`${k}: ${String(v).slice(0, 40)}`);
+      }
+    }
+    return parts.join(' · ') || JSON.stringify(obj).slice(0, 120);
+  }
+
+  const summary = summarize(parsed);
+  const fullText = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
+
+  return (
+    <div style={{ paddingLeft: 12, marginTop: 2 }}>
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{ cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: 6 }}
+      >
+        <span style={{ fontSize: 10, color: '#6b7280', flexShrink: 0, marginTop: 1 }}>
+          {expanded ? '▾' : '▸'} {label}
+        </span>
+        {!expanded && (
+          <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontStyle: 'italic', wordBreak: 'break-word' }}>
+            {summary}
+          </span>
+        )}
+      </div>
+      {expanded && (
+        <pre style={{
+          margin: '4px 0 0 16px', fontSize: 11, fontFamily: 'monospace',
+          color: 'var(--tm-text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          background: 'rgba(0,0,0,0.2)', borderRadius: 6, padding: '6px 8px',
+          maxHeight: 300, overflowY: 'auto',
+        }}>
+          {fullText}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function TraceTab({ trace, traceBottom, runId, contextId }: { trace: TraceEvent[]; traceBottom: React.RefObject<HTMLDivElement | null>; runId?: string | null; contextId?: string | null }) {
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       {(runId || contextId) && (
         <div style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--tm-text-muted)', background: 'var(--tm-surface)', border: '1px solid var(--tm-border)', borderRadius: 4, padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 4 }}>
           {runId && <span title={runId}><span style={{ opacity: 0.6 }}>run_id: </span>{runId}</span>}
@@ -435,19 +507,15 @@ function TraceTab({ trace, traceBottom, runId, contextId }: { trace: TraceEvent[
         </div>
       )}
       {trace.map((ev, i) => (
-        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           <div style={{ fontSize: 12, color: traceColor(ev.type), fontWeight: 500, fontFamily: 'monospace' }}>
             {traceLabel(ev)}
           </div>
           {ev.type === 'tool_start' && ev.input != null && (
-            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', paddingLeft: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-              {JSON.stringify(ev.input, null, 2)}
-            </div>
+            <TracePayload value={ev.input} label="input" />
           )}
           {ev.type === 'tool_done' && ev.output != null && (
-            <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', paddingLeft: 12, maxHeight: 120, overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-              {String(ev.output).slice(0, 300)}{String(ev.output).length > 300 ? '…' : ''}
-            </div>
+            <TracePayload value={ev.output} label="output" />
           )}
         </div>
       ))}

@@ -31,12 +31,14 @@ PORT = int(os.getenv("PORT", "9401"))
 
 
 def _parse_json(text: str) -> dict:
-    """Parse JSON from model output, stripping markdown code fences if present."""
+    """Parse the first JSON object from model output, tolerating fences and trailing text."""
     t = text.strip()
     if t.startswith("```"):
         lines = t.splitlines()
         t = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return json.loads(t.strip())
+    t = t.strip()
+    obj, _ = json.JSONDecoder().raw_decode(t)
+    return obj
 
 SYSTEM_PROMPT = """You are an expert evidence-based debater. Your role is to construct the strongest possible argument using empirical evidence, data, studies, and documented facts.
 

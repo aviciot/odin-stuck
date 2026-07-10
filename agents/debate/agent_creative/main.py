@@ -38,7 +38,9 @@ def _parse_json(text: str) -> dict:
     if t.startswith("```"):
         lines = t.splitlines()
         t = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    return json.loads(t.strip())
+    t = t.strip()
+    obj, _ = json.JSONDecoder().raw_decode(t)
+    return obj
 
 DEFAULT_FIELDS = [
     "evolutionary biology", "behavioral economics", "ancient history",

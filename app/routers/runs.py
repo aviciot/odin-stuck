@@ -5,7 +5,7 @@ Auth: JWT (any authenticated user sees their own runs; admin sees all).
 
 import uuid
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -299,6 +299,24 @@ async def delete_run(
 
     await db.delete(row)
     await db.commit()
+
+
+@router.patch("/{run_id}/cancel", response_model=RunOut)
+async def cancel_run(
+    run_id: uuid.UUID,
+    user: dict = Depends(require_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """Force-cancel a stuck running run. Sets status=canceled and ended_at=now()."""
+    row = await _load_run_authorized(run_id, user, db)
+    if row.status != "running":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Run is not running (status: {row.status})")
+    row.status = "canceled"
+    row.ended_at = datetime.now(timezone.utc)
+    row.error = "Canceled by user"
+    await db.commit()
+    await db.refresh(row)
+    return _run_to_out(row)
 
 
 # ------------------------------------------------------------------ #

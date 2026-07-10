@@ -288,6 +288,7 @@ export const themApi = {
   updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),
   deleteToken: (id: string) => api.delete<void>(`/admin/tokens/${id}`),
   runs: (limit = 20) => api.get<Run[]>(`/runs?limit=${limit}`),
+  cancelRun: (runId: string) => api.patch<Run>(`/runs/${runId}/cancel`, {}),
   runDetail: (runId: string) => api.get<RunDetail>(`/runs/${runId}`),
   runStats: () => api.get<RunStats>('/runs/stats'),
   runTasks: (runId: string) => api.get<TaskOut[]>(`/runs/${runId}/tasks`),
