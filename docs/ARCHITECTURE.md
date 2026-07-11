@@ -1,29 +1,43 @@
 # the-M Architecture
-# Last updated: 2026-07-06
+# Last updated: 2026-07-11
 
 ## Core Mental Model
 
 Each enabled `them.agents` row = ONE LLM tool named `agent__<slug>`.
 The agent's `description` is the tool description — the LLM uses it to decide when to call this agent.
 
-The platform runs two orchestration paths in parallel:
-- **Legacy path** (`orchestrator_service.py`): in-RAM loop, run/step recorded to Postgres
-- **A2A-native path** (`task_runner.py`): durable task graph, tasks/artifacts stored in Postgres; the default for new deployments
+All orchestration runs through a single durable path: the Temporal `OrchestrationWorkflow`.
+The bridge (`app/routers/ws_orchestrator.py`) is a thin edge — it authenticates the WS
+connection, starts/signals the workflow via `bridge_client.py`, and relays Redis token
+streams back to the client. All orchestration state (message history, iteration count,
+token budget) lives in Temporal, not in the bridge process. The bridge is fully stateless:
+any replica can serve any connection, and a bridge restart mid-run does not lose the run.
+
+```
+User goal → WS /ws/orchestrate/{name} → ws_orchestrator.py authenticates + starts Temporal workflow
+         → OrchestrationWorkflow (them-worker):
+               load context + agents + prior history
+               create run + root task rows
+               agentic loop (≤ max_iterations):
+                    plan_turn → LLM picks tool(s) → stream tokens to Redis
+                    invoke_agent × N → asyncio.gather (bounded by max_parallel_tools)
+                    record_tool_results → persist to DB for multi-turn history
+                    loop
+               finalize_run → complete run, write final artifact
+         → Bridge relays Redis token stream → WS client
+```
 
 ## Network Topology (Traefik)
 
 All external traffic enters on a single port (default **8088**) via `them-traefik` (Traefik v3.6).
-The frontend and bridge are never exposed directly.
+The frontend and bridge are never exposed directly. Bridge is stateless — any replica handles any request.
 
 ```
 Browser → :8088 (them-traefik)
-  PathPrefix(/api/v1)  → them-bridge-svc  (priority 100, sticky cookie them_lb)
-  PathPrefix(/ws)      → them-bridge-svc  (priority 100, sticky cookie them_lb)
+  PathPrefix(/api/v1)  → them-bridge-svc  (priority 100)
+  PathPrefix(/ws)      → them-bridge-svc  (priority 100)
   PathPrefix(/health)  → them-bridge-svc  (priority 90)
   PathPrefix(/)        → them-ui-svc      (priority 10)
-
-Sticky session: Traefik injects Set-Cookie: them_lb=<server> on first request.
-All subsequent requests from the same browser hit the same bridge replica — required for WS.
 ```
 
 Traefik config: `traefik/traefik.yml` (static), Docker labels on services (dynamic).
@@ -45,6 +59,7 @@ Dashboard (read-only): `http://localhost:8089` (127.0.0.1 only).
 | `/api/v1/runs/{id}/tasks` | REST | JWT | Task graph for a run |
 | `/api/v1/runs/{id}/artifacts` | REST | JWT | Artifacts for a run |
 | `/api/v1/runs/context/{context_id}/artifacts` | REST | JWT | Context-scoped artifact query |
+| `/api/v1/runs/{run_id}/signal` | POST | JWT | HITL: submit human response to paused workflow |
 | `/a2a/push/{task_id}` | POST | Bearer | Push webhook for A2A agent callbacks |
 | `/.well-known/agent-card.json` | GET | None | the-M's own A2A agent card |
 | `/health`, `/health/ready`, `/health/live` | GET | None | Health checks |
@@ -75,106 +90,154 @@ WebSocket connections (can't use httpOnly cookies):
 
 **WS URL derivation:** `NEXT_PUBLIC_BRIDGE_WS_URL` is set to `""` in docker-compose. The playground derives the WS base from `window.location.host` at runtime so it always uses the correct host/port regardless of environment — no hardcoded `:8001`.
 
-## A2A-Native Orchestrator (task_runner.py) — Primary Path
+## Durable Orchestration — Temporal OrchestrationWorkflow
 
-The A2A-native path treats every orchestration run as a durable task graph.
+Every orchestration run executes as a Temporal workflow (`app/temporal/workflows.py`,
+`OrchestrationWorkflow`). One workflow instance per `context_id` (conversation thread).
+The workflow is deterministic Python; all I/O happens in Activities running in the
+`them-worker` container.
 
 ### Flow
 
 ```
 Client → WS /ws/orchestrate/{name}
-  └─ ws_orchestrator.py: parse auth, load orchestrator config, create root Task in DB
-       └─ task_runner.run(root_task, orchestrator, agents, ws)
-            └─ Build tool list from agents (NeutralTool per agent)
-            └─ LLM agentic loop (≤ max_iterations):
-                 LLM call → zero or more ToolCalls
-                 Per ToolCall → route via adapter → child task in DB
-                 Parallel: asyncio.gather() bounded by max_parallel_tools + per-agent Semaphore
-                 Artifacts stored via context_service.record_and_cache_artifact()
-                 Budget check: tokens_used vs budget_tokens on each iteration
-            └─ Final answer → artifact recorded in DB + streamed to WS
-            └─ Root task transitioned to completed/failed
-  └─ WS sends: ready, task_id, context_id, token, tool_start, tool_done, done, error
+  └─ ws_orchestrator.py: authenticate, resolve orchestrator, start workflow
+       via bridge_client.start_orchestration() — signal_with_start keyed by context_id
+  └─ Bridge subscribes to Redis them:dash:run:{context_id}:ctx then :{run_id}:tokens
+       and relays token / tool_start / tool_done / done / error frames to the WS client
+
+OrchestrationWorkflow.run():
+  1. load_orchestration_context   → orch config, agent list, tool defs, prior history (sanitized)
+  2. init_run                     → create them.runs + them.tasks(root), emit run_start
+  3. agentic loop (≤ max_iterations):
+       plan_turn                  → one LLM streaming turn; streams tokens to Redis; records assistant turn
+       (no tool calls) → final answer → break
+       invoke_agent × N           → asyncio.gather bounded by max_parallel_tools semaphore
+                                     each _invoke_one catches ActivityError → returns failed result
+                                     (guarantees 1:1 tool_use ↔ tool_result pairing)
+       record_tool_results        → persist tool_result (role='user') message to DB
+       summarize_context          → (if memory_enabled) rolling summary every N calls
+  4. finalize_run                 → complete them.runs, write final artifact, close root task
+                                    (always runs — even on cancellation)
 ```
 
-### Task State Machine
+### Activities (app/temporal/activities.py)
 
-```
-submitted → working → completed
-                   ↘ failed
-                   ↘ canceled
-                   ↘ rejected (input-required received but not handled)
-```
+| Activity | Responsibility |
+|---|---|
+| `load_orchestration_context` | Load orchestrator + agents, build NeutralTool list, load & sanitize prior history |
+| `init_run` | Create `them.runs` + root `them.tasks`; save user message as `task_message seq=0` |
+| `plan_turn` | One LLM planning turn; stream tokens to Redis; record usage + assistant turn to DB |
+| `invoke_agent` | Route one tool call via adapter; persist child task, step, artifact; heartbeat on task_created |
+| `record_tool_results` | Persist tool_result message (role='user') so multi-turn history reloads correctly |
+| `summarize_context` | Rolling context summary artifact for memory injection |
+| `finalize_run` | Complete run, write Final Answer artifact, transition root task |
 
-State transitions enforced by `task_store.transition()` — illegal transitions silently dropped.
+### Determinism & Durability Guarantees
 
-### Durable Context (context_service.py)
+- Workflow uses `workflow.uuid4()` for `run_id`/`root_task_id` — retries are idempotent.
+- `finalize_run` always runs, even on cancellation, so `them.runs` never leaks a `running` row.
+- **Cancellation:** Stop from the client cancels the workflow; the workflow inspects
+  `ActivityError.cause` for `CancelledError` and records `status=canceled` (not `failed`).
+- **Per-activity heartbeat timeouts:** `plan_turn` = 90s (large-context TTFT);
+  `invoke_agent` = `agent_timeout + 30s` (slow A2A submit + poll). `invoke_agent_activity`
+  sends a heartbeat on `task_created` event so Temporal knows the activity is alive after the
+  slow HTTP submit.
 
-- Every task carries a `context_id` that groups related tasks across sessions
-- Artifacts stored in `them.artifacts`; the-M is the sole writer
-- Redis hot cache `them:ctx:{context_id}:heads` (TTL 300s) for artifact lookup
-- Cache-aside: miss → query Postgres; hit → return cached list
-- `context_service.record_and_cache_artifact()` writes to DB then invalidates cache
+### HITL (Human-in-the-Loop)
 
-### Budget Enforcement
+When an agent emits `input-required`, the workflow pauses on
+`workflow.wait_condition(self._human_response is not None, timeout=10m)`. The bridge forwards
+the human reply via `POST /api/v1/runs/{run_id}/signal` → `submit_human_response` signal,
+which unblocks the workflow and injects the reply as the tool result for the paused slot.
 
-- Root task created with `budget_tokens` (from orchestrator config) and `deadline`
-- On each loop iteration: `tokens_used >= budget_tokens` → fail with "Budget exceeded"
-- Reaper background task (runs every 60s) transitions tasks past `deadline` to `failed`
+### Parallel Tool Calls
 
-### Redis Events
-
-Published by `task_store.transition()` and `task_store.record_artifact()`:
-- `them:tasks:{task_id}:events` — every state change and artifact chunk (consumed by ws_orchestrator)
-- `them:dash:run:{run_id}` — reformatted run trace events (consumed by ws_dashboard subscribers)
+When the LLM returns multiple tool calls in one iteration, the workflow fans them out via
+`asyncio.gather(*invoke_coros)` bounded by `orchestrator.max_parallel_tools` (via
+`asyncio.Semaphore`) and per-agent `max_concurrency`. Each `_invoke_one` coroutine wraps
+`execute_activity` in try/except — any `ActivityError` becomes a failed `InvokeAgentResult`,
+guaranteeing that the tool_results message always has exactly as many blocks as the assistant
+turn had tool_use blocks. This invariant is required by the Anthropic API.
 
 ## Context Memory (memory_service.py) — Phase 8.4
 
-When `orchestrator.memory_enabled = true`, the task_runner maintains a rolling summary of agent call results across iterations.
+When `orchestrator.memory_enabled = true`, the workflow maintains a rolling summary of agent
+call results across iterations.
 
 ```
 Every N agent calls (summarize_every_n_calls):
-  └─ memory_service.summarize_context(context_id, orch, artifacts, root_task_id, db)
-       └─ Fetches recent context artifacts
-       └─ Calls summarizer LLM (default: anthropic/haiku, cheapest available)
-       └─ Stores summary text in Redis: them:ctx:{context_id}:summary  TTL 3600s
-       └─ Persists as artifact: name="summary-{timestamp}" in them.artifacts
+  └─ summarize_context_activity:
+       → Fetches recent context artifacts
+       → Calls summarizer LLM (default: anthropic/haiku)
+       → Stores summary text in Redis: them:ctx:{context_id}:summary  TTL 3600s
+       → Persists as artifact: name="summary-{timestamp}" in them.artifacts
 
 On next agent call batch:
-  └─ memory_service.get_injected_context(context_id) → reads Redis summary
-  └─ Prepends "[Context summary]\n{summary}\n\n" to each agent tool call input
+  └─ injected_context = memory_service.get_injected_context(context_id)
+  └─ Prepended "[Context summary]\n{summary}\n\n" to each agent tool call input
 ```
 
-**Context threading:** The frontend passes `context_id` in the WS message payload on follow-up messages. The server reuses the same `context_id` instead of generating a fresh UUID — so the Redis summary from the previous turn is found and injected.
+**Note:** The summarizer targets **agent inputs** (what agents receive), not the planner's
+own message history. It helps agents remember prior context across turns, but does not shrink
+`self.messages` (the planner's growing conversation). Intra-run context growth is addressed by
+JSON-aware tool_result compaction in the workflow (see LESSONS.md).
 
 ## Multi-Turn Conversation History (Phase 11)
 
-Each user message creates a new root task. Multi-turn history is reconstructed from `them.task_messages` on every new turn.
+Each user message creates a new root task. Multi-turn history is reconstructed from
+`them.task_messages` on every new turn.
 
 ```
 Turn 1 (context_id=X):
   root_task_1 created
-  task_messages: seq=0 user msg, seq=1 assistant response, seq=2 tool results, ...
+  task_messages: seq=0 user msg, seq=1 assistant turn, seq=2 tool_result, seq=3 assistant turn, ...
 
 Turn 2 (same context_id=X):
   root_task_2 created
   _load_context_history(context_id=X, exclude=root_task_2)
     → loads root_task_1's task_messages in order
-    → returns [{role:user, content:"turn 1"}, {role:assistant, content:[...]}, ...]
+    → passes through _sanitize_history() — drops orphaned tool_use/tool_result pairs
+    → returns [{role:user, ...}, {role:assistant, content:[tool_use, ...]}, {role:user, content:[tool_result, ...]}, ...]
   messages = prior_history + [current user msg]  ← sent to LLM
 ```
 
-**Key invariant:** user message is saved as `task_message seq=0` immediately after root task creation, before the agentic loop. This ensures it's available to future turns' `_load_context_history`.
+**Key invariant:** Every tool_use in an assistant turn has a matching tool_result message
+persisted to DB by `record_tool_results_activity`. Without this, resumed conversations see
+orphaned tool_use IDs and the Anthropic API returns HTTP 400.
 
-**Resilient across reconnects:** history is DB-backed — survives WS disconnects, bridge restarts, or replica changes. The full conversation is reconstructed from Postgres on every turn.
+**History sanitization (`_sanitize_history`):** Full-pass sanitizer — collects all
+`tool_result` IDs in the history, then rebuilds it dropping any assistant message whose
+`tool_use` IDs have no matching result (handles pre-fix DB rows and interrupted runs).
+Also drops the orphaned tool_result message following a dropped assistant turn to maintain
+valid role alternation.
 
-**Memory + multi-turn:** both coexist. Memory summarizes agent call artifacts (what agents did); multi-turn history preserves the user↔orchestrator dialogue. They complement each other.
+**Resilient across reconnects:** history is DB-backed — survives WS disconnects, bridge
+restarts, or replica changes. Full conversation reconstructed from Postgres on every turn.
 
-**Redis key:** `them:ctx:{context_id}:summary` — TTL 3600s. Written by memory_service, read by task_runner before each agent batch.
+**Memory + multi-turn:** both coexist. Memory summarizes agent call artifacts (what agents
+did); multi-turn history preserves the user↔orchestrator dialogue. They complement each other.
+
+### Frontend Session Resume
+
+The playground persists the active `context_id` to `localStorage['them:playground:context_id']`.
+On page load it verifies the session still exists in the API and shows a "Resume last
+conversation?" banner with orchestrator name, turn count, age, and topic. The Sessions debug
+tab lists all prior contexts and also writes `context_id` to localStorage on resume.
+Follow-up messages carry `context_id` in the WS payload, so the backend reloads prior history.
+
+## Legacy Orchestrator (task_runner.py) — Removed from Live Path
+
+The `task_runner.run()` agentic loop and `orchestrator_service.py` in-RAM loop are no longer
+reachable. `ws_orchestrator.py` hardcodes `_TEMPORAL_ENABLED = True`. The `TEMPORAL_ENABLED`
+config flag in `config.py` is dead. The legacy modules remain in the tree as reference and
+are slated for deletion.
 
 ## Pluggable Edge Adapters (app/edges/) — Phase 8.6 / Phase 10
 
-Edges are transport wrappers. They translate a client protocol into `EdgeRequest` and relay `task_runner` events back in that protocol's encoding. Zero business logic — same orchestrator and agents regardless of edge.
+Edges are transport wrappers. They translate a client protocol into `EdgeRequest` and relay
+orchestration events back in that protocol's encoding. Zero business logic — same orchestrator
+and agents regardless of edge.
 
 ```
 EdgeAdapter (base.py) — ABC
@@ -201,7 +264,8 @@ get_edge_class(name) → Type[EdgeAdapter]   # registry.py
 VALID_EDGES = frozenset({"websocket", "sse"})
 ```
 
-**Edge guard:** `Orchestrator.edges TEXT[]` — if "websocket" is not in the list, the WS connection is rejected after auth with a clear error. Defaults to `{websocket}` for all existing orchestrators.
+**Edge guard:** `Orchestrator.edges TEXT[]` — if "websocket" is not in the list, the WS
+connection is rejected after auth with a clear error. Defaults to `{websocket}`.
 
 **SSE entry point flow:**
 ```
@@ -211,10 +275,6 @@ GET /apps/{slug}/sse?message=<text>&context_id=<uuid>
   → StreamingResponse(edge.stream())        ← HTTP response drains the queue
   → X-Accel-Buffering: no                   ← disables Traefik/Nginx response buffering
 ```
-
-## Legacy Orchestrator (orchestrator_service.py) — Retained
-
-Kept for backward compatibility. Uses in-RAM accumulator, records to `them.runs`/`them.run_steps`/`them.run_usage`. No task graph or artifacts.
 
 ## Dashboard WebSocket — Channel Multiplexing
 
@@ -233,6 +293,11 @@ Server → Client:  {"type": "ping"}   — every 30s keepalive
 
 Redis key mapping: channel `run:abc` → pub/sub channel `them:dash:run:abc`
 
+**Dual-channel publishing:** Trace events (tool_start, tool_done, iteration_start) are
+published to BOTH `them:dash:run:{run_id}` (trace tab / dashboard WS) AND
+`them:dash:run:{run_id}:tokens` (streaming side-channel → bridge → WS client). Both channels
+must receive these events for the UI to show them in both the trace tab and the status bar.
+
 ## Playground Architecture
 
 ```
@@ -240,15 +305,15 @@ Browser Playground
   ├─ Left pane: chat
   │    └─ WebSocket → /ws/orchestrate/{name}?token=<jwt>
   │         sends: {type:"message", content:"...", context_id:"<uuid>"}  ← context_id optional
-  │         streams: ready (run_id, task_id, context_id), token, tool_start, tool_done, done, error
-  │         context_id: server assigns fresh UUID on first message; client sends same UUID on
-  │                     follow-up messages so memory summary is reused across turns
+  │         streams: ready (run_id, context_id), token, tool_start, tool_done, iteration_start,
+  │                  agent_status, file, done, canceled, error
+  │         context_id: saved to localStorage; "Resume?" banner on page load for prior sessions
   └─ Right pane: debug tabs
-       ├─ Trace tab — WS → /ws/dashboard, subscribe: ["run:{run_id}"]
-       ├─ Tasks tab — GET /api/v1/runs/{run_id}/tasks  (on done event)
-       ├─ Artifacts tab — GET /api/v1/runs/{run_id}/artifacts  (on done event)
-       └─ Memory tab — context artifacts + per-agent "Fetch Agent Card" button
-                        GET {endpoint}/.well-known/agent-card.json (proxied via frontend API)
+       ├─ Trace — WS → /ws/dashboard, subscribe: ["run:{run_id}"]
+       ├─ Tasks — GET /api/v1/runs/{run_id}/tasks
+       ├─ Artifacts — GET /api/v1/runs/{run_id}/artifacts
+       ├─ Memory — context artifacts + per-agent "Fetch Agent Card" button
+       └─ Sessions — list prior context sessions; click to resume with same context_id
 ```
 
 ## Adapter Abstraction
@@ -270,23 +335,37 @@ AdapterEvent
 OmniWsAdapter (omni_ws_adapter.py)  transport="omni_ws"
   - WebSocket to agent; sends {"type":"message","content":...}
   - Parses WS stream → token/done/error AdapterEvents
-  - Used for mock-agent-* containers
-
-A2aAdapter (a2a_adapter.py)  transport="a2a"
-  - HTTP JSON-RPC SendMessage; polls GetTask up to 30s
-  - Synchronous — collects full result then re-streams as tokens
-  - Legacy; kept for simple A2A use cases
 
 A2aAsyncAdapter (a2a_async_adapter.py)  transport="a2a_async"
   - Non-blocking submit → stream via SSE or polling
   - SSE: GET {endpoint}tasks/{id}/events; falls back to polling on HTTP error
   - Deduplicates artifacts by artifact_id
   - Full artifact parts preservation — passes dict to task_store.record_artifact()
-  - Used for a2a-echo, a2a-slow, a2a-stream test agents
+  - Used for all debate agents and docu_writer
   - Supports long-running tasks (configurable poll_interval, max_poll_seconds)
+  - Sends heartbeat on task_created so Temporal knows submit completed
 ```
 
 See `docs/ADAPTERS.md` for complete transport protocol details.
+
+## Debate Stack (db/008_debate_stack.sql)
+
+Four A2A agents implementing a structured 2-round debate with a final verdict.
+
+| Agent | Port | Model | Role |
+|---|---|---|---|
+| `agent-evidence` | 9401 | Haiku | Argues using empirical data and documented facts |
+| `agent-logic` | 9402 | Haiku | Argues from first principles and logical deduction |
+| `agent-creative` | 9403 | Haiku | Argues from a surprising lateral field |
+| `agent-judge` | 9404 | Sonnet | Scores all arguments, picks winner, synthesizes final answer |
+
+Orchestrated by `debate_flow` (Haiku, `max_iterations=12`). The orchestrator passes only
+summary fields `{agent, main_point, confidence, approach, round}` between agents — never full
+argument text — to prevent context explosion. Full arguments are preserved in DB artifacts.
+
+**Context compaction (workflows.py):**
+- `_compact_tool_result`: JSON-aware — keeps only `_COMPACT_JSON_KEEP` routing fields from tool results
+- `_slim_tool_use_inputs`: strips heavy nested arrays from tool_use blocks stored in `self.messages`
 
 ## A2A Test Agents (profiles: test-agents)
 
@@ -298,14 +377,7 @@ Three real A2A SDK agents in `agents/` for integration testing:
 | `a2a-slow` | 9201 | Waits `SLOW_DELAY_S` seconds (default 5). Tests deadline and async delegation. |
 | `a2a-stream` | 9202 | Streams response word-by-word as artifact chunks. Tests SSE and artifact assembly. |
 
-All use `a2a-sdk 1.1.0` (`AgentExecutor` ABC, `EventQueue.enqueue_event()`, `InMemoryTaskStore`, `add_a2a_routes_to_fastapi`).
-
-Enable with:
-```bash
-docker compose --profile test-agents up -d a2a-echo a2a-slow a2a-stream
-```
-
-Seeded in `db/002_seed.sql` with `enabled=false` — enable via admin API when running integration tests.
+All use `a2a-sdk 1.1.0` (`AgentExecutor` ABC, `EventQueue.enqueue_event()`, `InMemoryTaskStore`).
 
 ## A2A Push Webhook
 
@@ -316,29 +388,26 @@ Authorization: Bearer <access_token>
 Body: {"status": {"state": "completed"}, "artifacts": [...]}
 ```
 
-Handler (`a2a_server.py`):
-- Resolves task from `them.tasks`
-- Idempotent if task already terminal
-- Calls `task_store.transition()` + `task_store.record_artifact()` for each artifact
+Handler (`a2a_server.py`): resolves task, idempotent if already terminal,
+calls `task_store.transition()` + `task_store.record_artifact()` for each artifact.
 
 ## Multi-Replica Scalability
 
-| State | File | Replica-safe? | Mechanism |
+| State | Location | Replica-safe? | Mechanism |
 |---|---|---|---|
-| Token cache L1 | token_cache.py | No | in-process dict, independent per replica |
-| Token cache L2 | token_cache.py | Yes | Redis `them:session:token:*` TTL 300s |
-| Rate limiting | rate_limiter.py | Yes | Redis INCR fixed-window |
-| Agent registry cache | agent_registry.py | Yes | Redis `them:agents:registry`, pub/sub invalidation |
-| Orchestrator config | task_runner.py | Yes | Redis `them:orchestrators:{name}` TTL 600s |
-| Task + artifact state | task_store.py | Yes | Postgres `them.tasks`, `them.artifacts` |
-| Context artifact cache | context_service.py | Yes | Redis `them:ctx:{context_id}:heads` TTL 300s |
-| Run state (legacy) | run_recorder.py | Yes | Postgres `them.runs` |
-| WS connections | ws_orchestrator.py | No (by design) | Traefik sticky sessions cookie `them_lb` |
-| Replica heartbeat | main.py bg task | Yes | Redis `them:bridge:{ID}:heartbeat` 30s TTL |
+| Token cache L1 | in-process dict per replica | No | independent per replica |
+| Token cache L2 | Redis `them:session:token:*` TTL 300s | Yes | shared |
+| Rate limiting | Redis INCR `rl:them:*` | Yes | fixed-window |
+| Agent config cache | Redis `them:agents:registry` | Yes | pub/sub invalidation |
+| Orchestrator config | Redis `them:orchestrators:{name}` TTL 600s | Yes | pub/sub invalidation |
+| Run state | Postgres `them.runs` | Yes | |
+| Task + artifact state | Postgres `them.tasks`, `them.artifacts` | Yes | |
+| WS connections | ws_orchestrator.py | Yes | Temporal holds all state; any replica serves any WS |
+| Replica heartbeat | Redis `them:bridge:{INSTANCE_ID}:heartbeat` 30s TTL | Yes | |
 
 ## Background Tasks (main.py lifespan)
 
 - `agent_registry_refresh_loop` — every 600s, re-loads agents from DB, publishes `them:agents:changed`
 - `heartbeat_loop` — every 10s, writes `them:bridge:{INSTANCE_ID}:heartbeat`
 - `config_change_listener` — xreads `them:control:events` for cache invalidation signals
-- `_reaper_loop` — every 60s, finds tasks past `deadline`, transitions them to `failed`
+- `_reaper_loop` — every 60s, finds tasks past `deadline`, transitions them to `failed` (safety net for inbound A2A tasks; Temporal handles WS-run timeouts)

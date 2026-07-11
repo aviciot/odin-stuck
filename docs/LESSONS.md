@@ -373,20 +373,37 @@ await event_queue.enqueue_event(task)
 **Root causes (by impact):**
 
 ### 1. Context explosion from large tool results (biggest impact)
-Iteration 2 plan call received 14,981 input tokens vs 1,038 for iteration 1. The 3 debate agents each returned ~4,000 tokens of detailed argument text. These were passed verbatim as `tool_result` blocks into the LLM context. The LLM had to process 13k tokens of new content just to compose the judge tool call. This caused:
-- Plan turn 2 to take 49s (vs 15s for turn 1)
-- Plan turn 3 TTFT to exceed 30s → heartbeat timeout
+Iteration 2 plan call received 14,981 input tokens vs 1,038 for iteration 1. The 3 debate agents each returned ~4,000 tokens of detailed argument text. These were passed verbatim as `tool_result` blocks into the LLM context. The LLM had to process 13k tokens of new content just to compose the judge tool call.
 
-**Fix:** Cap tool result text in the LLM message history at `_MAX_TOOL_RESULT_CHARS = 6000` (~1500 tokens). Full results are persisted in DB/artifacts — only the orchestrator's context window needs the summary. Added truncation note so the LLM knows full result is available.
+**Fix:** JSON-aware compaction in `_compact_tool_result()` — keeps only routing fields (`_COMPACT_JSON_KEEP`: agent, main_point, confidence, approach, round, winner, etc.) from JSON tool results. Falls back to `_MAX_TOOL_RESULT_CHARS = 2000` char slice for non-JSON. Full results are persisted in DB/artifacts. `_slim_tool_use_inputs()` also strips heavy `arguments`/`opponent_arguments` fields from tool_use blocks stored in `self.messages`.
 
 ### 2. `plan_turn heartbeat_timeout=30s` too short for large contexts
-When context reaches 15k+ tokens, TTFT (time-to-first-token) from Anthropic can exceed 30s. The activity heartbeats on every token, so if the first token arrives after >30s, Temporal kills the activity.
+When context reaches 15k+ tokens, TTFT (time-to-first-token) from Anthropic can exceed 30s. The activity heartbeats on every token — if the first token arrives after >30s, Temporal kills the activity.
 
-**Fix:** Raised `heartbeat_timeout` for `plan_turn_activity` from 30s to 90s.
+**Fix:** Raised `heartbeat_timeout` for `plan_turn_activity` to 90s.
 
-### 3. `max_tokens=4096` wasteful for orchestrator planning turns
-The orchestrator only emits tool calls or short coordination messages. Allowing 4096 output tokens is excessive — it signals Anthropic to allocate KV cache space and can slow generation. Reduced to 2048.
+### 3. System prompt routing debate outputs through full argument text
+Original system prompt instructed the orchestrator to forward complete agent arguments. R3 update changed it to route only summary fields (main_point, confidence, approach, round) and keep full arguments inside the A2A task artifacts.
 
-**Architecture note:** The debate flow by design has the orchestrator forward full argument objects (the system prompt explicitly says "never summarize"). This is the feature, not the bug. The fix is at the infrastructure layer (truncate at the tool_result boundary before feeding back to LLM) so the orchestrator still receives complete outputs from agents — it's only the LLM context representation that's truncated.
+**Architecture note:** Full argument text lives in `them.artifacts`. Orchestrator LLM context holds only routing fields. Agents receive only the prior round's summary, not full transcripts.
 
-**Watch for:** Any orchestrator that calls agents producing large outputs (>2k chars each) will experience context growth proportional to `n_agents × output_size × n_rounds`. Always cap tool results in the LLM context; full content lives in artifacts.
+**Watch for:** Any orchestrator calling agents that produce large outputs (>2k chars each) will experience context growth proportional to `n_agents × output_size × n_rounds`. Always cap tool results in the LLM context; full content lives in artifacts.
+
+---
+
+## 2026-07-11 — tool_use/tool_result mismatch on resumed conversations (two root causes)
+
+**Symptom:** After resuming a conversation (same context_id), next message fails with Anthropic API HTTP 400: "tool_use ids were found without tool_result blocks immediately after".
+
+**Root cause A — tool_results never persisted:** The agentic loop persisted assistant turns (tool_use blocks) but never persisted the corresponding tool_result messages to `task_messages`. When the next turn loaded history via `_load_context_history`, it found assistant messages containing tool_use IDs with no matching tool_result rows → invalid conversation.
+
+**Fix A:** Added `record_tool_results_activity` — a new Temporal activity that persists the tool_result message (role='user', content=[{type:tool_result, ...}]) to `task_messages` immediately after all agents complete and before the next iteration. This is idempotent (seq-keyed) and runs with retry_policy.maximum_attempts=3.
+
+**Root cause B — _sanitize_history only checked tail:** Even with new runs, old DB rows from before the fix had orphaned tool_use IDs in the middle of history. `_sanitize_history` only stripped the tail (last assistant turn if dangling) — it missed orphaned pairs in earlier turns.
+
+**Fix B:** Full-pass `_sanitize_history` — (1) collect all `tool_result` IDs from the entire history in one pass, (2) rebuild history dropping any assistant message whose tool_use IDs have no matching result anywhere in history, (3) drop the orphaned tool_result message immediately following any dropped assistant turn.
+
+**Watch for:**
+- Every assistant turn that includes tool_use blocks MUST be followed immediately by a user message containing one `tool_result` block per tool_use. This is an Anthropic API hard requirement.
+- Always persist tool_results to DB before the next planning turn — if the bridge crashes between agents completing and the next LLM call, the DB must have enough data to reconstruct a valid history.
+- `_sanitize_history` is a last-resort safety net; it should never need to drop rows in a healthy run.

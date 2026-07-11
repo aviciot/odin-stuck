@@ -1,5 +1,5 @@
 # the-M Status
-# Last updated: 2026-07-09
+# Last updated: 2026-07-11
 
 ## Build Progress
 
@@ -27,21 +27,24 @@
 | **Phase 8.3** | ✓ Complete | Provider factory, per-orchestrator LLM config, llm_api_key_encrypted |
 | **Phase 8.4** | ✓ Complete | Context summarization memory: memory_service.py, Redis `them:ctx:{id}:summary`, Haiku summarizer, memory UI in orchestrator admin |
 | **Phase 8.5** | ✓ Complete | Orchestrator-as-agent (durable inbound A2A): a2a_server.py rewired to them.tasks, returnImmediately, GetTask from DB, fork-bomb guard |
-| **Phase 8.6** | ✓ Complete | Pluggable edge adapters: app/edges/ (EdgeAdapter ABC, WebsocketEdge, VoiceEdge stub, RestEdge stub), ws_orchestrator uses WebsocketEdge |
+| **Phase 8.6** | ✓ Complete | Pluggable edge adapters: app/edges/ (EdgeAdapter ABC, WebsocketEdge, SSEEdge), ws_orchestrator uses WebsocketEdge |
 | **Agent discovery UI** | ✓ Complete | Row Discover button: fetches card, diffs vs stored, shows popup with changes highlighted, pulsing Save, orchestrator impact warning |
 | **Persistent context threading** | ✓ Complete | Frontend passes context_id on follow-up messages; server reuses it so memory summary carries across turns |
-| **Traefik reverse proxy** | ✓ Complete | traefik:v3.6, single port 8088, path-based routing, sticky sessions (`them_lb` cookie), Docker provider label discovery |
+| **Traefik reverse proxy** | ✓ Complete | traefik:v3.6, single port 8088, path-based routing, no sticky sessions — bridge is stateless via Temporal |
 | **JWT auto-refresh** | ✓ Complete | `/api/auth/token` auto-refreshes when token has < 30s left; WS URL derived from `window.location` (no hardcoded port) |
 | **Traefik stack isolation** | ✓ Complete | `traefik-instance=them` constraint — them-traefik ignores all non-the-M containers on shared Docker socket |
 | **Phase 9 — A2A production hardening** | ✓ Complete | Token expiry enforcement, ownership isolation (owns_task), rate limiting (10 rpm), agent card strips system_prompt, default 30-min task deadline, 512 KB body + 10-item batch limits, TOCTOU scope check; `them.tasks.user_id` + `them.applications` schema; test_21 (47 checks) |
 | **Phase 9 Phase 2 — Applications CRUD** | ✓ Complete | `app/routers/admin_applications.py`: CRUD for `them.applications`, slug+entry_point_type validation, orchestrator name join; wired in `main.py` |
-| **Phase 9 Phase 3 — Pluggable entry points** | ✓ Complete | `app/routers/apps.py`: `GET /apps`, `POST /apps/{slug}` (REST fire-and-forget), `GET /apps/{slug}/tasks/{task_id}` (poll), `WS /apps/{slug}/ws` (streaming chat); public/token access policy; ownership isolation; frontend Applications page + Sidebar nav; test_22 (51 checks) |
-| **Phase 10 — SSE edge** | ✓ Complete | `app/edges/sse_edge.py`: asyncio queue-backed streaming; `GET /apps/{slug}/sse` route; `entry_point_type` updated to `websocket\|sse\|webrtc`; DB migration 005_phase10.sql; test_19 + test_22 updated |
-| **Phase 11 — Multi-turn chat** | ✓ Complete | `task_runner.py`: user message saved as `task_message seq=0`; `_load_context_history()` loads prior root tasks' messages for `context_id`; prior history prepended to LLM messages each turn; `history_window` (default 20) limits turns loaded; test_10 updated |
-| **True A2A typed input** | ✓ Complete | `docu_writer`: typed data parts, no regex; adapter: `input_modes`-aware `_build_parts()`; factory: reads `input_modes` from agent skills; `task_runner`: `_OrchestratorProxy` dataclass, typed branch in `_run_one`, context as separate part; orchestrator prompt generic; test_25 (35 checks) |
-| **Temporal migration (all 7 phases)** | ✓ Complete | Durable orchestration via Temporal; OrchestrationWorkflow replaces task_runner.run(); bridge is stateless (no sticky sessions); HITL signal endpoint; context injection for typed/text agents; see `docs/architecture/PROGRESS.md` |
+| **Phase 9 Phase 3 — Pluggable entry points** | ✓ Complete | `app/routers/apps.py`: `GET /apps`, `POST /apps/{slug}` (REST), `GET /apps/{slug}/tasks/{task_id}`, `WS /apps/{slug}/ws`, `GET /apps/{slug}/sse`; test_22 (51 checks) |
+| **Phase 10 — SSE edge** | ✓ Complete | `app/edges/sse_edge.py`: asyncio queue-backed streaming; `GET /apps/{slug}/sse` route; test_19 + test_22 updated |
+| **Phase 11 — Multi-turn chat** | ✓ Complete | `_load_context_history()` loads prior task_messages; user message persisted at seq=0; `history_window` limits turns; `record_tool_results_activity` ensures tool_result rows are persisted so resumed sessions are valid |
+| **True A2A typed input** | ✓ Complete | `docu_writer`: typed data parts, no regex; adapter: `input_modes`-aware `_build_parts()`; factory: reads `input_modes` from agent skills; test_25 (35 checks) |
+| **Temporal migration (all 7 phases)** | ✓ Complete | Durable orchestration via Temporal; OrchestrationWorkflow replaces task_runner.run(); bridge is fully stateless; HITL signal endpoint; all WS runs go through Temporal |
+| **Debate stack** | ✓ Complete | 4 A2A debate agents (evidence, logic, creative on Haiku; judge on Sonnet); `debate_flow` orchestrator; context compaction (JSON-aware); db/008_debate_stack.sql |
+| **Session resume in playground** | ✓ Complete | `context_id` persisted to localStorage; "Resume last conversation?" banner on page load; Sessions debug tab; full history reconstructed from DB on resume |
+| **History sanitization (full-pass)** | ✓ Complete | `_sanitize_history` drops orphaned tool_use/tool_result pairs anywhere in history, not just at the tail; prevents HTTP 400 on Anthropic API for resumed sessions |
 
-## Infrastructure (as of 2026-07-06)
+## Infrastructure (as of 2026-07-11)
 
 | Container | Image/Source | Data | Port |
 |---|---|---|---|
@@ -50,11 +53,18 @@
 | `them-redis` | redis:7-alpine | `./data/them-redis/` | 6379 (internal) |
 | `them-auth-service` | `auth_service/` | — | 8701 (internal) |
 | `them-bridge` | `app/` | `./data/them-logs/` | 8001 (internal only) |
+| `them-worker` | `app/` (Temporal worker) | — | — (internal, connects to Temporal) |
+| `them-temporal` | temporalio/auto-setup | — | 7233 (internal) |
+| `them-temporal-ui` | temporalio/ui | — | proxied through Traefik at `/temporal/` |
 | `them-frontend` | `frontend/` | — | 3200 (internal only) |
 | `vision-agent` | `agents/vision_agent/` | — | 9100 (internal) — **unhealthy** |
 | `a2a-echo` | `agents/a2a_echo/` | — | 9200 (internal) — **profile: test-agents** |
 | `a2a-slow` | `agents/a2a_slow/` | — | 9201 (internal) — **profile: test-agents** |
 | `a2a-stream` | `agents/a2a_stream/` | — | 9202 (internal) — **profile: test-agents** |
+| `agent-evidence` | `agents/debate/agent_evidence/` | — | 9401 (internal) — debate stack |
+| `agent-logic` | `agents/debate/agent_logic/` | — | 9402 (internal) — debate stack |
+| `agent-creative` | `agents/debate/agent_creative/` | — | 9403 (internal) — debate stack |
+| `agent-judge` | `agents/debate/agent_judge/` | — | 9404 (internal) — debate stack |
 
 ## Users Seeded
 
@@ -70,25 +80,26 @@
 | `/health`, `/health/live`, `/health/ready` | GET | ✓ Live |
 | `/api/v1/admin/llm-providers` | CRUD | ✓ Live |
 | `/api/v1/admin/agents` | CRUD | ✓ Live |
-| `/api/v1/admin/agents/discover` | POST | ✓ Live — fetch & diff agent card; accepts agent_id to reuse stored token |
+| `/api/v1/admin/agents/discover` | POST | ✓ Live — fetch & diff agent card |
 | `/api/v1/admin/agents/{id}/test` | POST | ✓ Live |
 | `/api/v1/admin/orchestrators` | CRUD | ✓ Live |
 | `/api/v1/admin/orchestrators/{id}/test-llm` | POST | ✓ Live |
 | `/api/v1/admin/tokens` | CRUD | ✓ Live |
-| `/ws/orchestrate/{name}` | WebSocket | ✓ Live |
+| `/ws/orchestrate/{name}` | WebSocket | ✓ Live — all runs via Temporal |
 | `/ws/dashboard` | WebSocket | ✓ Live |
 | `/api/v1/runs` | GET/DELETE | ✓ Live |
-| `/api/v1/runs/{id}/tasks` | GET | ✓ Live (A2A Phase 6) |
-| `/api/v1/runs/{id}/artifacts` | GET | ✓ Live (A2A Phase 6) |
-| `/api/v1/runs/context/{ctx_id}/artifacts` | GET | ✓ Live (A2A Phase 6) |
-| `/a2a/push/{task_id}` | POST | ✓ Live (A2A Phase 4) |
-| `/.well-known/agent-card.json` | GET | ✓ Live (A2A Phase 4) |
-| `/api/v1/admin/applications` | CRUD | ✓ Live (Phase 9 Phase 2) |
-| `/apps` | GET | ✓ Live — public app catalogue |
-| `/apps/{slug}` | POST | ✓ Live — REST fire-and-forget entry point |
+| `/api/v1/runs/{id}/tasks` | GET | ✓ Live |
+| `/api/v1/runs/{id}/artifacts` | GET | ✓ Live |
+| `/api/v1/runs/context/{ctx_id}/artifacts` | GET | ✓ Live |
+| `/api/v1/runs/{run_id}/signal` | POST | ✓ Live — HITL human response signal |
+| `/a2a/push/{task_id}` | POST | ✓ Live |
+| `/.well-known/agent-card.json` | GET | ✓ Live |
+| `/api/v1/admin/applications` | CRUD | ✓ Live |
+| `/apps` | GET | ✓ Live |
+| `/apps/{slug}` | POST | ✓ Live — REST fire-and-forget |
 | `/apps/{slug}/tasks/{task_id}` | GET | ✓ Live — task poll |
-| `/apps/{slug}/ws` | WebSocket | ✓ Live — streaming chat entry point |
-| `/apps/{slug}/sse` | GET (SSE) | ✓ Live — SSE streaming entry point (text/event-stream) |
+| `/apps/{slug}/ws` | WebSocket | ✓ Live — streaming chat |
+| `/apps/{slug}/sse` | GET (SSE) | ✓ Live — SSE streaming |
 
 ## Frontend Pages (live, http://localhost:8088)
 
@@ -100,17 +111,15 @@
 | Run History | `/runs` | ✓ |
 | Orchestrators | `/admin/orchestrators` | ✓ |
 | Access Tokens | `/admin/tokens` | ✓ |
-| Playground | `/admin/playground` | ✓ — chat + debug tabs (Trace, Tasks, Artifacts, Memory) |
+| Playground | `/admin/playground` | ✓ — chat + debug tabs (Trace, Tasks, Artifacts, Memory, Sessions) + session resume |
 
 ## Open Items
 
 - **`vision-agent` unhealthy**: needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` set in `.env`. Not blocking anything else.
 - **Git hooks not wired**: test runner exists (`python scripts/tests/run_tests.py`) but no pre-push hook. Planned as GitHub Actions.
-- **Replica 2**: compose profile `replica`, not running by default. Enable with `--profile replica`.
-- **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs → run INSERT fails. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
-- **Mock agents removed**: `mock-agent-assistant`, `mock-agent-researcher`, `mock-agent-coder` disabled in DB and stopped. Only real A2A agents remain.
-- **RestEdge / VoiceEdge real implementations**: planned next — see Open Items below.
+- **Replica 2**: compose profile `replica`. Enable with `--profile replica`. Bridge is fully stateless via Temporal — safe to run N replicas.
+- **DB reset trap**: if Postgres is wiped but Redis survives, orchestrator cache holds stale FK IDs. After any DB wipe: re-run DB init steps from CLAUDE.md, then recreate orchestrators via UI to refresh Redis cache.
+- **Legacy task_runner / orchestrator_service**: `task_runner.py` and `orchestrator_service.py` in-RAM loop are no longer reachable from `ws_orchestrator.py` (Temporal is hardcoded). Pending cleanup — safe to delete once Temporal is proven stable.
+- **User management UI**: no frontend for managing auth_service users/teams. Admin only via psql or curl.
 - **WebRTCEdge**: planned future phase — real-time audio, needs ASR + TTS + signaling server.
-- **Multi-turn chat**: implemented — `task_runner.py` loads prior turns via `_load_context_history()` and prepends to LLM context. Frontend already threads `context_id`. Works across reconnects.
-- **User management UI**: no frontend for managing auth_service users/teams.
-- **`tool_done` latency_ms hardcoded 0**: `task_runner.py` line ~795 yields `latency_ms: 0` for all tool_done WS events. Real latency is computed in `_invoke_agent` but not returned to the loop. Minor — dashboard shows 0ms for all agent calls.
+- **Debate stack ANTHROPIC_API_KEY**: debate agents read `ANTHROPIC_API_KEY` from `.env`. Must be set and non-empty or debate runs will fail on agent invocation.
