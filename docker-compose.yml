@@ -565,6 +565,132 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ============================================================
+  # Temporal — durable execution runtime (profile: temporal)
+  # Enable with: docker compose --profile temporal up -d
+  # ============================================================
+
+  temporal-frontend:
+    image: temporalio/auto-setup:1.25.2
+    container_name: temporal-frontend
+    profiles: [temporal]
+    expose:
+      - "7233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=${THE_M_DB_USER:-them}
+      - POSTGRES_PWD=${THE_M_DB_PASSWORD:-them_secret}
+      - POSTGRES_SEEDS=them-postgres
+      - DBNAME=temporal
+      - VISIBILITY_DBNAME=temporal_visibility
+      - LOG_LEVEL=warn
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "temporal", "workflow", "list", "--address", "localhost:7233", "--namespace", "default"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    container_name: temporal-ui
+    profiles: [temporal]
+    ports:
+      - "127.0.0.1:3111:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal-frontend:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3111
+    networks:
+      - them-network
+    depends_on:
+      - temporal-frontend
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  temporal-admin-tools:
+    image: temporalio/admin-tools:latest
+    container_name: temporal-admin-tools
+    profiles: [temporal]
+    entrypoint: ["sleep", "infinity"]
+    environment:
+      - TEMPORAL_ADDRESS=temporal-frontend:7233
+      - TEMPORAL_CLI_ADDRESS=temporal-frontend:7233
+    networks:
+      - them-network
+    depends_on:
+      - temporal-frontend
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  them-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: them-worker
+    profiles: [temporal]
+    volumes:
+      - .:/app
+      - ./data/them-logs:/app/logs
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_HOST: "them-postgres"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "them"
+      DATABASE_USER: ${THE_M_DB_USER:-them}
+      DATABASE_PASSWORD: ${THE_M_DB_PASSWORD:-them_secret}
+      REDIS_HOST: "them-redis"
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      REDIS_ENABLED: "true"
+      REDIS_SSL: "false"
+      AUTH_SERVICE_URL: "http://them-auth-service:8701"
+      SECRET_KEY: ${THE_M_SECRET_KEY:-change-this-secret-key}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: "json"
+      TEMPORAL_ENABLED: "true"
+      TEMPORAL_HOST: "temporal-frontend:7233"
+      TEMPORAL_NAMESPACE: "default"
+      TEMPORAL_TASK_QUEUE: "them-orchestration"
+    networks:
+      - them-network
+    depends_on:
+      them-postgres:
+        condition: service_healthy
+      them-redis:
+        condition: service_healthy
+      them-auth-service:
+        condition: service_healthy
+      temporal-frontend:
+        condition: service_started
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "10"
+
   # ── Vision Agent — Location Visualizer ──────────────────────────────────────
   vision-agent:
     build:

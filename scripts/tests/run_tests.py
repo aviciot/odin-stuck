@@ -831,6 +831,21 @@ def test_15_compose_health():
     s = http_status("them-bridge", "/health/live", 8701, host="them-auth-service")
     check("Bridge → them-auth-service HTTP", s == "200", f"got {s}")
 
+    print()
+    print("── Temporal containers (optional — skip if profile not running)")
+    temporal_containers = ["temporal-frontend", "them-worker"]
+    for name in temporal_containers:
+        status = docker("inspect", "--format={{.State.Status}}", name).strip()
+        if status == "running":
+            check(f"Container {name} running", True)
+            # Check them-worker can reach temporal-frontend TCP
+            if name == "them-worker":
+                tc = dexec("them-worker", "python3", "-c",
+                           "import socket; s=socket.create_connection(('temporal-frontend',7233),5); s.close(); print('ok')")
+                check("Worker → temporal-frontend (TCP)", tc.strip() == "ok")
+        else:
+            skip(f"Container {name} not running (start with --profile temporal)")
+
 # ─── test 16: A2A agent structure ────────────────────────────────────────────
 
 def test_16_a2a_agents():

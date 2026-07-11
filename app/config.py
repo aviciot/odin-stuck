@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_MODEL: str = "gpt-4o-mini"
 
+    # Temporal durable execution runtime
+    TEMPORAL_ENABLED: bool = False
+    TEMPORAL_HOST: str = "temporal-frontend:7233"
+    TEMPORAL_NAMESPACE: str = "default"
+    TEMPORAL_TASK_QUEUE: str = "them-orchestration"
+
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
