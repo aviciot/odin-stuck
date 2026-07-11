@@ -65,43 +65,103 @@ interface EntryPointData { label: string; epType: EntryPointType; accessMode: 't
 interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
 interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; [key: string]: unknown; }
 
+// ── Change 1: CSS animations + font inheritance ───────────────────────────────
+const CANVAS_STYLES = `
+  @keyframes handlePulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,240,255,0.4); }
+    50% { box-shadow: 0 0 0 5px rgba(0,240,255,0); }
+  }
+  .react-flow__node.selected .react-flow__handle {
+    animation: handlePulse 1.2s ease-in-out infinite;
+  }
+  .react-flow__node * {
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+`;
+
 // ── Node Components ──────────────────────────────────────────────────────────
+// Change 2: EntryPointNode with inline SVG icon + font fixes + hover animation
 function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: boolean }) {
-  const icon = data.epType === 'sse' ? 'stream' : 'settings_input_component';
   return (
-    <div style={{
-      minWidth: 160, padding: '14px 18px', borderRadius: 12,
-      background: C.cyanBg, border: `1px solid ${selected ? C.cyan : C.cyanBorder}`,
-      boxShadow: selected ? `0 0 20px rgba(0,240,255,0.3)` : C.cyanGlow,
-      fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.15s',
-    }}>
+    <div
+      style={{
+        minWidth: 160, width: 'fit-content', padding: '14px 18px', borderRadius: 12,
+        background: C.cyanBg, border: `1px solid ${selected ? C.cyan : C.cyanBorder}`,
+        boxShadow: selected ? '0 0 20px rgba(0,240,255,0.3)' : C.cyanGlow,
+        fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
+        transformOrigin: 'center',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.transform = 'scale(1.03)';
+        e.currentTarget.style.boxShadow = '0 0 28px rgba(0,240,255,0.35)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = 'scale(1)';
+        e.currentTarget.style.boxShadow = selected ? '0 0 20px rgba(0,240,255,0.3)' : C.cyanGlow;
+      }}
+    >
       <Handle type="source" position={Position.Bottom} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="material-icons" style={{ fontSize: 22, color: C.cyan }}>{icon}</span>
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(0,240,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          {data.epType === 'sse' ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.cyan} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.cyan} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+            </svg>
+          )}
+        </div>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{data.label || (data.epType === 'sse' ? 'SSE' : 'WebSocket')}</div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: C.cyan, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 }}>Entry Point</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: 'Inter, sans-serif' }}>
+            {data.label || (data.epType === 'sse' ? 'SSE' : 'WebSocket')}
+          </div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.cyan, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2, fontFamily: 'Inter, sans-serif' }}>
+            Entry Point
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
+// Change 3: OrchestratorNode with inline SVG icon + font fixes + hover animation
 function OrchestratorNode({ data, selected }: { data: OrchestratorData; selected?: boolean }) {
   return (
-    <div style={{
-      minWidth: 200, padding: '16px 20px', borderRadius: 12,
-      background: C.purpleBg, border: `2px solid ${selected ? '#e8d5ff' : C.purpleBorder}`,
-      boxShadow: selected ? `0 0 24px rgba(208,188,255,0.4)` : C.purpleGlow,
-      fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.15s',
-    }}>
+    <div
+      style={{
+        minWidth: 200, width: 'fit-content', padding: '16px 20px', borderRadius: 12,
+        background: C.purpleBg, border: `2px solid ${selected ? '#e8d5ff' : C.purpleBorder}`,
+        boxShadow: selected ? '0 0 24px rgba(208,188,255,0.4)' : C.purpleGlow,
+        fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
+        transformOrigin: 'center',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.transform = 'scale(1.03)';
+        e.currentTarget.style.boxShadow = '0 0 32px rgba(208,188,255,0.45)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = 'scale(1)';
+        e.currentTarget.style.boxShadow = selected ? '0 0 24px rgba(208,188,255,0.4)' : C.purpleGlow;
+      }}
+    >
       <Handle type="target" position={Position.Top} style={{ background: C.purple, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <Handle type="source" position={Position.Bottom} style={{ background: C.purple, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="material-icons" style={{ fontSize: 22, color: C.purple }}>hub</span>
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(208,188,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.purple} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 20h20"/>
+            <path d="M5 20l2-8 5 4 5-4 2 8"/>
+            <circle cx="12" cy="4" r="2" fill={C.purple}/>
+          </svg>
+        </div>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{data.displayName}</div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: C.purple, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 }}>Orchestrator</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: 'Inter, sans-serif' }}>{data.displayName}</div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.purple, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2, fontFamily: 'Inter, sans-serif' }}>
+            Orchestrator
+          </div>
         </div>
       </div>
       {data.model && (
@@ -113,22 +173,46 @@ function OrchestratorNode({ data, selected }: { data: OrchestratorData; selected
   );
 }
 
+// Change 4: AgentNode with inline SVG icon + font fixes + hover animation
 function AgentNode({ data, selected }: { data: AgentData; selected?: boolean }) {
   return (
-    <div style={{
-      minWidth: 160, maxWidth: 220, padding: '12px 16px', borderRadius: 12,
-      background: C.greenBg, border: `1px solid ${selected ? C.green : C.greenBorder}`,
-      boxShadow: selected ? `0 0 20px rgba(74,222,128,0.25)` : `0 0 10px rgba(74,222,128,0.08)`,
-      fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.15s',
-    }}>
+    <div
+      style={{
+        minWidth: 160, maxWidth: 220, width: 'fit-content', padding: '12px 16px', borderRadius: 12,
+        background: C.greenBg, border: `1px solid ${selected ? C.green : C.greenBorder}`,
+        boxShadow: selected ? '0 0 20px rgba(74,222,128,0.25)' : '0 0 10px rgba(74,222,128,0.08)',
+        fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
+        transformOrigin: 'center',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.transform = 'scale(1.03)';
+        e.currentTarget.style.boxShadow = '0 0 24px rgba(74,222,128,0.3)';
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = 'scale(1)';
+        e.currentTarget.style.boxShadow = selected ? '0 0 20px rgba(74,222,128,0.25)' : '0 0 10px rgba(74,222,128,0.08)';
+      }}
+    >
       <Handle type="target" position={Position.Top} style={{ background: C.green, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <span className="material-icons" style={{ fontSize: 18, color: C.green, marginTop: 1, flexShrink: 0 }}>smart_toy</span>
+        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(74,222,128,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.green} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="7" y="7" width="10" height="12" rx="2"/>
+            <path d="M10 7V5a2 2 0 0 1 4 0v2"/>
+            <circle cx="10.5" cy="12" r="1" fill={C.green}/>
+            <circle cx="13.5" cy="12" r="1" fill={C.green}/>
+            <path d="M10 15.5h4"/>
+          </svg>
+        </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.displayName}</div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: C.green, letterSpacing: 1, textTransform: 'uppercase', marginTop: 1 }}>Agent</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'Inter, sans-serif' }}>
+            {data.displayName}
+          </div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.green, letterSpacing: 1, textTransform: 'uppercase', marginTop: 1, fontFamily: 'Inter, sans-serif' }}>
+            Agent
+          </div>
           {data.description && (
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', fontFamily: 'Inter, sans-serif' }}>
               {data.description}
             </div>
           )}
@@ -493,6 +577,7 @@ function PropertiesPanel({
 }
 
 // ── Canvas inner (needs ReactFlow context) ────────────────────────────────────
+// Change 5: inject styles + replace toolbar with slider + icon buttons
 function CanvasInner({
   nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode,
 }: {
@@ -507,28 +592,83 @@ function CanvasInner({
   setSelectedNode: (n: Node | null) => void;
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
 }) {
-  const { fitView, zoomIn, zoomOut, getZoom } = useReactFlow();
+  const { fitView, zoomIn, zoomOut, getZoom, setViewport, getViewport } = useReactFlow();
+  const [zoom, setZoom] = useState(100);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setZoom(Math.round(getZoom() * 100));
+    }, 250);
+    return () => clearInterval(id);
+  }, [getZoom]);
+
+  function handleSliderChange(v: number) {
+    setZoom(v);
+    const vp = getViewport();
+    setViewport({ ...vp, zoom: v / 100 });
+  }
+
+  const iconBtn: React.CSSProperties = {
+    width: 30, height: 30, borderRadius: 6, border: 'none', cursor: 'pointer',
+    background: 'transparent', color: C.textMuted, display: 'flex', alignItems: 'center',
+    justifyContent: 'center', transition: 'all 0.15s', flexShrink: 0,
+  };
 
   return (
     <div style={{ flex: 1, position: 'relative', height: '100%' }}>
+      <style>{CANVAS_STYLES}</style>
       {/* Canvas toolbar */}
       <div style={{
         position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
         zIndex: 10, display: 'flex', alignItems: 'center', gap: 4,
         ...glass, borderRadius: 10, padding: '5px 10px',
       }}>
-        <button onClick={() => zoomOut()} style={{ ...toolBtnStyle }}>
-          <span className="material-icons" style={{ fontSize: 16 }}>remove</span>
+        <button
+          onClick={() => { zoomOut(); }}
+          title="Zoom out"
+          style={iconBtn}
+          onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
         </button>
-        <span style={{ fontSize: 12, color: C.textMuted, minWidth: 44, textAlign: 'center', fontFamily: 'JetBrains Mono, monospace' }}>
-          {Math.round(getZoom() * 100)}%
+        <input
+          type="range" min={10} max={200} step={10} value={zoom}
+          onChange={e => handleSliderChange(Number(e.target.value))}
+          title="Zoom level"
+          style={{ width: 72, accentColor: C.cyan, cursor: 'pointer', margin: '0 2px' }}
+        />
+        <span style={{ fontSize: 11, color: C.textMuted, minWidth: 36, textAlign: 'center', fontFamily: 'JetBrains Mono, monospace' }}>
+          {zoom}%
         </span>
-        <button onClick={() => zoomIn()} style={{ ...toolBtnStyle }}>
-          <span className="material-icons" style={{ fontSize: 16 }}>add</span>
+        <button
+          onClick={() => { zoomIn(); }}
+          title="Zoom in"
+          style={iconBtn}
+          onMouseEnter={e => (e.currentTarget.style.color = C.text)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
         </button>
         <div style={{ width: 1, height: 18, background: C.outlineVariant, margin: '0 4px' }} />
-        <button onClick={() => fitView({ padding: 0.15 })} style={{ ...toolBtnStyle }}>
-          <span className="material-icons" style={{ fontSize: 16 }}>fit_screen</span>
+        <button
+          onClick={() => fitView({ padding: 0.15 })}
+          title="Fit to screen"
+          style={iconBtn}
+          onMouseEnter={e => (e.currentTarget.style.color = C.cyan)}
+          onMouseLeave={e => (e.currentTarget.style.color = C.textMuted)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 3 21 3 21 9"/>
+            <polyline points="9 21 3 21 3 15"/>
+            <line x1="21" y1="3" x2="14" y2="10"/>
+            <line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
         </button>
       </div>
 
@@ -776,6 +916,7 @@ function BuilderView({
 }
 
 // ── List view ─────────────────────────────────────────────────────────────────
+// Change 6: card grid layout + URLs modal
 function ListView({
   list, orchestrators, loading, onNew, onEdit, onToggle, onDelete,
 }: {
@@ -787,7 +928,7 @@ function ListView({
   onToggle: (app: Application) => void;
   onDelete: (app: Application) => void;
 }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [urlModalApp, setUrlModalApp] = useState<Application | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   function copy(val: string, id: string) {
@@ -799,6 +940,15 @@ function ListView({
   const EP_ICON: Record<string, string> = { websocket: 'settings_input_component', sse: 'stream', webrtc: 'videocam' };
   const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC' };
 
+  function EPBadge({ type }: { type: string }) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: 'rgba(0,240,255,0.08)', color: C.cyan, border: '1px solid rgba(0,240,255,0.2)', fontFamily: 'Inter, sans-serif' }}>
+        <span className="material-icons" style={{ fontSize: 11 }}>{EP_ICON[type] ?? 'extension'}</span>
+        {EP_LABEL[type] ?? type}
+      </span>
+    );
+  }
+
   return (
     <div style={{ marginLeft: 260, minHeight: '100vh', background: C.bg, padding: '36px 48px' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 32 }}>
@@ -806,7 +956,7 @@ function ListView({
           <h1 style={{ fontSize: 26, fontWeight: 700, color: C.text, margin: 0, fontFamily: 'Geist, sans-serif', letterSpacing: -0.5 }}>
             Applications
           </h1>
-          <p style={{ fontSize: 13, color: C.textMuted, margin: '6px 0 0' }}>
+          <p style={{ fontSize: 13, color: C.textMuted, margin: '6px 0 0', fontFamily: 'Inter, sans-serif' }}>
             Compose orchestrators and entry points into deployable agentic applications.
           </p>
         </div>
@@ -815,7 +965,8 @@ function ListView({
           style={{
             padding: '10px 22px', borderRadius: 10, border: 'none', cursor: 'pointer',
             background: C.cyan, color: '#00363a', fontWeight: 700, fontSize: 14,
-            boxShadow: `0 0 14px rgba(0,240,255,0.3)`, display: 'flex', alignItems: 'center', gap: 6,
+            boxShadow: '0 0 14px rgba(0,240,255,0.3)', display: 'flex', alignItems: 'center', gap: 6,
+            fontFamily: 'Inter, sans-serif',
           }}
         >
           <span className="material-icons" style={{ fontSize: 18 }}>add</span>
@@ -824,130 +975,156 @@ function ListView({
       </div>
 
       {loading ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: C.textMuted, padding: '40px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: C.textMuted, padding: '40px 0', fontFamily: 'Inter, sans-serif' }}>
           <span className="material-icons" style={{ fontSize: 18, animation: 'spin 1s linear infinite' }}>autorenew</span>
           Loading…
         </div>
       ) : list.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '80px 0', color: C.textMuted }}>
           <span className="material-icons" style={{ fontSize: 56, marginBottom: 16, opacity: 0.25, display: 'block' }}>apps</span>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: C.text }}>No applications yet</div>
-          <div style={{ fontSize: 13 }}>Create one to expose an orchestrator as a shareable endpoint.</div>
-          <button onClick={onNew} style={{ marginTop: 24, padding: '10px 22px', borderRadius: 10, border: 'none', cursor: 'pointer', background: C.cyan, color: '#00363a', fontWeight: 700, fontSize: 14, boxShadow: `0 0 14px rgba(0,240,255,0.3)` }}>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: C.text, fontFamily: 'Geist, sans-serif' }}>No applications yet</div>
+          <div style={{ fontSize: 13, fontFamily: 'Inter, sans-serif' }}>Create one to expose an orchestrator as a shareable endpoint.</div>
+          <button onClick={onNew} style={{ marginTop: 24, padding: '10px 22px', borderRadius: 10, border: 'none', cursor: 'pointer', background: C.cyan, color: '#00363a', fontWeight: 700, fontSize: 14, boxShadow: '0 0 14px rgba(0,240,255,0.3)', fontFamily: 'Inter, sans-serif' }}>
             + New Application
           </button>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 20 }}>
           {list.map(app => (
-            <div key={app.id} style={{
-              ...glass, borderRadius: 14, overflow: 'hidden',
-              borderLeft: `3px solid ${app.enabled ? C.cyan : C.outlineVariant}`,
-              transition: 'box-shadow 0.2s',
-            }}>
-              {/* Main row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 18, padding: '18px 22px' }}>
-                <div style={{
-                  width: 42, height: 42, borderRadius: 10, flexShrink: 0,
-                  background: `rgba(0,240,255,0.08)`, border: `1px solid ${C.cyanBorder}`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <span className="material-icons" style={{ fontSize: 20, color: C.cyan }}>
-                    {EP_ICON[app.entry_point_type] ?? 'extension'}
+            <div key={app.id}
+              style={{
+                ...glass, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+                borderTop: `3px solid ${app.enabled ? C.cyan : C.outlineVariant}`,
+                transition: 'box-shadow 0.2s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.boxShadow = app.enabled ? '0 0 20px rgba(0,240,255,0.12)' : '0 4px 20px rgba(0,0,0,0.3)')}
+              onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
+            >
+              {/* Card body */}
+              <div style={{ padding: '20px 20px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {/* Icon + name row */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+                  <div style={{
+                    width: 44, height: 44, borderRadius: 10, flexShrink: 0,
+                    background: 'rgba(0,240,255,0.08)', border: `1px solid ${C.cyanBorder}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <span className="material-icons" style={{ fontSize: 22, color: C.cyan }}>
+                      {EP_ICON[app.entry_point_type] ?? 'extension'}
+                    </span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 16, color: C.text, fontFamily: 'Geist, sans-serif', marginBottom: 4 }}>{app.name}</div>
+                    <code style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', padding: '2px 7px', background: C.surfaceLow, borderRadius: 5 }}>{app.slug}</code>
+                  </div>
+                </div>
+
+                {/* Badges */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  <EPBadge type={app.entry_point_type} />
+                  <span style={{
+                    padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: 'Inter, sans-serif',
+                    background: app.enabled ? 'rgba(74,222,128,0.1)' : 'rgba(255,180,171,0.1)',
+                    color: app.enabled ? C.green : C.error,
+                    border: `1px solid ${app.enabled ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
+                    boxShadow: app.enabled ? '0 0 8px rgba(74,222,128,0.15)' : 'none',
+                  }}>
+                    {app.enabled ? 'enabled' : 'disabled'}
                   </span>
                 </div>
 
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 700, fontSize: 16, color: C.text, fontFamily: 'Geist, sans-serif' }}>{app.name}</span>
-                    <code style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', padding: '2px 7px', background: C.surfaceLow, borderRadius: 5 }}>{app.slug}</code>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: 'rgba(0,240,255,0.08)', color: C.cyan, border: `1px solid rgba(0,240,255,0.2)` }}>
-                      <span className="material-icons" style={{ fontSize: 12 }}>{EP_ICON[app.entry_point_type] ?? 'extension'}</span>
-                      {EP_LABEL[app.entry_point_type] ?? app.entry_point_type}
-                    </span>
-                    <span style={{
-                      padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700,
-                      background: app.enabled ? 'rgba(74,222,128,0.1)' : 'rgba(255,180,171,0.1)',
-                      color: app.enabled ? C.green : C.error,
-                      border: `1px solid ${app.enabled ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
-                      boxShadow: app.enabled ? `0 0 8px rgba(74,222,128,0.15)` : 'none',
-                    }}>
-                      {app.enabled ? 'enabled' : 'disabled'}
-                    </span>
+                {/* Orchestrator info */}
+                {app.orchestrator_name && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="material-icons" style={{ fontSize: 13, color: C.purple }}>hub</span>
+                    <span style={{ fontSize: 12, color: C.textMuted, fontFamily: 'Inter, sans-serif' }}>{app.orchestrator_name}</span>
+                    <span style={{ fontSize: 12, color: C.outlineVariant }}>·</span>
+                    <span style={{ fontSize: 12, color: C.textMuted, fontFamily: 'Inter, sans-serif' }}>access: {(app.access_policy as any)?.mode ?? 'token'}</span>
                   </div>
-                  {app.orchestrator_name && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
-                      <span className="material-icons" style={{ fontSize: 13, color: C.purple }}>hub</span>
-                      <span style={{ fontSize: 12, color: C.textMuted }}>{app.orchestrator_name}</span>
-                      <span style={{ fontSize: 12, color: C.outlineVariant }}>·</span>
-                      <span style={{ fontSize: 12, color: C.textMuted }}>access: {(app.access_policy as any)?.mode ?? 'token'}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                  <button
-                    onClick={() => setExpandedId(expandedId === app.id ? null : app.id)}
-                    style={{ ...ghostBtn, color: C.textMuted }}
-                  >
-                    <span className="material-icons" style={{ fontSize: 14 }}>link</span>
-                    URLs
-                  </button>
-                  <button
-                    onClick={() => onToggle(app)}
-                    style={{ ...ghostBtn, color: app.enabled ? C.error : C.green }}
-                  >
-                    {app.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                  <button
-                    onClick={() => onEdit(app)}
-                    style={{ ...ghostBtn, color: C.cyan, borderColor: C.cyanBorder, background: 'rgba(0,240,255,0.05)' }}
-                  >
-                    <span className="material-icons" style={{ fontSize: 14 }}>edit</span>
-                    Open Builder
-                  </button>
-                  <button
-                    onClick={() => onDelete(app)}
-                    style={{ ...ghostBtn, color: C.error, borderColor: 'rgba(255,180,171,0.3)', background: C.errorBg }}
-                  >
-                    <span className="material-icons" style={{ fontSize: 14 }}>delete</span>
-                  </button>
-                </div>
+                )}
               </div>
 
-              {/* Expanded URLs */}
-              {expandedId === app.id && (
-                <div style={{ borderTop: `1px solid ${C.glassBorder}`, padding: '16px 22px', background: C.surfaceLow }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12 }}>
-                    Entry Point URLs
-                  </div>
-                  {(() => {
-                    const urls: Array<{ label: string; val: string }> = [];
-                    if (app.entry_point_type === 'websocket') urls.push({ label: 'WebSocket', val: `ws://<host>:8088/apps/${app.slug}/ws` });
-                    if (app.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${app.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${app.slug}` });
-                    if (app.entry_point_type === 'webrtc') urls.push({ label: 'WebRTC (coming soon)', val: `ws://<host>:8088/apps/${app.slug}/ws` });
-                    return urls.map(({ label, val }) => {
-                      const cid = `${app.id}_${label}`;
-                      return (
-                        <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                          <span style={{ fontSize: 11, color: C.textMuted, minWidth: 100 }}>{label}</span>
-                          <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.text, background: C.surfaceContainer, padding: '4px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}` }}>{val}</code>
-                          <button onClick={() => copy(val, cid)} style={{ ...ghostBtn, fontSize: 11, padding: '4px 12px', color: copiedId === cid ? C.green : C.textMuted }}>
-                            {copiedId === cid ? 'Copied!' : 'Copy'}
-                          </button>
-                        </div>
-                      );
-                    });
-                  })()}
-                  <div style={{ marginTop: 10, fontSize: 11, color: C.textMuted }}>
-                    {(app.access_policy as any)?.mode === 'public'
-                      ? 'No auth required — public access'
-                      : 'Bearer token required — use /admin/tokens to create one'}
-                  </div>
-                </div>
-              )}
+              {/* Action strip */}
+              <div style={{ borderTop: `1px solid ${C.glassBorder}`, padding: '10px 14px', display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setUrlModalApp(app)}
+                  title="View entry point URLs"
+                  style={{ ...ghostBtn, color: C.textMuted, padding: '6px 10px' }}
+                >
+                  <span className="material-icons" style={{ fontSize: 14 }}>link</span>
+                  URLs
+                </button>
+                <button
+                  onClick={() => onToggle(app)}
+                  title={app.enabled ? 'Disable application' : 'Enable application'}
+                  style={{ ...ghostBtn, color: app.enabled ? C.error : C.green, padding: '6px 10px' }}
+                >
+                  <span className="material-icons" style={{ fontSize: 14 }}>{app.enabled ? 'toggle_on' : 'toggle_off'}</span>
+                </button>
+                <button
+                  onClick={() => onEdit(app)}
+                  title="Open in canvas builder"
+                  style={{ ...ghostBtn, color: C.cyan, borderColor: C.cyanBorder, background: 'rgba(0,240,255,0.05)', padding: '6px 10px' }}
+                >
+                  <span className="material-icons" style={{ fontSize: 14 }}>edit</span>
+                  Builder
+                </button>
+                <button
+                  onClick={() => onDelete(app)}
+                  title="Delete application"
+                  style={{ ...ghostBtn, color: C.error, borderColor: 'rgba(255,180,171,0.3)', background: C.errorBg, padding: '6px 10px' }}
+                >
+                  <span className="material-icons" style={{ fontSize: 14 }}>delete</span>
+                </button>
+              </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* URL Modal */}
+      {urlModalApp && (
+        <div
+          style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(5,20,36,0.85)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setUrlModalApp(null)}
+        >
+          <div
+            style={{ ...glass, borderRadius: 16, padding: '28px 32px', minWidth: 480, maxWidth: 600, position: 'relative' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: 'Geist, sans-serif' }}>
+                Entry Point URLs — {urlModalApp.name}
+              </div>
+              <button onClick={() => setUrlModalApp(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center' }}>
+                <span className="material-icons" style={{ fontSize: 20 }}>close</span>
+              </button>
+            </div>
+            {(() => {
+              const app = urlModalApp;
+              const urls: Array<{ label: string; val: string }> = [];
+              if (app.entry_point_type === 'websocket') urls.push({ label: 'WebSocket', val: `ws://<host>:8088/apps/${app.slug}/ws` });
+              if (app.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${app.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${app.slug}` });
+              if (app.entry_point_type === 'webrtc') urls.push({ label: 'WebRTC (soon)', val: `ws://<host>:8088/apps/${app.slug}/ws` });
+              return urls.map(({ label, val }) => {
+                const cid = `${app.id}_${label}`;
+                return (
+                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, color: C.textMuted, minWidth: 100, fontFamily: 'Inter, sans-serif' }}>{label}</span>
+                    <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.text, background: C.surfaceContainer, padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val}</code>
+                    <button onClick={() => copy(val, cid)} style={{ ...ghostBtn, fontSize: 11, padding: '4px 12px', color: copiedId === cid ? C.green : C.textMuted }}>
+                      {copiedId === cid ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                );
+              });
+            })()}
+            <div style={{ marginTop: 14, fontSize: 11, color: C.textMuted, fontFamily: 'Inter, sans-serif' }}>
+              {(urlModalApp.access_policy as any)?.mode === 'public'
+                ? 'No auth required — public access'
+                : 'Bearer token required — use /admin/tokens to create one'}
+            </div>
+          </div>
         </div>
       )}
     </div>
