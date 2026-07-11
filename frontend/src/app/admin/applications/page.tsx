@@ -818,7 +818,7 @@ function BuilderView({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, overflow: 'hidden' }}>
       {/* Top bar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 16, padding: '0 24px', height: 56, flexShrink: 0,
@@ -1185,7 +1185,7 @@ export default function ApplicationsPage() {
       <AuthGuard>
         <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
           <Sidebar />
-          <div style={{ flex: 1 }}>
+          <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
             <ReactFlowProvider>
               <BuilderView
                 app={editApp}
