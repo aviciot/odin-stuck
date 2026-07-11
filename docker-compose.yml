@@ -607,11 +607,22 @@ services:
     image: temporalio/ui:2.31.2
     container_name: temporal-ui
     profiles: [temporal]
-    ports:
-      - "127.0.0.1:3111:8080"
+    expose:
+      - "8080"
     environment:
       - TEMPORAL_ADDRESS=temporal-frontend:7233
       - TEMPORAL_CORS_ORIGINS=http://localhost:3111
+      - TEMPORAL_UI_PUBLIC_PATH=/temporal
+      - TEMPORAL_CSRF_COOKIE_INSECURE=true
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-temporal-ui.rule=PathPrefix(`/temporal`)"
+      - "traefik.http.routers.them-temporal-ui.entrypoints=web"
+      - "traefik.http.routers.them-temporal-ui.priority=150"
+      - "traefik.http.routers.them-temporal-ui.service=them-temporal-ui-svc"
+      - "traefik.http.services.them-temporal-ui-svc.loadbalancer.server.port=8080"
     networks:
       - them-network
     depends_on:

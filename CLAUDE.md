@@ -326,4 +326,4 @@ DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
 - **Frontend URL:** http://localhost:8088
 - **Bridge API (direct, internal):** http://localhost:8001 — use http://localhost:8088 from browser
 - **Traefik dashboard:** http://localhost:8089
-- **Temporal UI:** http://localhost:3111 (requires `--profile temporal`)
+- **Temporal UI:** http://10.55.125.43:8088/temporal/ — proxied through Traefik at `/temporal/` (requires `--profile temporal`)

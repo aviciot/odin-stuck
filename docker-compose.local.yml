@@ -39,6 +39,17 @@ services:
       - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.interval=10s"
       - "traefik.http.services.them-bridge-svc.loadbalancer.healthcheck.timeout=3s"
 
+  temporal-ui:
+    labels:
+      - "traefik.enable=true"
+      - "traefik-instance=them"
+      - "traefik.docker.network=them-network"
+      - "traefik.http.routers.them-temporal-ui.rule=PathPrefix(`/temporal`)"
+      - "traefik.http.routers.them-temporal-ui.entrypoints=web"
+      - "traefik.http.routers.them-temporal-ui.priority=150"
+      - "traefik.http.routers.them-temporal-ui.service=them-temporal-ui-svc"
+      - "traefik.http.services.them-temporal-ui-svc.loadbalancer.server.port=8080"
+
   them-frontend:
     environment:
       NODE_ENV: development
