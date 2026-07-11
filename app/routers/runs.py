@@ -319,6 +319,80 @@ async def cancel_run(
     return _run_to_out(row)
 
 
+# Temporal feature flag — read once at import time
+def _temporal_enabled() -> bool:
+    try:
+        from app.config import Settings
+        return Settings().TEMPORAL_ENABLED
+    except Exception:
+        return False
+
+_TEMPORAL_ENABLED = _temporal_enabled()
+
+
+class SignalPayload(BaseModel):
+    type: str                       # "human_response"
+    content: Optional[str] = None   # user's response text
+    approved: Optional[bool] = None # approval flag for approval gates
+
+
+@router.post("/{run_id}/signal", status_code=status.HTTP_202_ACCEPTED)
+async def signal_run(
+    run_id: uuid.UUID,
+    payload: SignalPayload,
+    user: dict = Depends(require_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Send a signal to a running Temporal workflow (e.g. human_response for HITL).
+    Only valid when TEMPORAL_ENABLED=true and the run is still in 'running' state.
+    """
+    if not _TEMPORAL_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Temporal not enabled — signal endpoint unavailable",
+        )
+
+    row = await _load_run_authorized(run_id, user, db)
+    if row.status != "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run is not running (status: {row.status})",
+        )
+
+    # Find context_id via the root task linked to this run
+    root_task_result = await db.execute(
+        select(Task.context_id)
+        .where(Task.run_id == run_id, Task.kind == "root")
+        .limit(1)
+    )
+    context_id_row = root_task_result.scalar_one_or_none()
+    if context_id_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No root task found for this run",
+        )
+
+    workflow_id = f"ctx-{context_id_row}"
+
+    try:
+        from app.temporal.client import get_temporal_client
+        from app.temporal.workflows import OrchestrationWorkflow
+        client = await get_temporal_client()
+        handle = client.get_workflow_handle_for(OrchestrationWorkflow.run, workflow_id=workflow_id)
+        await handle.signal(
+            OrchestrationWorkflow.submit_human_response,
+            payload.model_dump(exclude_none=True),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to signal workflow: {exc}",
+        )
+
+    return {"workflow_id": workflow_id, "signal": payload.type, "status": "accepted"}
+
+
 # ------------------------------------------------------------------ #
 # Phase 6 — Task graph, artifacts, context inspector                  #
 # ------------------------------------------------------------------ #

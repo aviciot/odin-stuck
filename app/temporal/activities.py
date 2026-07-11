@@ -486,9 +486,26 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
         )
 
         try:
+            from app.temporal.serde import build_agent_tool_input
+            effective_input = build_agent_tool_input(
+                inp.tool_input, inp.input_schema, inp.injected_context
+            )
+            # Publish tool_start so the bridge/UI shows the agent being called
+            if db_module.redis_client is not None:
+                try:
+                    await db_module.redis_client.publish(
+                        f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
+                        json.dumps({
+                            "type": "tool_start",
+                            "tool": inp.tool_call_name,
+                            "input": inp.tool_input,
+                        }),
+                    )
+                except Exception:
+                    pass
             adapter = get_adapter(agent_proxy, context_id=inp.context_id)
             async for event in adapter.stream_invoke(
-                input=inp.tool_input,
+                input=effective_input,
                 timeout=float(inp.timeout_seconds),
             ):
                 if event.type == "token":
@@ -497,8 +514,25 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
                 elif event.type == "status" and event.state:
                     # Heartbeat with remote task state for Temporal Event History
                     activity.heartbeat({"state": event.state, "agent": inp.agent_slug})
-                    # Publish to bridge stream
                     elapsed = int((time.monotonic() - t0) * 1000)
+                    if event.input_required:
+                        # Surface input-required to the workflow so it can pause
+                        status = "input-required"
+                        if db_module.redis_client is not None:
+                            try:
+                                await db_module.redis_client.publish(
+                                    f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
+                                    json.dumps({
+                                        "type": "input_required",
+                                        "agent": inp.agent_slug,
+                                        "tool_call_id": inp.tool_call_id,
+                                        "elapsed_ms": elapsed,
+                                    }),
+                                )
+                            except Exception:
+                                pass
+                        break
+                    # Publish regular status to bridge stream
                     if db_module.redis_client is not None:
                         try:
                             await db_module.redis_client.publish(
@@ -595,6 +629,13 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
         except Exception:
             pass
 
+    if status == "input-required":
+        return InvokeAgentResult(
+            status="input-required",
+            result_text="",
+            file_parts=[],
+            latency_ms=latency_ms,
+        )
     if status == "failed":
         return InvokeAgentResult(
             status="failed",

@@ -1219,17 +1219,17 @@ def test_20_traefik():
     check("bridge: traefik.enable=true",      compose_src.count("traefik.enable=true") >= 2)
     check("bridge: them-bridge-svc defined",  compose_src.count("them-bridge-svc") >= 4)
     check("bridge-2: image reuse label",      "odin-them-bridge:latest" in compose_src)
-    check("sticky cookie them_lb",            "them_lb" in compose_src)
+    # Phase 6 cutover: sticky sessions removed (Temporal holds state, bridge is stateless)
+    check("no sticky cookie (Temporal stateless)", "sticky.cookie=true" not in compose_src)
     check("healthcheck path /health/live",    "healthcheck.path=/health/live" in compose_src)
     check("frontend: them-ui-svc defined",    "them-ui-svc" in compose_src)
 
-    # bridge-2 must have identical service labels to bridge-1 (no subset)
-    # Simple check: both sticky cookie blocks and healthcheck present in bridge-2 section
+    # bridge-2: healthcheck present (sticky cookie labels removed in Phase 6)
     b2_start = compose_src.find("them-bridge-2:")
     b2_end   = compose_src.find("\n  # Mock agents", b2_start)
     b2_block  = compose_src[b2_start:b2_end] if b2_start > 0 else ""
-    check("bridge-2: sticky cookie labels present",      "them_lb" in b2_block)
-    check("bridge-2: healthcheck labels present",         "healthcheck.path" in b2_block)
+    check("bridge-2: sticky cookie removed",          "them_lb" not in b2_block)
+    check("bridge-2: healthcheck labels present",     "healthcheck.path" in b2_block)
 
     local_src = src("docker-compose.local.yml")
     check("local: proxy-network defined",     "them-proxy-local" in local_src)
@@ -1327,52 +1327,26 @@ def test_20_traefik():
         check("traefik services parseable", False, str(e))
         check("them-bridge-svc registered", False, "parse failed")
 
-    # ── Live: sticky session cookie ───────────────────────────────────────────
+    # ── Live: no sticky cookie (Phase 6 — Temporal stateless bridge) ────────────
     print()
-    print("── Sticky sessions")
+    print("── Load balancing (no sticky session — bridge is stateless)")
 
-    # Use Python inside bridge to make HTTP calls that go through Traefik
-    # and inspect the Set-Cookie header
-    sticky_script = """
+    # Verify Traefik does NOT set a them_lb sticky cookie (removed in Phase 6 cutover)
+    no_sticky_script = """
 import asyncio, sys; sys.path.insert(0,'/app')
 import httpx, json
 
 async def t():
     async with httpx.AsyncClient(follow_redirects=True) as c:
-        # First request — no cookie
         r1 = await c.get('http://them-traefik:8088/health/live')
         cookie_hdr = r1.headers.get('set-cookie','')
         print('cookie:', cookie_hdr)
-        # Extract cookie value
-        import re
-        m = re.search(r'them_lb=([^;]+)', cookie_hdr)
-        if not m:
-            print('no_cookie')
-            return
-        cookie_val = m.group(1)
-        # 4 more requests with that cookie
-        ids = set()
-        for _ in range(4):
-            r2 = await c.get('http://them-traefik:8088/health/live',
-                             cookies={'them_lb': cookie_val})
-            try:
-                ids.add(r2.json().get('instance_id','?'))
-            except Exception:
-                pass
-        print('instances:', json.dumps(list(ids)))
+        print('no_lb_cookie' if 'them_lb' not in cookie_hdr else 'has_lb_cookie')
 
 asyncio.run(t())
 """
-    sticky_out = dexec("them-bridge", "python3", "-c", sticky_script)
-    check("them_lb cookie set on first request", "them_lb=" in sticky_out, sticky_out[:200])
-    import re as _re
-    m2 = _re.search(r'instances: (\[.*?\])', sticky_out)
-    if m2:
-        instances = json.loads(m2.group(1))
-        check("sticky cookie always hits same instance",
-              len(instances) == 1, f"hit instances: {instances}")
-    else:
-        skip("sticky cookie value extraction")
+    no_sticky_out = dexec("them-bridge", "python3", "-c", no_sticky_script)
+    check("no them_lb sticky cookie set", "no_lb_cookie" in no_sticky_out, no_sticky_out[:200])
 
     # ── Live: bridge instance_id in health response ───────────────────────────
     print()

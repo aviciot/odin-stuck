@@ -39,6 +39,7 @@
 | **Phase 10 — SSE edge** | ✓ Complete | `app/edges/sse_edge.py`: asyncio queue-backed streaming; `GET /apps/{slug}/sse` route; `entry_point_type` updated to `websocket\|sse\|webrtc`; DB migration 005_phase10.sql; test_19 + test_22 updated |
 | **Phase 11 — Multi-turn chat** | ✓ Complete | `task_runner.py`: user message saved as `task_message seq=0`; `_load_context_history()` loads prior root tasks' messages for `context_id`; prior history prepended to LLM messages each turn; `history_window` (default 20) limits turns loaded; test_10 updated |
 | **True A2A typed input** | ✓ Complete | `docu_writer`: typed data parts, no regex; adapter: `input_modes`-aware `_build_parts()`; factory: reads `input_modes` from agent skills; `task_runner`: `_OrchestratorProxy` dataclass, typed branch in `_run_one`, context as separate part; orchestrator prompt generic; test_25 (35 checks) |
+| **Temporal migration (all 7 phases)** | ✓ Complete | Durable orchestration via Temporal; OrchestrationWorkflow replaces task_runner.run(); bridge is stateless (no sticky sessions); HITL signal endpoint; context injection for typed/text agents; see `docs/architecture/PROGRESS.md` |
 
 ## Infrastructure (as of 2026-07-06)
 

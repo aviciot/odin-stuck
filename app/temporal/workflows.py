@@ -256,7 +256,38 @@ class OrchestrationWorkflow:
                     )
                     for tc in plan_result.tool_calls
                 ]
-                invoke_results = await asyncio.gather(*invoke_coros)
+                invoke_results: list[InvokeAgentResult] = list(await asyncio.gather(*invoke_coros))
+
+                # Handle input-required: pause and wait for human signal
+                input_required_results = [
+                    (tc, res)
+                    for tc, res in zip(plan_result.tool_calls, invoke_results)
+                    if res.status == "input-required"
+                ]
+                if input_required_results:
+                    # Wait up to 10 minutes for human response
+                    self._human_response = None
+                    await workflow.wait_condition(
+                        lambda: self._human_response is not None,
+                        timeout=timedelta(minutes=10),
+                    )
+                    if self._human_response is not None:
+                        # Inject human response as the tool result for input-required slots
+                        human_text = self._human_response.get("content", "")
+                        for i, (_, result_res) in enumerate(zip(plan_result.tool_calls, invoke_results)):
+                            if result_res.status == "input-required":
+                                invoke_results[i] = InvokeAgentResult(
+                                    status="completed",
+                                    result_text=human_text,
+                                    file_parts=[],
+                                    latency_ms=result_res.latency_ms,
+                                )
+                        self._human_response = None
+                    else:
+                        # Timeout — treat as cancellation
+                        run_status = "failed"
+                        run_error = "Human response timeout (10 minutes)"
+                        break
 
                 # Append tool results to message state
                 tool_result_msg = _build_tool_results_message(plan_result.tool_calls, invoke_results)

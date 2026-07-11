@@ -30,15 +30,8 @@ from app.services.task_runner import run as task_runner_run
 from app.services.token_cache import validate_bearer_token
 from app.utils.logger import logger
 
-# Temporal feature flag — read once at import time
-def _temporal_enabled() -> bool:
-    try:
-        from app.config import Settings
-        return Settings().TEMPORAL_ENABLED
-    except Exception:
-        return False
-
-_TEMPORAL_ENABLED = _temporal_enabled()
+# Phase 7: always route through Temporal (TEMPORAL_ENABLED=true is now the default)
+_TEMPORAL_ENABLED = True
 
 router = APIRouter()
 
@@ -156,16 +149,10 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
     edge = WebsocketEdge(websocket, orchestrator_name=name, user_id=user_id)
 
     try:
-        if _TEMPORAL_ENABLED:
-            await _run_temporal(
-                name, user_message, user_id, token_payload,
-                context_id, session_id, edge, websocket,
-            )
-        else:
-            await _run_legacy(
-                name, user_message, user_id, token_payload,
-                context_id, session_id, edge, websocket,
-            )
+        await _run_temporal(
+            name, user_message, user_id, token_payload,
+            context_id, session_id, edge, websocket,
+        )
     except WebSocketDisconnect:
         logger.info("ws_orchestrate disconnected", orchestrator=name, user_id=user_id)
     except Exception as exc:
@@ -176,79 +163,6 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
             pass
     finally:
         await edge.close()
-
-
-async def _run_legacy(
-    name: str, user_message: str, user_id: int, token_payload: dict,
-    context_id: uuid.UUID, session_id: uuid.UUID, edge, websocket: WebSocket,
-) -> None:
-    """Legacy task_runner.run() path — used when TEMPORAL_ENABLED=false."""
-    active_run_id: list[uuid.UUID | None] = [None]
-
-    async def _run_loop(db):
-        try:
-            async for event in task_runner_run(
-                orchestrator_name=name,
-                user_message=user_message,
-                user_id=user_id,
-                token_payload=token_payload,
-                db=db,
-                session_id=session_id,
-                context_id=context_id,
-            ):
-                if event.get("type") == "ready" and event.get("run_id"):
-                    active_run_id[0] = uuid.UUID(event["run_id"])
-                await edge.emit(event)
-        except WebSocketDisconnect:
-            pass
-
-    async def _cancel_listener():
-        while True:
-            try:
-                raw = await websocket.receive_text()
-                msg = json.loads(raw)
-                if msg.get("type") == "cancel":
-                    return True
-            except (WebSocketDisconnect, Exception):
-                return False
-
-    async with _db.AsyncSessionLocal() as db:
-        loop_task = asyncio.ensure_future(_run_loop(db))
-        cancel_task = asyncio.ensure_future(_cancel_listener())
-
-        done, pending = await asyncio.wait(
-            [loop_task, cancel_task],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        for t in pending:
-            t.cancel()
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        if cancel_task in done and cancel_task.result() is True:
-            loop_task.cancel()
-            logger.info("ws_orchestrate (legacy) canceled by client", orchestrator=name, user_id=user_id)
-
-            if active_run_id[0] is not None:
-                from app.services import run_recorder
-                try:
-                    async with _db.AsyncSessionLocal() as cancel_db:
-                        await run_recorder.complete_run(
-                            cancel_db,
-                            run_id=active_run_id[0],
-                            status="canceled",
-                            error="Canceled by user",
-                        )
-                except Exception as exc:
-                    logger.warning("ws_orchestrate: failed to mark run canceled", error=str(exc))
-
-            try:
-                await edge.emit({"type": "canceled"})
-            except Exception:
-                pass
 
 
 async def _run_temporal(

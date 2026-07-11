@@ -91,6 +91,10 @@ bounded by `orchestrator.max_parallel_tools` and per-agent `max_concurrency` sem
 | Agent transport adapters | `app/adapters/` (base, a2a_async_adapter, factory) |
 | Orchestrator WS endpoint | `app/routers/ws_orchestrator.py` |
 | Dashboard WS (multiplexed channels) | `app/routers/ws_dashboard.py` |
+| Temporal workflow (agentic loop) | `app/temporal/workflows.py` |
+| Temporal activities (all I/O) | `app/temporal/activities.py` |
+| Temporal bridge client | `app/temporal/bridge_client.py` |
+| Temporal worker entrypoint | `app/temporal/worker.py` |
 | LLM providers | `app/services/providers/` |
 | Token cache (L1+L2) | `app/services/token_cache.py` |
 | Run recording | `app/services/run_recorder.py` |
@@ -116,10 +120,20 @@ git push origin main
 ## Common Commands
 
 ```powershell
-# Stack
+# Stack (core only)
 docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.local.yml ps
 docker compose logs -f them-bridge
+
+# Stack with Temporal (required for orchestration — TEMPORAL_ENABLED=true in bridge)
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal up -d
+docker compose -f docker-compose.yml -f docker-compose.local.yml --profile temporal ps
+docker logs them-worker
+# Temporal UI: http://localhost:3111
+
+# Temporal test (run inside worker container)
+docker cp scripts/test_temporal_workflow.py them-worker:/tmp/test_temporal_workflow.py
+docker exec them-worker python3 /tmp/test_temporal_workflow.py
 
 # DB init (run once after first up, or after wiping data/)
 # Copy schema files then apply:
@@ -229,7 +243,11 @@ Full suite, ~30s. Zero failures required before committing.
 | `db/007_docu_stack.sql` code_agent endpoint/token | 24 (code_agent live) |
 | `agents/docu_writer/main.py`, `app/adapters/a2a_async_adapter.py`, `app/adapters/factory.py`, `app/services/task_runner.py` (typed A2A), `db/007_docu_stack.sql` | 25 (true A2A typed input) |
 | `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT (multi-turn behavioral) |
-| Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT |
+| `app/temporal/activities.py`, `app/temporal/workflows.py`, `app/temporal/serde.py` | Full suite + `scripts/test_temporal_workflow.py` (inside them-worker) |
+| `app/temporal/bridge_client.py`, `app/routers/ws_orchestrator.py` (Temporal path) | 10 11 + `scripts/test_temporal_workflow.py` |
+| `app/routers/runs.py` (signal endpoint) | 12 + `scripts/test_temporal_phase5.py` |
+| `docker-compose.yml` labels, `traefik/traefik.yml`, `docker-compose.local.yml` | 20 (Traefik routing + multi-replica) |
+| Before a release / PR merge | Full suite + E2E (14, needs `ADMIN_JWT`) + MT + `scripts/test_temporal_workflow.py` |
 
 **E2E test (14) — needs a JWT:**
 ```
@@ -288,9 +306,13 @@ DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
 
 ---
 
-## Known State (2026-07-07)
+## Known State (2026-07-11)
 
-- **Stack:** fully deployed locally. All core containers healthy.
+- **Stack:** fully deployed locally. All core containers healthy. Temporal stack running (`--profile temporal`).
+- **Temporal migration:** COMPLETE (all 7 phases). See `docs/architecture/PROGRESS.md`.
+- **Orchestration:** All WS runs now go through Temporal `OrchestrationWorkflow`. `TEMPORAL_ENABLED=true` in bridge env.
+- **Bridge:** Stateless — no sticky sessions. Any replica handles any connection. Temporal holds all state.
+- **HITL:** `POST /api/v1/runs/{run_id}/signal` forwards human responses to paused workflows.
 - **Users seeded:** `admin` / `admin123` (super_admin), `avi` / `avi123` (super_admin)
 - **Agents seeded:** assistant, coder, researcher (mock WS) + a2a_echo, a2a_slow, a2a_stream (A2A test agents)
 - **Orchestrators seeded:** `default` (claude-sonnet-4-6), `a2a_test` (haiku, all 3 A2A agents)
@@ -299,8 +321,9 @@ DB user: `them`, DB name: `them`, DB host (internal): `them-postgres:5432`
 - **ANTHROPIC_API_KEY:** set in `.env` — bridge picks it up on restart
 - **Dev login:** pre-filled in login page when `NODE_ENV=development`
 - **`vision-agent`:** unhealthy — needs `GOOGLE_MAPS_API_KEY` and `FAL_API_KEY` in `.env`
-- **Replica 2:** compose profile `replica`, not running by default
+- **Replica 2:** compose profile `replica`, currently running (used during Phase 6 validation)
 - **Git hooks:** not wired — planned as GitHub Actions (future)
 - **Frontend URL:** http://localhost:8088
 - **Bridge API (direct, internal):** http://localhost:8001 — use http://localhost:8088 from browser
 - **Traefik dashboard:** http://localhost:8089
+- **Temporal UI:** http://localhost:3111 (requires `--profile temporal`)
