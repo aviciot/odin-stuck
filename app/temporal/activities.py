@@ -135,6 +135,37 @@ async def load_orchestration_context_activity(
     }
 
 
+def _sanitize_history(messages: list) -> list:
+    """
+    Strip trailing assistant messages whose tool_use IDs have no matching tool_result
+    in the next message. This prevents corrupted history from failed runs poisoning
+    the next run's context.
+    """
+    if not messages:
+        return messages
+    # Collect all tool_result IDs present in the history
+    result_ids: set[str] = set()
+    for msg in messages:
+        if msg.get("role") == "user":
+            for block in (msg.get("content") if isinstance(msg.get("content"), list) else []):
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    result_ids.add(block.get("tool_use_id", ""))
+    # Drop any trailing assistant message that has unmatched tool_use blocks
+    while messages:
+        last = messages[-1]
+        if last.get("role") != "assistant":
+            break
+        content = last.get("content", [])
+        if not isinstance(content, list):
+            break
+        tool_use_ids = [b["id"] for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+        if tool_use_ids and not all(tid in result_ids for tid in tool_use_ids):
+            messages = messages[:-1]
+        else:
+            break
+    return messages
+
+
 async def _load_context_history(provider, context_id: str, current_task_id: str, db, history_window: int = 20) -> list:
     """Port of task_runner._load_context_history."""
     from sqlalchemy import select as _select
@@ -183,7 +214,8 @@ async def _load_context_history(provider, context_id: str, current_task_id: str,
 
     if not all_rows:
         return []
-    return provider.deserialize_history(all_rows)
+    history = provider.deserialize_history(all_rows)
+    return _sanitize_history(history)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -396,6 +428,7 @@ async def plan_turn_activity(inp: PlanTurnInput) -> PlanTurnResult:
 
     await _publish_dash(inp.run_id, {
         "type": "usage",
+        "iteration": inp.iteration,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "cost_usd": float(iter_cost),
@@ -412,6 +445,24 @@ async def plan_turn_activity(inp: PlanTurnInput) -> PlanTurnResult:
             except Exception:
                 pass
     elif tool_calls_raw:
+        # Publish iteration_start with agent list to both channels so the UI can show
+        # "Iteration N — calling agent_foo, agent_bar" before any agent responds
+        agents_called = [tc["name"].removeprefix("agent__") for tc in tool_calls_raw]
+        iteration_start_event = {
+            "type": "iteration_start",
+            "iteration": inp.iteration,
+            "agents": agents_called,
+        }
+        await _publish_dash(inp.run_id, iteration_start_event)
+        if db_module.redis_client is not None:
+            try:
+                await db_module.redis_client.publish(
+                    f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
+                    json.dumps(iteration_start_event),
+                )
+            except Exception:
+                pass
+
         if db_module.redis_client is not None:
             try:
                 await db_module.redis_client.publish(
@@ -490,16 +541,20 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
             effective_input = build_agent_tool_input(
                 inp.tool_input, inp.input_schema, inp.injected_context
             )
-            # Publish tool_start so the bridge/UI shows the agent being called
+            # Publish tool_start to both channels:
+            # :tokens — streaming side-channel that bridge forwards to WS client
+            # plain run channel — dashboard WS trace tab
+            tool_start_event = {
+                "type": "tool_start",
+                "tool": inp.tool_call_name,
+                "input": inp.tool_input,
+            }
+            await _publish_dash(inp.run_id, tool_start_event)
             if db_module.redis_client is not None:
                 try:
                     await db_module.redis_client.publish(
                         f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                        json.dumps({
-                            "type": "tool_start",
-                            "tool": inp.tool_call_name,
-                            "input": inp.tool_input,
-                        }),
+                        json.dumps(tool_start_event),
                     )
                 except Exception:
                     pass
@@ -508,7 +563,11 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
                 input=effective_input,
                 timeout=float(inp.timeout_seconds),
             ):
-                if event.type == "token":
+                if event.type == "task_created":
+                    # Heartbeat immediately after submit — the POST can take many seconds
+                    activity.heartbeat({"phase": "submitted", "agent": inp.agent_slug})
+
+                elif event.type == "token":
                     result_text += event.text or ""
 
                 elif event.type == "status" and event.state:
@@ -604,16 +663,18 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
             latency_ms=latency_ms,
         )
 
-    # Publish tool_done + file events to bridge stream
+    # Publish tool_done to both channels (trace tab + streaming side-channel)
+    tool_done_event = {
+        "type": "tool_done",
+        "tool": inp.tool_call_name,
+        "latency_ms": latency_ms,
+    }
+    await _publish_dash(inp.run_id, tool_done_event)
     if db_module.redis_client is not None:
         try:
             await db_module.redis_client.publish(
                 f"{_DASH_RUN_PREFIX}{inp.run_id}:tokens",
-                json.dumps({
-                    "type": "tool_done",
-                    "tool": inp.tool_call_name,
-                    "latency_ms": latency_ms,
-                }),
+                json.dumps(tool_done_event),
             )
             for part in file_parts:
                 if part.get("filename") and part.get("media_type"):

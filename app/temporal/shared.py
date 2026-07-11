@@ -104,6 +104,7 @@ class PlanTurnInput:
     llm_provider: str           # for run_recorder.record_usage
     budget_tokens: Optional[int]
     tokens_used_so_far: int
+    iteration: int = 0          # current loop iteration (for trace labels)
 
 
 @dataclass

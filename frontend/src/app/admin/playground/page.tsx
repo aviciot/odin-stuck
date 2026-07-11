@@ -45,9 +45,14 @@ type AgentInvocation = {
 function traceLabel(ev: TraceEvent): string {
   switch (ev.type) {
     case 'run_start':       return `Run started — ${ev.goal as string}`;
-    case 'iteration_start': return `Iteration ${ev.iteration}`;
-    case 'tool_start':      return `${ev.tool} called`;
-    case 'tool_done':       return `${ev.tool} done`;
+    case 'iteration_start': {
+      const agents = (ev.agents as string[] | undefined);
+      return agents?.length
+        ? `Iteration ${ev.iteration} — calling ${agents.join(', ')}`
+        : `Iteration ${ev.iteration}`;
+    }
+    case 'tool_start':      return `${(ev.tool as string).replace(/^agent__/, '')} called`;
+    case 'tool_done':       return `${(ev.tool as string).replace(/^agent__/, '')} done (${ev.latency_ms}ms)`;
     case 'usage':           return `Iter ${ev.iteration}: ${ev.input_tokens}+ ${ev.output_tokens}- tokens`;
     case 'run_end':         return `Run ${ev.status} — ${ev.iterations} iterations`;
     case 'error':           return `Error: ${ev.message}`;
@@ -58,6 +63,7 @@ function traceLabel(ev: TraceEvent): string {
 function traceColor(type: string): string {
   if (type === 'error') return '#f87171';
   if (type === 'run_end') return '#4edea3';
+  if (type === 'iteration_start') return '#f59e0b';
   if (type.startsWith('tool')) return '#a78bfa';
   if (type === 'usage') return '#60a5fa';
   return 'var(--tm-text-muted)';
@@ -1046,6 +1052,15 @@ export default function PlaygroundPage() {
             return next;
           });
 
+        } else if (msg.type === 'iteration_start') {
+          const agents = (msg.agents as string[] | undefined) ?? [];
+          setStatus(agents.length > 1
+            ? `Iter ${msg.iteration} — waiting for ${agents.join(', ')}…`
+            : agents.length === 1
+              ? `Iter ${msg.iteration} — calling ${agents[0]}…`
+              : `Iteration ${msg.iteration}…`
+          );
+
         } else if (msg.type === 'tool_start') {
           const slug = (msg.tool as string).replace(/^agent__/, '');
           setStatus(`Calling ${slug}…`);
@@ -1057,12 +1072,20 @@ export default function PlaygroundPage() {
 
         } else if (msg.type === 'tool_done') {
           const slug = (msg.tool as string).replace(/^agent__/, '');
-          setStatus(`${slug} done`);
-          setAgentInvocations(prev => prev.map(a =>
-            a.tool === msg.tool
-              ? { ...a, endedAt: Date.now(), latencyMs: msg.latency_ms as number ?? Date.now() - a.startedAt }
-              : a
-          ));
+          setAgentInvocations(prev => {
+            const updated = prev.map(a =>
+              a.tool === msg.tool
+                ? { ...a, endedAt: Date.now(), latencyMs: msg.latency_ms as number ?? Date.now() - a.startedAt }
+                : a
+            );
+            const stillRunning = updated.filter(a => !a.endedAt).map(a => a.slug);
+            if (stillRunning.length > 0) {
+              setStatus(`${slug} done — waiting for ${stillRunning.join(', ')}…`);
+            } else {
+              setStatus(`${slug} done`);
+            }
+            return updated;
+          });
 
         } else if (msg.type === 'file') {
           // File artifact from A2A agent — inject as a separate chat bubble with download

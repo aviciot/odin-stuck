@@ -25,7 +25,7 @@ from a2a.types import (
 )
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-MODEL = os.getenv("MODEL", "claude-sonnet-4-6")
+MODEL = os.getenv("MODEL", "claude-haiku-4-5-20251001")
 PORT = int(os.getenv("PORT", "9402"))
 
 

@@ -316,3 +316,77 @@ await event_queue.enqueue_event(task)
 **Fix:** Replaced with `@dataclass _OrchestratorProxy` with typed fields and explicit defaults. Missing fields are caught at construction time, not at use.
 
 **Watch for:** When adding a new orchestrator config field: add it to `_OrchestratorProxy`, the cache write payload in `_load_orchestrator_row`, and the DB schema — three places, same as before, but now the dataclass guards the runtime contract.
+
+---
+
+## 2026-07-11 — Temporal activity heartbeat timeout fires before first poll event
+
+**Symptom:** `invoke_agent_activity` fails with "activity Heartbeat timeout" after exactly 30 seconds. Agent is slow but functional. Two orphaned `run_steps` rows (one per retry attempt) remain stuck in `running` state.
+
+**Root cause:** Two issues compounded:
+1. `heartbeat_timeout=timedelta(seconds=30)` in `workflows.py` — the activity heartbeats only on `status` events from the adapter. But the adapter's `stream_invoke` first does `await self.submit()` (POST SendMessage) which can take 10-40+ seconds depending on agent load, before yielding any event. During that window, **no heartbeat fires**, so Temporal kills the activity.
+2. The adapter yields a `task_created` event after submit, but `invoke_agent_activity` didn't handle this event type — so no heartbeat on submit completion.
+
+**Fix:**
+1. In `workflows.py`: set `heartbeat_timeout=timedelta(seconds=agent_timeout + 30)` where `agent_timeout = int(agent_dict.get("timeout_seconds", 30))`. This gives the activity enough time for the full submit + poll cycle.
+2. In `invoke_agent_activity`: add `activity.heartbeat({"phase": "submitted"})` on the `task_created` event — fires immediately after the POST completes.
+
+**Watch for:**
+- Any Temporal activity that calls a slow external HTTP endpoint before its first heartbeat: add an explicit heartbeat immediately after the call returns.
+- Always set `heartbeat_timeout >= max possible time between external I/O calls`, not a fixed small value.
+- On activity retry (RetryPolicy.maximum_attempts > 1), each attempt creates new DB rows (child_task, run_step) — orphaned "running" rows accumulate on timeout. Consider idempotency keys or cleanup on retry if this becomes a problem.
+
+---
+
+## 2026-07-11 — Temporal workflow cancel stores status="failed" not "canceled"
+
+**Symptom:** User clicks Stop in the playground. Run appears canceled in the UI but DB shows `status=failed, error=Cancelled`.
+
+**Root cause:** When Temporal cancels a workflow mid-activity, the Python SDK raises `ActivityError` (not `CancelledError` directly) — the cancellation is wrapped. The `except ActivityError` block set `run_status = "failed"` unconditionally, instead of inspecting whether the cause was a cancellation.
+
+**Fix:** In `except ActivityError`, check `isinstance(exc.cause, CancelledError)` and set `run_status = "canceled"` in that case.
+
+**Watch for:** When adding new except blocks in workflows, always check both `CancelledError` (direct) and `ActivityError` wrapping a `CancelledError` (mid-activity cancellation).
+
+---
+
+## 2026-07-11 — Trace tab empty: events on wrong Redis channel
+
+**Symptom:** Playground trace tab shows no events even though runs complete successfully.
+
+**Root cause:** Two Redis channels exist for each run:
+- `them:dash:run:{run_id}` — dashboard pub/sub channel; `ws_dashboard` multiplexes to `run:{run_id}` channel subscribers
+- `them:dash:run:{run_id}:tokens` — streaming side-channel; bridge's `stream_run_events` reads this and forwards to the WS client directly
+
+`tool_start` and `tool_done` events were only published to `:tokens`. The dashboard WS (which feeds the trace tab) subscribes to the plain channel — so trace received nothing except `usage`/`run_start`/`run_end`.
+
+**Fix:** Publish `tool_start`, `tool_done`, and `iteration_start` to BOTH channels: use `_publish_dash()` (which fans out to the plain channel) AND separately publish to `:tokens`.
+
+**Watch for:** Any new event type added in activities must be published to both channels if it should appear in both the trace tab AND the streaming client view. `:tokens` = real-time stream to the connected WS client; plain channel = observable audit log for dashboard/trace.
+
+---
+
+## 2026-07-11 — Debate flow slow (264s) — three compounding root causes
+
+**Symptom:** debate_flow run takes 264s and fails with "activity Heartbeat timeout" on iteration 3.
+
+**Root causes (by impact):**
+
+### 1. Context explosion from large tool results (biggest impact)
+Iteration 2 plan call received 14,981 input tokens vs 1,038 for iteration 1. The 3 debate agents each returned ~4,000 tokens of detailed argument text. These were passed verbatim as `tool_result` blocks into the LLM context. The LLM had to process 13k tokens of new content just to compose the judge tool call. This caused:
+- Plan turn 2 to take 49s (vs 15s for turn 1)
+- Plan turn 3 TTFT to exceed 30s → heartbeat timeout
+
+**Fix:** Cap tool result text in the LLM message history at `_MAX_TOOL_RESULT_CHARS = 6000` (~1500 tokens). Full results are persisted in DB/artifacts — only the orchestrator's context window needs the summary. Added truncation note so the LLM knows full result is available.
+
+### 2. `plan_turn heartbeat_timeout=30s` too short for large contexts
+When context reaches 15k+ tokens, TTFT (time-to-first-token) from Anthropic can exceed 30s. The activity heartbeats on every token, so if the first token arrives after >30s, Temporal kills the activity.
+
+**Fix:** Raised `heartbeat_timeout` for `plan_turn_activity` from 30s to 90s.
+
+### 3. `max_tokens=4096` wasteful for orchestrator planning turns
+The orchestrator only emits tool calls or short coordination messages. Allowing 4096 output tokens is excessive — it signals Anthropic to allocate KV cache space and can slow generation. Reduced to 2048.
+
+**Architecture note:** The debate flow by design has the orchestrator forward full argument objects (the system prompt explicitly says "never summarize"). This is the feature, not the bug. The fix is at the infrastructure layer (truncate at the tool_result boundary before feeding back to LLM) so the orchestrator still receives complete outputs from agents — it's only the LLM context representation that's truncated.
+
+**Watch for:** Any orchestrator that calls agents producing large outputs (>2k chars each) will experience context growth proportional to `n_agents × output_size × n_rounds`. Always cap tool results in the LLM context; full content lives in artifacts.

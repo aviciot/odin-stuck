@@ -124,7 +124,7 @@ class JudgeExecutor(AgentExecutor):
 
         try:
             args_text = "\n\n".join(
-                f"=== {a.get('agent', f'agent_{i}')} (approach: {a.get('approach', 'unknown')}) ===\n{a.get('argument', '')}"
+                f"=== {a.get('agent', f'agent_{i}')} (approach: {a.get('approach', 'unknown')}) ===\n{a.get('argument', '') or a.get('main_point', '')}"
                 for i, a in enumerate(_normalize_arg(x) for x in arguments)
             )
 

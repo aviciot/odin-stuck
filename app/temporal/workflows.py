@@ -173,7 +173,7 @@ class OrchestrationWorkflow:
                     base_url=orch_config.get("llm_base_url"),
                     messages=serialize_messages(self.messages),
                     tools=tools,
-                    max_tokens=4096,
+                    max_tokens=2048,
                     msg_seq=msg_seq,
                     price_in=orch_config.get("price_in", "0"),
                     price_out=orch_config.get("price_out", "0"),
@@ -181,13 +181,14 @@ class OrchestrationWorkflow:
                     llm_provider=orch_config.get("llm_provider", "anthropic"),
                     budget_tokens=budget_tokens,
                     tokens_used_so_far=self.tokens_used,
+                    iteration=self.iteration,
                 )
 
                 plan_result = await workflow.execute_activity(
                     plan_turn_activity,
                     plan_input,
                     schedule_to_close_timeout=timedelta(minutes=5),
-                    heartbeat_timeout=timedelta(seconds=30),
+                    heartbeat_timeout=timedelta(seconds=90),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
 
@@ -240,13 +241,24 @@ class OrchestrationWorkflow:
                         injected_context=self.context_summary,
                         input_schema=agent_dict.get("input_schema"),
                     )
-                    async with parallel_sem:
-                        return await workflow.execute_activity(
-                            invoke_agent_activity,
-                            invoke_inp,
-                            schedule_to_close_timeout=timedelta(seconds=int(agent_dict.get("timeout_seconds", 30)) + 60),
-                            heartbeat_timeout=timedelta(seconds=30),
-                            retry_policy=RetryPolicy(maximum_attempts=2),
+                    try:
+                        async with parallel_sem:
+                            agent_timeout = int(agent_dict.get("timeout_seconds", 30))
+                            return await workflow.execute_activity(
+                                invoke_agent_activity,
+                                invoke_inp,
+                                schedule_to_close_timeout=timedelta(seconds=agent_timeout + 60),
+                                heartbeat_timeout=timedelta(seconds=agent_timeout + 30),
+                                retry_policy=RetryPolicy(maximum_attempts=2),
+                            )
+                    except (ActivityError, Exception) as exc:
+                        cause_str = str(exc.cause) if hasattr(exc, "cause") and exc.cause else str(exc)
+                        return InvokeAgentResult(
+                            status="failed",
+                            result_text=f"[Agent {slug} failed: {cause_str}]",
+                            file_parts=[],
+                            latency_ms=0,
+                            error=cause_str,
                         )
 
                 invoke_coros = [
@@ -339,9 +351,15 @@ class OrchestrationWorkflow:
             run_status = "canceled"
             run_error = "Workflow cancelled"
         except ActivityError as exc:
-            run_status = "failed"
-            run_error = str(exc.cause) if exc.cause else str(exc)
-            workflow.logger.error(f"OrchestrationWorkflow: activity error: {run_error}")
+            # If the root cause is a cancellation, treat as canceled (not failed)
+            cause_str = str(exc.cause) if exc.cause else str(exc)
+            if isinstance(exc.cause, CancelledError) or "cancel" in cause_str.lower():
+                run_status = "canceled"
+                run_error = "Workflow cancelled"
+            else:
+                run_status = "failed"
+                run_error = cause_str
+            workflow.logger.error(f"OrchestrationWorkflow: activity error: {cause_str}")
         except Exception as exc:
             run_status = "failed"
             run_error = str(exc)
@@ -387,23 +405,103 @@ def _build_user_message(text: str) -> dict:
     return {"role": "user", "content": text}
 
 
+# Fields kept when a tool result is a JSON object — enough for routing, elides heavy text.
+_COMPACT_JSON_KEEP = {"agent", "main_point", "confidence", "approach", "round",
+                      "winner", "winner_reason", "scores", "final", "synthesized_answer",
+                      "question", "field", "insight", "status"}
+# Fields in tool_use inputs that contain large nested argument blobs
+_HEAVY_INPUT_FIELDS = {"arguments", "opponent_arguments"}
+_MAX_TOOL_RESULT_CHARS = 2000  # fallback for non-JSON results (~500 tokens)
+
+
+def _compact_tool_result(text: str) -> str:
+    """
+    JSON-aware compaction: keep small routing fields, drop heavy argument bodies.
+    Falls back to char truncation for non-JSON results.
+    Full content is always in DB artifacts.
+    """
+    import json as _json
+    stripped = text.strip()
+    # Try single JSON object
+    if stripped.startswith("{"):
+        try:
+            obj = _json.loads(stripped)
+            compact = {k: v for k, v in obj.items() if k in _COMPACT_JSON_KEEP}
+            if compact:
+                compacted = _json.dumps(compact, ensure_ascii=False)
+                dropped = [k for k in obj if k not in _COMPACT_JSON_KEEP]
+                if dropped:
+                    compacted += f'\n[fields elided from context: {", ".join(dropped)} — full result in artifacts]'
+                return compacted
+        except _json.JSONDecodeError:
+            pass
+    # Try JSON array of objects
+    if stripped.startswith("["):
+        try:
+            arr = _json.loads(stripped)
+            if isinstance(arr, list) and all(isinstance(x, dict) for x in arr):
+                compacted_arr = [{k: v for k, v in x.items() if k in _COMPACT_JSON_KEEP} for x in arr]
+                return _json.dumps(compacted_arr, ensure_ascii=False)
+        except _json.JSONDecodeError:
+            pass
+    # Non-JSON fallback: truncate on whitespace boundary
+    if len(text) > _MAX_TOOL_RESULT_CHARS:
+        cut = text.rfind(" ", 0, _MAX_TOOL_RESULT_CHARS)
+        cut = cut if cut > 0 else _MAX_TOOL_RESULT_CHARS
+        return text[:cut] + "\n[truncated — full result in artifacts]"
+    return text
+
+
+def _slim_tool_use_inputs(content: list) -> list:
+    """
+    For the planner's own context copy, elide heavy nested arrays from tool_use inputs.
+    The wire copy (sent to agents) is unaffected — this only touches self.messages.
+    """
+    import json as _json
+    slimmed = []
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            slimmed.append(block)
+            continue
+        inp = block.get("input", {})
+        if not isinstance(inp, dict) or not any(k in inp for k in _HEAVY_INPUT_FIELDS):
+            slimmed.append(block)
+            continue
+        slim_inp = {}
+        for k, v in inp.items():
+            if k in _HEAVY_INPUT_FIELDS and isinstance(v, list):
+                # Keep only compact fields from each element
+                slim_inp[k] = [
+                    {fk: fv for fk, fv in elem.items() if fk in _COMPACT_JSON_KEEP}
+                    if isinstance(elem, dict) else elem
+                    for elem in v
+                ]
+            else:
+                slim_inp[k] = v
+        slimmed.append({**block, "input": slim_inp})
+    return slimmed
+
+
 def _build_assistant_message(serialized_turn, tool_calls: list[dict]) -> dict:
-    """Reconstruct the assistant message dict from the serialized turn."""
+    """Reconstruct the assistant message dict, slimming heavy tool_use inputs for planner context."""
     if isinstance(serialized_turn, list):
-        return {"role": "assistant", "content": serialized_turn}
+        return {"role": "assistant", "content": _slim_tool_use_inputs(serialized_turn)}
     if isinstance(serialized_turn, str):
         return {"role": "assistant", "content": serialized_turn}
     return {"role": "assistant", "content": []}
 
 
 def _build_tool_results_message(tool_calls: list[dict], results: list[InvokeAgentResult]) -> dict:
-    """Build the user-role tool_result message for provider context."""
+    """Build the user-role tool_result message using JSON-aware compaction.
+
+    Full results are persisted in DB/artifacts. The planner only needs routing fields.
+    """
     content = []
     for tc, res in zip(tool_calls, results):
         content.append({
             "type": "tool_result",
             "tool_use_id": tc["id"],
-            "content": res.result_text,
+            "content": _compact_tool_result(res.result_text),
         })
     return {"role": "user", "content": content}
 
