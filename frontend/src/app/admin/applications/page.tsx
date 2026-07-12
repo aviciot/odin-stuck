@@ -927,16 +927,23 @@ const APP_CARD_STYLES = `
     0 8px 32px rgba(0,0,0,0.4),
     0 2px 8px rgba(0,0,0,0.25),
     inset 0 1px 0 rgba(255,255,255,0.04);
-  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+  transition: border-color 240ms ease, box-shadow 240ms ease;
 }
 .app-glass-card:hover {
-  border-color: rgba(0,209,255,0.22);
+  border-color: rgba(0,209,255,0.28);
   box-shadow:
-    0 14px 40px rgba(0,0,0,0.48),
-    0 4px 12px rgba(0,0,0,0.28),
-    0 0 24px rgba(0,209,255,0.07),
+    0 8px 32px rgba(0,0,0,0.5),
+    0 2px 8px rgba(0,0,0,0.28),
+    0 0 0 1px rgba(0,209,255,0.1),
+    0 0 32px rgba(0,209,255,0.08),
     inset 0 1px 0 rgba(255,255,255,0.055);
-  transform: translateY(-3px);
+}
+.app-glass-card:active {
+  box-shadow:
+    0 4px 16px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.03);
+  border-color: rgba(0,209,255,0.4);
+  transition: border-color 80ms ease, box-shadow 80ms ease;
 }
 .app-card-btn {
   display: flex;
@@ -962,7 +969,10 @@ const APP_CARD_STYLES = `
 .app-card-btn--open:hover {
   background: #22dcff;
   box-shadow: 0 0 22px rgba(0,209,255,0.55);
-  transform: translateY(-1px);
+}
+.app-card-btn--open:active {
+  background: #00b8e0;
+  box-shadow: 0 0 10px rgba(0,209,255,0.3);
 }
 .app-card-btn--urls {
   background: rgba(30,41,59,0.55);

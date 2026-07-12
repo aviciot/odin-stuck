@@ -83,16 +83,23 @@ const ORCH_CARD_CSS = `
       0 8px 32px rgba(0,0,0,0.4),
       0 2px 8px rgba(0,0,0,0.25),
       inset 0 1px 0 rgba(255,255,255,0.04);
-    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+    transition: border-color 240ms ease, box-shadow 240ms ease;
   }
   .orch-glass-card:hover {
-    border-color: rgba(0,209,255,0.22);
+    border-color: rgba(0,209,255,0.28);
     box-shadow:
-      0 14px 40px rgba(0,0,0,0.48),
-      0 4px 12px rgba(0,0,0,0.28),
-      0 0 24px rgba(0,209,255,0.07),
+      0 8px 32px rgba(0,0,0,0.5),
+      0 2px 8px rgba(0,0,0,0.28),
+      0 0 0 1px rgba(0,209,255,0.1),
+      0 0 32px rgba(0,209,255,0.08),
       inset 0 1px 0 rgba(255,255,255,0.055);
-    transform: translateY(-3px);
+  }
+  .orch-glass-card:active {
+    box-shadow:
+      0 4px 16px rgba(0,0,0,0.5),
+      inset 0 1px 0 rgba(255,255,255,0.03);
+    border-color: rgba(0,209,255,0.4);
+    transition: border-color 80ms ease, box-shadow 80ms ease;
   }
   .orch-card-btn {
     display: flex; align-items: center; justify-content: center; gap: 5px;
