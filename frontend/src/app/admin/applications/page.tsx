@@ -1018,7 +1018,7 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
     color: '#00f0ff',
     opacity: 0.13,
     filter: 'drop-shadow(0 0 18px rgba(0,240,255,0.18))',
-    animation: 'logo-breathe 8s ease-in-out infinite',
+    animation: 'logo-breathe 12s cubic-bezier(0.45,0,0.55,1) infinite',
   },
   dirty: {
     color: '#f59e0b',
@@ -1055,8 +1055,11 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
 
 const LOGO_KEYFRAMES = `
 @keyframes logo-breathe {
-  0%, 100% { opacity: var(--logo-op); transform: scale(1); }
-  50%       { opacity: calc(var(--logo-op) * 1.7); transform: scale(1.03); }
+  0%   { opacity: var(--logo-op);              transform: scale(1); }
+  25%  { opacity: calc(var(--logo-op) * 1.3);  transform: scale(1.015); }
+  50%  { opacity: calc(var(--logo-op) * 1.55); transform: scale(1.025); }
+  75%  { opacity: calc(var(--logo-op) * 1.3);  transform: scale(1.015); }
+  100% { opacity: var(--logo-op);              transform: scale(1); }
 }
 @keyframes logo-sway {
   0%, 100% { transform: rotate3d(0,1,0,0deg); }
