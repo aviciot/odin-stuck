@@ -916,7 +916,283 @@ function BuilderView({
 }
 
 // ── List view ─────────────────────────────────────────────────────────────────
-// Change 6: card grid layout + URLs modal
+const APP_CARD_STYLES = `
+.app-glass-card {
+  background:
+    linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.006) 40%, rgba(0,0,0,0.06) 100%),
+    rgba(10,18,32,0.92);
+  border: 1px solid rgba(255,255,255,0.07);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 8px 32px rgba(0,0,0,0.4),
+    0 2px 8px rgba(0,0,0,0.25),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+}
+.app-glass-card:hover {
+  border-color: rgba(0,209,255,0.22);
+  box-shadow:
+    0 14px 40px rgba(0,0,0,0.48),
+    0 4px 12px rgba(0,0,0,0.28),
+    0 0 24px rgba(0,209,255,0.07),
+    inset 0 1px 0 rgba(255,255,255,0.055);
+  transform: translateY(-3px);
+}
+.app-card-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 4px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease,
+              box-shadow 180ms ease, transform 180ms ease;
+  white-space: nowrap;
+}
+.app-card-btn--open {
+  background: #00d1ff;
+  color: #021520;
+  border: none;
+  box-shadow: 0 0 14px rgba(0,209,255,0.38);
+}
+.app-card-btn--open:hover {
+  background: #22dcff;
+  box-shadow: 0 0 22px rgba(0,209,255,0.55);
+  transform: translateY(-1px);
+}
+.app-card-btn--urls {
+  background: rgba(30,41,59,0.55);
+  color: #94a3b8;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.app-card-btn--urls:hover {
+  border-color: rgba(129,140,248,0.45);
+  color: #818cf8;
+  background: rgba(99,102,241,0.1);
+}
+.app-card-btn--toggle-on {
+  background: rgba(30,41,59,0.55);
+  color: #f87171;
+  border: 1px solid rgba(248,113,113,0.2);
+}
+.app-card-btn--toggle-on:hover {
+  border-color: rgba(248,113,113,0.5);
+  background: rgba(248,113,113,0.08);
+}
+.app-card-btn--toggle-off {
+  background: rgba(30,41,59,0.55);
+  color: #34d399;
+  border: 1px solid rgba(52,211,153,0.2);
+}
+.app-card-btn--toggle-off:hover {
+  border-color: rgba(52,211,153,0.5);
+  background: rgba(52,211,153,0.08);
+}
+.app-deploy-card:hover {
+  border-color: rgba(99,102,241,0.7) !important;
+  background: rgba(99,102,241,0.04) !important;
+}
+`;
+
+// EP metadata
+const EP_ICON: Record<string, string> = { websocket: 'settings_input_component', sse: 'stream', webrtc: 'videocam' };
+const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC' };
+
+function epIconColor(type: string): { color: string; glow: string; border: string } {
+  if (type === 'websocket') return { color: '#00d1ff', glow: 'rgba(0,209,255,0.25)', border: 'rgba(0,209,255,0.45)' };
+  if (type === 'sse')       return { color: '#a78bfa', glow: 'rgba(167,139,250,0.22)', border: 'rgba(167,139,250,0.42)' };
+  return { color: '#94a3b8', glow: 'rgba(148,163,184,0.15)', border: 'rgba(148,163,184,0.3)' };
+}
+
+// ── AppCard sub-component ─────────────────────────────────────────────────────
+function AppCard({
+  app,
+  onEdit,
+  onToggle,
+  onDelete,
+  onUrls,
+  onCopy,
+  copiedId,
+}: {
+  app: Application;
+  onEdit: (a: Application) => void;
+  onToggle: (a: Application) => void;
+  onDelete: (a: Application) => void;
+  onUrls: (a: Application) => void;
+  onCopy: (val: string, id: string) => void;
+  copiedId: string | null;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handler(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const ep = epIconColor(app.entry_point_type);
+  const primaryUrl = app.entry_point_type === 'websocket'
+    ? `ws://<host>/apps/${app.slug}/ws`
+    : `http://<host>/apps/${app.slug}/sse`;
+  const urlCopyId = `card_${app.id}_url`;
+  const accessMode = (app.access_policy as any)?.mode ?? 'token';
+
+  return (
+    <div
+      className="app-glass-card"
+      style={{ borderRadius: 16, overflow: 'visible', display: 'flex', flexDirection: 'column', position: 'relative' }}
+    >
+      {/* Clickable top section → opens builder */}
+      <div
+        style={{ padding: '20px 20px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: 14, cursor: 'pointer' }}
+        onClick={() => onEdit(app)}
+      >
+        {/* Icon + name row */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+          {/* Icon tile 56×56 */}
+          <div style={{
+            width: 56, height: 56, borderRadius: 12, flexShrink: 0,
+            background: `radial-gradient(circle at 30% 30%, ${ep.glow}, transparent 70%)`,
+            border: `1px solid ${ep.border}`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 26, color: ep.color }}>
+              {EP_ICON[app.entry_point_type] ?? 'extension'}
+            </span>
+          </div>
+
+          {/* Name + badges */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: C.text, fontFamily: 'Geist, sans-serif', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {app.name}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              {/* Enabled pill */}
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                background: app.enabled ? 'rgba(74,222,128,0.1)' : 'rgba(255,180,171,0.1)',
+                color: app.enabled ? C.green : C.error,
+                border: `1px solid ${app.enabled ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
+              }}>
+                {app.enabled && <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.green, display: 'inline-block', boxShadow: '0 0 6px rgba(74,222,128,0.8)' }} />}
+                {app.enabled ? 'live' : 'disabled'}
+              </span>
+              {/* Entry-point type badge */}
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '2px 8px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                background: 'rgba(255,255,255,0.04)', color: ep.color,
+                border: `1px solid ${ep.border}`,
+              }}>
+                {EP_LABEL[app.entry_point_type] ?? app.entry_point_type}
+              </span>
+            </div>
+            {/* Slug subtext */}
+            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginTop: 5 }}>
+              {app.slug}
+            </div>
+          </div>
+
+          {/* Three-dot menu (top-right) */}
+          <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => setMenuOpen(v => !v)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.textMuted, display: 'flex', alignItems: 'center', padding: 4, borderRadius: 6 }}
+            >
+              <span className="material-icons" style={{ fontSize: 18 }}>more_vert</span>
+            </button>
+            {menuOpen && (
+              <div style={{
+                position: 'absolute', top: 28, right: 0, zIndex: 50, minWidth: 130,
+                background: 'rgba(10,18,32,0.97)', border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 10, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', overflow: 'hidden',
+              }}>
+                <button
+                  onClick={() => { setMenuOpen(false); onDelete(app); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: C.error, fontWeight: 600 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,180,171,0.08)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                >
+                  <span className="material-icons" style={{ fontSize: 16 }}>delete</span>
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Two stat tiles */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {/* Orchestrator tile */}
+          <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="material-icons" style={{ fontSize: 15, color: '#a78bfa', flexShrink: 0 }}>hub</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Orchestrator</div>
+              <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {app.orchestrator_name ?? <span style={{ color: C.textMuted, fontStyle: 'italic' }}>None</span>}
+              </div>
+            </div>
+          </div>
+          {/* Access policy tile */}
+          <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="material-icons" style={{ fontSize: 15, color: accessMode === 'public' ? C.green : '#f59e0b', flexShrink: 0 }}>
+              {accessMode === 'public' ? 'lock_open' : 'lock'}
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Access</div>
+              <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>{accessMode === 'public' ? 'Public' : 'Token'}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Endpoint URL row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.05)' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {primaryUrl}
+          </code>
+          <button
+            onClick={() => onCopy(primaryUrl, urlCopyId)}
+            title="Copy URL"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: copiedId === urlCopyId ? C.green : C.textMuted, display: 'flex', alignItems: 'center', flexShrink: 0, padding: 2, transition: 'color 0.15s' }}
+          >
+            <span className="material-icons" style={{ fontSize: 14 }}>{copiedId === urlCopyId ? 'check' : 'content_copy'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Action buttons (3-column grid) */}
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '12px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <button className="app-card-btn app-card-btn--open" onClick={() => onEdit(app)}>
+          🖥️ Open
+        </button>
+        <button className="app-card-btn app-card-btn--urls" onClick={() => onUrls(app)}>
+          🔗 URLs
+        </button>
+        {app.enabled ? (
+          <button className="app-card-btn app-card-btn--toggle-on" onClick={() => onToggle(app)}>
+            🔴 Disable
+          </button>
+        ) : (
+          <button className="app-card-btn app-card-btn--toggle-off" onClick={() => onToggle(app)}>
+            🟢 Enable
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ListView({
   list, orchestrators, loading, onNew, onEdit, onToggle, onDelete,
 }: {
@@ -937,20 +1213,10 @@ function ListView({
     setTimeout(() => setCopiedId(null), 1800);
   }
 
-  const EP_ICON: Record<string, string> = { websocket: 'settings_input_component', sse: 'stream', webrtc: 'videocam' };
-  const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC' };
-
-  function EPBadge({ type }: { type: string }) {
-    return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, background: 'rgba(0,240,255,0.08)', color: C.cyan, border: '1px solid rgba(0,240,255,0.2)', fontFamily: 'Inter, sans-serif' }}>
-        <span className="material-icons" style={{ fontSize: 11 }}>{EP_ICON[type] ?? 'extension'}</span>
-        {EP_LABEL[type] ?? type}
-      </span>
-    );
-  }
-
   return (
     <div style={{ marginLeft: 260, minHeight: '100vh', background: C.bg, padding: '36px 48px' }}>
+      <style>{APP_CARD_STYLES}</style>
+
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 32 }}>
         <div>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: C.text, margin: 0, fontFamily: 'Geist, sans-serif', letterSpacing: -0.5 }}>
@@ -960,18 +1226,6 @@ function ListView({
             Compose orchestrators and entry points into deployable agentic applications.
           </p>
         </div>
-        <button
-          onClick={onNew}
-          style={{
-            padding: '10px 22px', borderRadius: 10, border: 'none', cursor: 'pointer',
-            background: C.cyan, color: '#00363a', fontWeight: 700, fontSize: 14,
-            boxShadow: '0 0 14px rgba(0,240,255,0.3)', display: 'flex', alignItems: 'center', gap: 6,
-            fontFamily: 'Inter, sans-serif',
-          }}
-        >
-          <span className="material-icons" style={{ fontSize: 18 }}>add</span>
-          New Application
-        </button>
       </div>
 
       {loading ? (
@@ -989,96 +1243,38 @@ function ListView({
           </button>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
           {list.map(app => (
-            <div key={app.id}
-              style={{
-                ...glass, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column',
-                borderTop: `3px solid ${app.enabled ? C.cyan : C.outlineVariant}`,
-                transition: 'box-shadow 0.2s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.boxShadow = app.enabled ? '0 0 20px rgba(0,240,255,0.12)' : '0 4px 20px rgba(0,0,0,0.3)')}
-              onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
-            >
-              {/* Card body */}
-              <div style={{ padding: '20px 20px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {/* Icon + name row */}
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-                  <div style={{
-                    width: 44, height: 44, borderRadius: 10, flexShrink: 0,
-                    background: 'rgba(0,240,255,0.08)', border: `1px solid ${C.cyanBorder}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <span className="material-icons" style={{ fontSize: 22, color: C.cyan }}>
-                      {EP_ICON[app.entry_point_type] ?? 'extension'}
-                    </span>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 16, color: C.text, fontFamily: 'Geist, sans-serif', marginBottom: 4 }}>{app.name}</div>
-                    <code style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', padding: '2px 7px', background: C.surfaceLow, borderRadius: 5 }}>{app.slug}</code>
-                  </div>
-                </div>
-
-                {/* Badges */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  <EPBadge type={app.entry_point_type} />
-                  <span style={{
-                    padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: 'Inter, sans-serif',
-                    background: app.enabled ? 'rgba(74,222,128,0.1)' : 'rgba(255,180,171,0.1)',
-                    color: app.enabled ? C.green : C.error,
-                    border: `1px solid ${app.enabled ? C.greenBorder : 'rgba(255,180,171,0.3)'}`,
-                    boxShadow: app.enabled ? '0 0 8px rgba(74,222,128,0.15)' : 'none',
-                  }}>
-                    {app.enabled ? 'enabled' : 'disabled'}
-                  </span>
-                </div>
-
-                {/* Orchestrator info */}
-                {app.orchestrator_name && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="material-icons" style={{ fontSize: 13, color: C.purple }}>hub</span>
-                    <span style={{ fontSize: 12, color: C.textMuted, fontFamily: 'Inter, sans-serif' }}>{app.orchestrator_name}</span>
-                    <span style={{ fontSize: 12, color: C.outlineVariant }}>·</span>
-                    <span style={{ fontSize: 12, color: C.textMuted, fontFamily: 'Inter, sans-serif' }}>access: {(app.access_policy as any)?.mode ?? 'token'}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Action strip */}
-              <div style={{ borderTop: `1px solid ${C.glassBorder}`, padding: '10px 14px', display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => setUrlModalApp(app)}
-                  title="View entry point URLs"
-                  style={{ ...ghostBtn, color: C.textMuted, padding: '6px 10px' }}
-                >
-                  <span className="material-icons" style={{ fontSize: 14 }}>link</span>
-                  URLs
-                </button>
-                <button
-                  onClick={() => onToggle(app)}
-                  title={app.enabled ? 'Disable application' : 'Enable application'}
-                  style={{ ...ghostBtn, color: app.enabled ? C.error : C.green, padding: '6px 10px' }}
-                >
-                  <span className="material-icons" style={{ fontSize: 14 }}>{app.enabled ? 'toggle_on' : 'toggle_off'}</span>
-                </button>
-                <button
-                  onClick={() => onEdit(app)}
-                  title="Open in canvas builder"
-                  style={{ ...ghostBtn, color: C.cyan, borderColor: C.cyanBorder, background: 'rgba(0,240,255,0.05)', padding: '6px 10px' }}
-                >
-                  <span className="material-icons" style={{ fontSize: 14 }}>edit</span>
-                  Builder
-                </button>
-                <button
-                  onClick={() => onDelete(app)}
-                  title="Delete application"
-                  style={{ ...ghostBtn, color: C.error, borderColor: 'rgba(255,180,171,0.3)', background: C.errorBg, padding: '6px 10px' }}
-                >
-                  <span className="material-icons" style={{ fontSize: 14 }}>delete</span>
-                </button>
-              </div>
-            </div>
+            <AppCard
+              key={app.id}
+              app={app}
+              onEdit={onEdit}
+              onToggle={onToggle}
+              onDelete={onDelete}
+              onUrls={setUrlModalApp}
+              onCopy={copy}
+              copiedId={copiedId}
+            />
           ))}
+          {/* Deploy / New card */}
+          <div
+            className="app-deploy-card"
+            onClick={onNew}
+            style={{
+              borderRadius: 16, border: '2px dashed rgba(99,102,241,0.35)',
+              background: 'rgba(99,102,241,0.02)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              gap: 14, cursor: 'pointer', minHeight: 220, transition: 'border-color 200ms ease, background 200ms ease',
+            }}
+          >
+            <div style={{
+              width: 52, height: 52, borderRadius: 14, border: '2px dashed rgba(99,102,241,0.5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <span className="material-icons" style={{ fontSize: 26, color: '#818cf8' }}>add</span>
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#818cf8', fontFamily: 'Geist, sans-serif' }}>New Application</div>
+          </div>
         </div>
       )}
 
@@ -1107,12 +1303,15 @@ function ListView({
               if (app.entry_point_type === 'sse') urls.push({ label: 'SSE', val: `http://<host>:8088/apps/${app.slug}/sse` }, { label: 'REST', val: `http://<host>:8088/apps/${app.slug}` });
               if (app.entry_point_type === 'webrtc') urls.push({ label: 'WebRTC (soon)', val: `ws://<host>:8088/apps/${app.slug}/ws` });
               return urls.map(({ label, val }) => {
-                const cid = `${app.id}_${label}`;
+                const cid = `modal_${app.id}_${label}`;
                 return (
                   <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
                     <span style={{ fontSize: 11, color: C.textMuted, minWidth: 100, fontFamily: 'Inter, sans-serif' }}>{label}</span>
                     <code style={{ flex: 1, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: C.text, background: C.surfaceContainer, padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{val}</code>
-                    <button onClick={() => copy(val, cid)} style={{ ...ghostBtn, fontSize: 11, padding: '4px 12px', color: copiedId === cid ? C.green : C.textMuted }}>
+                    <button
+                      onClick={() => copy(val, cid)}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`, background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: copiedId === cid ? C.green : C.textMuted, transition: 'all 0.15s' }}
+                    >
                       {copiedId === cid ? 'Copied!' : 'Copy'}
                     </button>
                   </div>
@@ -1130,13 +1329,6 @@ function ListView({
     </div>
   );
 }
-
-const ghostBtn: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  padding: '6px 14px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
-  background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-  color: C.textMuted, transition: 'all 0.15s',
-};
 
 // ── Page root ─────────────────────────────────────────────────────────────────
 export default function ApplicationsPage() {
