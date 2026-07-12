@@ -1000,9 +1000,189 @@ function PropertiesPanel({
   );
 }
 
+// ── Canvas Logo ───────────────────────────────────────────────────────────────
+// Extensible state-driven logo. Add new states by adding one entry to LOGO_STATES
+// and (optionally) a @keyframes block in LOGO_KEYFRAMES.
+export type LogoState = 'idle' | 'dirty' | 'error' | 'success' | 'thinking' | 'warning';
+
+interface LogoStateDef {
+  color: string;
+  opacity: number;
+  filter: string;
+  animation: string;  // CSS animation shorthand applied to wrapper
+  polygonAnimation?: string;  // applied per-polygon for explode effect
+}
+
+const LOGO_STATES: Record<LogoState, LogoStateDef> = {
+  idle: {
+    color: '#00f0ff',
+    opacity: 0.13,
+    filter: 'drop-shadow(0 0 18px rgba(0,240,255,0.18))',
+    animation: 'logo-breathe 4s ease-in-out infinite',
+  },
+  dirty: {
+    color: '#f59e0b',
+    opacity: 0.22,
+    filter: 'drop-shadow(0 0 14px rgba(245,158,11,0.25))',
+    animation: 'logo-sway 2.5s ease-in-out infinite',
+  },
+  warning: {
+    color: '#f59e0b',
+    opacity: 0.30,
+    filter: 'drop-shadow(0 0 16px rgba(245,158,11,0.35))',
+    animation: 'logo-breathe 1.8s ease-in-out infinite',
+  },
+  error: {
+    color: '#ff6b8a',
+    opacity: 0.35,
+    filter: 'drop-shadow(0 0 18px rgba(255,107,138,0.4))',
+    animation: 'logo-shake 0.5s ease-in-out',
+  },
+  success: {
+    color: '#4ade80',
+    opacity: 0.9,
+    filter: 'drop-shadow(0 0 28px rgba(74,222,128,0.7))',
+    animation: 'logo-burst 1.2s ease-out forwards',
+    polygonAnimation: 'logo-explode 1.2s ease-out forwards',
+  },
+  thinking: {
+    color: '#d0bcff',
+    opacity: 0.28,
+    filter: 'drop-shadow(0 0 16px rgba(208,188,255,0.3))',
+    animation: 'logo-flip 1.4s linear infinite',
+  },
+};
+
+const LOGO_KEYFRAMES = `
+@keyframes logo-breathe {
+  0%, 100% { opacity: var(--logo-op); transform: scale(1); }
+  50%       { opacity: calc(var(--logo-op) * 1.7); transform: scale(1.03); }
+}
+@keyframes logo-sway {
+  0%, 100% { transform: rotate3d(0,1,0,0deg); }
+  25%       { transform: rotate3d(0,1,0,6deg); }
+  75%       { transform: rotate3d(0,1,0,-6deg); }
+}
+@keyframes logo-shake {
+  0%,100% { transform: translateX(0); }
+  15%     { transform: translateX(-10px) rotate(-2deg); }
+  30%     { transform: translateX(10px)  rotate(2deg); }
+  45%     { transform: translateX(-8px)  rotate(-1deg); }
+  60%     { transform: translateX(8px)   rotate(1deg); }
+  75%     { transform: translateX(-4px); }
+  90%     { transform: translateX(4px); }
+}
+@keyframes logo-burst {
+  0%   { transform: scale(1);    opacity: var(--logo-op); filter: drop-shadow(0 0 28px rgba(74,222,128,0.7)); }
+  30%  { transform: scale(1.18); opacity: 1;              filter: drop-shadow(0 0 60px rgba(74,222,128,1)); }
+  60%  { transform: scale(0.96); opacity: 0.8; }
+  100% { transform: scale(1);    opacity: 0.13;           filter: drop-shadow(0 0 18px rgba(0,240,255,0.18)); }
+}
+@keyframes logo-explode {
+  0%   { transform: translate(0,0) scale(1); opacity: 1; }
+  40%  { transform: translate(var(--ex), var(--ey)) scale(1.3); opacity: 0.9; }
+  70%  { transform: translate(calc(var(--ex)*1.6), calc(var(--ey)*1.6)) scale(0.8); opacity: 0.4; }
+  100% { transform: translate(0,0) scale(1); opacity: 1; }
+}
+@keyframes logo-flip {
+  0%   { transform: perspective(600px) rotateY(0deg); }
+  100% { transform: perspective(600px) rotateY(360deg); }
+}
+`;
+
+// Explode vectors per polygon index (direction each piece flies)
+const EXPLODE_VECTORS = [
+  [-1, -1], [1, -1],   // top outer wings
+  [-0.5, -1], [0.5, -1], // upper inner blocks
+  [0, -1],              // center top wedge
+  [-1, 0], [1, 0],      // middle vertical inner
+  [-0.8, 0.5], [0.8, 0.5], // central lower wedges
+  [0, 0.8],             // central stem
+  [-1.2, 0.3], [1.2, 0.3], // side faces
+];
+
+function CanvasLogo({ state }: { state: LogoState }) {
+  const def = LOGO_STATES[state];
+  const key = state; // re-mount on state change to restart animations
+
+  const polygons = [
+    // top outer wings
+    "24,25 100,0 152,58 80,88",
+    "398,25 322,0 270,58 342,88",
+    // upper inner blocks
+    "104,64 152,44 188,89 138,108",
+    "318,64 270,44 234,89 284,108",
+    // center top wedge
+    "191,92 211,73 231,92 211,111",
+    // middle vertical inner blocks
+    "108,72 133,93 131,182 104,162",
+    "314,72 289,93 291,182 318,162",
+    // central lower wedges
+    "139,112 188,95 188,207 141,167",
+    "283,112 234,95 234,207 281,167",
+    // central stem
+    "191,114 231,114 231,206 211,223 191,206",
+    // side faces
+    "0,133 54,96 101,126 101,335 35,286 35,269 27,263 35,257 35,242 25,235 35,228 35,213 23,206 35,197 35,184",
+    "422,133 368,96 321,126 321,335 387,286 387,269 395,263 387,257 387,242 397,235 387,228 387,213 399,206 387,197 387,184",
+  ];
+
+  return (
+    <div
+      key={key}
+      style={{
+        position: 'absolute', inset: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        pointerEvents: 'none', zIndex: 1,
+        perspective: '600px',
+      }}
+    >
+      <style>{LOGO_KEYFRAMES}</style>
+      <div
+        style={{
+          // @ts-ignore
+          '--logo-op': def.opacity,
+          animation: def.animation,
+          opacity: def.opacity,
+          filter: def.filter,
+          willChange: 'transform, opacity, filter',
+        } as React.CSSProperties}
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="180" height="144"
+          viewBox="0 0 422 336"
+          fill="none"
+        >
+          {polygons.map((pts, i) => {
+            const [ex, ey] = EXPLODE_VECTORS[i] ?? [0, 0];
+            const delay = `${i * 0.03}s`;
+            return (
+              <polygon
+                key={i}
+                points={pts}
+                fill={def.color}
+                style={def.polygonAnimation ? {
+                  // @ts-ignore
+                  '--ex': `${ex * 55}px`,
+                  '--ey': `${ey * 55}px`,
+                  animation: def.polygonAnimation,
+                  animationDelay: delay,
+                  transformOrigin: 'center',
+                  transformBox: 'fill-box',
+                } as React.CSSProperties : undefined}
+              />
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 // ── Canvas inner (needs ReactFlow context) ────────────────────────────────────
 function CanvasInner({
-  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout,
+  nodes, edges, onNodesChange, onEdgesChange, onConnect, onDrop, onDragOver, selectedNode, setSelectedNode, onUpdateNode, onDeleteEdge, onAutoLayout, logoState,
 }: {
   nodes: Node[];
   edges: Edge[];
@@ -1016,6 +1196,7 @@ function CanvasInner({
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
   onDeleteEdge: (edgeId: string) => void;
   onAutoLayout: () => void;
+  logoState: LogoState;
 }) {
   const { fitView, zoomIn, zoomOut, getZoom, setViewport, getViewport } = useReactFlow();
   const [zoom, setZoom] = useState(100);
@@ -1043,6 +1224,7 @@ function CanvasInner({
   return (
     <div style={{ flex: 1, position: 'relative', height: '100%' }}>
       <style>{CANVAS_STYLES}</style>
+      <CanvasLogo state={logoState} />
       {/* Canvas toolbar */}
       <div style={{
         position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)',
@@ -1300,7 +1482,15 @@ function BuilderView({
   const [appName, setAppName] = useState(app?.name ?? '');
   const [slugLocked, setSlugLocked] = useState(!!app?.slug);
   const [isDirty, setIsDirty] = useState(false);
+  const [logoState, setLogoState] = useState<LogoState>('idle');
+  const logoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rfWrapper = useRef<HTMLDivElement>(null);
+
+  function triggerLogo(state: LogoState, duration = 2000) {
+    if (logoTimerRef.current) clearTimeout(logoTimerRef.current);
+    setLogoState(state);
+    logoTimerRef.current = setTimeout(() => setLogoState('idle'), duration);
+  }
   const nodesRef = useRef<Node[]>(initial.nodes);
   const edgesRef = useRef<Edge[]>(initial.edges);
   const { screenToFlowPosition } = useReactFlow();
@@ -1322,7 +1512,14 @@ function BuilderView({
   useEffect(() => {
     if (!mountedRef.current) { mountedRef.current = true; return; }
     setIsDirty(true);
+    // Only switch to dirty state if not mid-animation
+    setLogoState(prev => (prev === 'idle' || prev === 'dirty') ? 'dirty' : prev);
   }, [nodes, edges, appName]);
+
+  // Return logo to idle when canvas becomes clean
+  useEffect(() => {
+    if (!isDirty) setLogoState(prev => prev === 'dirty' ? 'idle' : prev);
+  }, [isDirty]);
 
   // Warn before leaving when dirty
   useEffect(() => {
@@ -1403,7 +1600,7 @@ function BuilderView({
 
   async function handleSave(deploy = false) {
     const chain = analyzeChain(nodes, edges);
-    if (!chain.ready) { showToast(chain.label, false); return; }
+    if (!chain.ready) { showToast(chain.label, false); triggerLogo('error', 1800); return; }
 
     const epData = chain.epNode!.data as EntryPointData;
     const orchData = chain.orchNode!.data as OrchestratorData;
@@ -1416,6 +1613,7 @@ function BuilderView({
       .map((n: Node) => (n.data as AgentData).agentId);
 
     setSaving(true);
+    setLogoState('thinking');
     try {
       // Always update orchestrator agent list (full replace)
       await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
@@ -1435,9 +1633,11 @@ function BuilderView({
         await themApi.createApplication(body);
       }
       setIsDirty(false);
+      triggerLogo('success', deploy ? 2500 : 1800);
       showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
       onSaved();
     } catch (err: any) {
+      triggerLogo('error', 1800);
       showToast(err?.message ?? 'Save failed', false);
     } finally {
       setSaving(false);
@@ -1545,6 +1745,7 @@ function BuilderView({
             onUpdateNode={updateNodeData}
             onDeleteEdge={deleteEdge}
             onAutoLayout={autoLayout}
+            logoState={logoState}
           />
         </div>
 
