@@ -1012,7 +1012,7 @@ interface LogoStateDef {
 }
 
 const LOGO_STATES: Record<LogoState, LogoStateDef> = {
-  idle:     { opacity: 0.35, filter: 'drop-shadow(0 0 24px rgba(0,240,255,0.5))',     animation: 'logo-breathe 20s ease-in-out infinite' },
+  idle:     { opacity: 0.35, filter: 'drop-shadow(0 0 24px rgba(160,240,208,0.5))',   animation: 'logo-breathe 20s ease-in-out infinite' },
   dirty:    { opacity: 0.22, filter: 'drop-shadow(0 0 14px rgba(245,158,11,0.25))',   animation: 'logo-sway 2.5s ease-in-out infinite' },
   warning:  { opacity: 0.30, filter: 'drop-shadow(0 0 16px rgba(245,158,11,0.35))',   animation: 'logo-breathe 1.8s ease-in-out infinite' },
   error:    { opacity: 0.35, filter: 'drop-shadow(0 0 18px rgba(255,107,138,0.4))',   animation: 'logo-shake 0.5s ease-in-out' },
@@ -1109,12 +1109,12 @@ function CanvasLogo({ state }: { state: LogoState }) {
                 '--ex': ex,
                 '--ey': ey,
                 '--rot': `${(ex + ey) * 45}deg`,
-                fill: '#00f0ff',
+                fill: '#a0f0d0',
                 animation: 'logo-explode 1.8s cubic-bezier(0.25,0.46,0.45,0.94) forwards',
                 animationDelay: `${i * 0.06}s`,
                 transformOrigin: 'center',
                 transformBox: 'fill-box',
-              } as React.CSSProperties : { fill: '#00f0ff' }}
+              } as React.CSSProperties : { fill: '#a0f0d0' }}
             />
           ))}
         </g>
