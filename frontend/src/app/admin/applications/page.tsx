@@ -1023,8 +1023,8 @@ interface LogoStateDef {
 }
 
 const LOGO_STATES: Record<LogoState, LogoStateDef> = {
-  idle:     { opacity: 0.35, filter: 'drop-shadow(0 0 24px rgba(160,240,208,0.5))',   animation: 'logo-breathe 20s ease-in-out infinite' },
-  dirty:    { opacity: 0.22, filter: 'drop-shadow(0 0 14px rgba(245,158,11,0.25))',   animation: 'logo-sway 2.5s ease-in-out infinite' },
+  idle:     { opacity: 0.015, filter: 'none',   animation: 'none' },
+  dirty:    { opacity: 0.015, filter: 'none',   animation: 'none' },
   warning:  { opacity: 0.45, filter: 'drop-shadow(0 0 18px rgba(255,120,120,0.4))',    animation: 'logo-warn-flash 1.2s ease-in-out 1 forwards' },
   error:    { opacity: 0.35, filter: 'drop-shadow(0 0 18px rgba(255,107,138,0.4))',   animation: 'logo-shake 0.5s ease-in-out' },
   success:  { opacity: 1.0,  filter: 'drop-shadow(0 0 40px rgba(74,222,128,0.9))',    animation: 'logo-burst 1.8s ease-out forwards' },
@@ -1033,9 +1033,14 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
 
 const LOGO_KEYFRAMES = `
 @keyframes logo-breathe {
-  0%   { opacity: 0.18; }
-  50%  { opacity: 0.45; }
-  100% { opacity: 0.18; }
+  0%   { opacity: 0.012; }
+  50%  { opacity: 0.028; }
+  100% { opacity: 0.012; }
+}
+@keyframes logo-breathe-v3 {
+  0%   { opacity: 0.007; }
+  50%  { opacity: 0.015; }
+  100% { opacity: 0.007; }
 }
 @keyframes logo-sway {
   0%, 100% { transform: rotate3d(0,1,0,0deg); }
@@ -1126,8 +1131,7 @@ function CanvasLogo({ state }: { state: LogoState }) {
         width={720} height={572}
         viewBox="0 0 1407 1118"
         overflow="visible"
-        opacity={def.opacity}
-        style={{ animation: def.animation, filter: def.filter, overflow: 'visible' }}
+        style={{ opacity: def.opacity, animation: def.animation, filter: def.filter, overflow: 'visible' }}
       >
         {LOGO_PATHS.map(({ id, points, ex, ey }, i) => (
           <polygon
@@ -1807,7 +1811,7 @@ function BuilderView({
     if (advisorScanningRef.current) return;
 
     // If already open, just re-focus (no re-scan)
-    if (advisorOpen) { setAdvisorOpen(false); return; }
+    if (advisorOpen) { setAdvisorOpen(false); triggerLogo('idle', 1); return; }
 
     advisorScanningRef.current = true;
     setAdvisorScanning(true);
@@ -2053,7 +2057,7 @@ function BuilderView({
             scanning={advisorScanning}
             onInputChange={setAdvisorInput}
             onSend={text => advisorSend(text)}
-            onClose={() => setAdvisorOpen(false)}
+            onClose={() => { setAdvisorOpen(false); triggerLogo('idle', 1); }}
             onRescan={handleAdvisorRescan}
           />
         )}
