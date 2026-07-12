@@ -67,7 +67,7 @@ type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
 interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; [key: string]: unknown; }
 interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
-interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; [key: string]: unknown; }
+interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; icon?: string | null; [key: string]: unknown; }
 
 interface AdvisorMessage { role: 'user' | 'assistant'; text: string; streaming?: boolean; }
 
@@ -121,8 +121,16 @@ const CANVAS_STYLES = `
   .react-flow__node.selected .react-flow__handle {
     animation: handlePulse 1.2s ease-in-out infinite;
   }
-  .react-flow__node * {
+  .react-flow__node.selected {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  .react-flow__node *:not(.material-symbols-outlined):not(.material-icons) {
     font-family: inherit;
+    box-sizing: border-box;
+  }
+  .react-flow__node .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
     box-sizing: border-box;
   }
   .react-flow__edge:hover .react-flow__edge-path {
@@ -213,20 +221,14 @@ function InternalMBadge() {
   );
 }
 
-// Change 2: EntryPointNode with inline SVG icon + font fixes + hover animation
+// EntryPointNode — icon-only, transparent, name below
 function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean }; selected?: boolean }) {
   const slugMissing = !data.slug;
+  const accent = slugMissing ? '#f59e0b' : C.cyan;
+  const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
+  const msIcon = EP_MS_ICON[data.epType] ?? 'bolt';
   return (
-    <div
-      style={{
-        minWidth: 200, width: 'fit-content', padding: '14px 18px', borderRadius: 12,
-        background: C.cyanBg,
-        border: `1px solid ${data._scanning ? C.cyan : slugMissing ? 'rgba(255,180,100,0.6)' : selected ? C.cyan : C.cyanBorder}`,
-        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? '0 0 20px rgba(0,240,255,0.3)' : C.cyanGlow,
-        fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
-        transformOrigin: 'center', position: 'relative',
-      }}
-    >
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
       {selected && (
         <button
           className="nodrag"
@@ -242,103 +244,41 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      <Handle type="source" position={Position.Bottom} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(0,240,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          {data.epType === 'sse' ? (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.cyan} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-            </svg>
-          ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.cyan} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-            </svg>
-          )}
-        </div>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: 'Inter, sans-serif' }}>
-            {data.label || (data.epType === 'sse' ? 'SSE' : 'WebSocket')}
-          </div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: C.cyan, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2, fontFamily: 'Inter, sans-serif' }}>
-            Entry Point
-          </div>
-        </div>
+      <div style={{
+        width: 56, height: 56, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: selected ? `rgba(0,240,255,0.10)` : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+        border: selected ? `2px solid ${accent}` : '2px solid transparent',
+        boxShadow: selected ? `0 0 14px rgba(0,240,255,0.35), inset 0 0 8px rgba(0,240,255,0.08)` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+        transition: 'all 0.18s ease',
+      }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{msIcon}</span>
       </div>
-      {/* Inline slug input — always visible on node */}
-      <div style={{ borderTop: '1px solid rgba(0,240,255,0.12)', paddingTop: 8 }}>
-        <div style={{ fontSize: 9, fontWeight: 700, color: slugMissing ? '#f59e0b' : C.cyan, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
-          {slugMissing ? '⚠ Slug required' : 'Slug'}
+      <div style={{ marginTop: 6, textAlign: 'center' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, transition: 'color 0.18s' }}>
+          {data.label || (data.epType === 'sse' ? 'SSE' : 'WebSocket')}
         </div>
-        <input
-          className={`nodrag ${slugMissing ? 'ep-slug-missing' : 'ep-slug-set'}`}
-          value={data.slug}
-          onChange={() => {/* updated via Properties panel */}}
-          placeholder="my-app"
-          readOnly
-          style={{
-            width: '100%', padding: '4px 8px', borderRadius: 5, fontSize: 12,
-            fontFamily: 'JetBrains Mono, monospace', boxSizing: 'border-box',
-            background: 'rgba(0,0,0,0.25)',
-            border: `1px solid ${slugMissing ? 'rgba(245,158,11,0.5)' : 'rgba(0,240,255,0.2)'}`,
-            cursor: 'default',
-          }}
-          title="Click the node then set slug in the Properties panel →"
-        />
-        {!slugMissing && (
-          <div
-            className="nodrag"
-            title="Click to copy endpoint URL"
-            onClick={() => navigator.clipboard.writeText(
-              data.epType === 'websocket'
-                ? `ws://localhost:8088/apps/${data.slug}/ws`
-                : `http://localhost:8088/apps/${data.slug}/sse`
-            )}
-            style={{
-              marginTop: 5, padding: '3px 6px', borderRadius: 4,
-              background: 'rgba(0,240,255,0.06)', border: '1px solid rgba(0,240,255,0.15)',
-              fontSize: 10, color: 'rgba(0,240,255,0.7)', fontFamily: 'JetBrains Mono, monospace',
-              cursor: 'pointer', wordBreak: 'break-all', lineHeight: 1.4,
-              display: 'flex', alignItems: 'center', gap: 4,
-            }}
-          >
-            <span style={{ flex: 1 }}>
-              {data.epType === 'websocket' ? `ws://<host>/apps/${data.slug}/ws` : `http://<host>/apps/${data.slug}/sse`}
-            </span>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-            </svg>
-          </div>
+        {data.slug ? (
+          <div style={{ fontSize: 10, color: C.cyan, fontFamily: 'JetBrains Mono, monospace', opacity: 0.8, marginTop: 1 }}>{data.slug}</div>
+        ) : (
+          <div style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600, marginTop: 1 }}>⚠ slug required</div>
         )}
       </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
     </div>
   );
 }
 
 const INTERNAL_ORCHESTRATOR_NAMES = new Set(['workflow_advisor']);
 
-// Change 3: OrchestratorNode with inline SVG icon + font fixes + hover animation
+// OrchestratorNode — icon-only, transparent, name below
 function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData & { _scanning?: boolean }; selected?: boolean }) {
   const isInternal = INTERNAL_ORCHESTRATOR_NAMES.has(data.name);
+  const accent = isInternal ? '#a0f0d0' : C.purple;
+  const selGlow = isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(208,188,255,0.35)';
+  const selBg   = isInternal ? 'rgba(160,240,208,0.10)' : 'rgba(208,188,255,0.10)';
   return (
-    <div
-      style={{
-        minWidth: 200, width: 'fit-content', padding: '16px 20px', borderRadius: 12,
-        background: isInternal ? 'rgba(0,160,120,0.08)' : C.purpleBg,
-        border: `2px solid ${data._scanning ? C.cyan : selected ? (isInternal ? '#a0f0d0' : '#e8d5ff') : (isInternal ? 'rgba(160,240,208,0.35)' : C.purpleBorder)}`,
-        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? (isInternal ? '0 0 24px rgba(160,240,208,0.3)' : '0 0 24px rgba(208,188,255,0.4)') : (isInternal ? '0 0 10px rgba(160,240,208,0.08)' : C.purpleGlow),
-        fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
-        transformOrigin: 'center', position: 'relative',
-        paddingTop: isInternal ? '24px' : '16px',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.transform = 'scale(1.03)';
-        e.currentTarget.style.boxShadow = '0 0 32px rgba(208,188,255,0.45)';
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.transform = 'scale(1)';
-        e.currentTarget.style.boxShadow = selected ? '0 0 24px rgba(208,188,255,0.4)' : C.purpleGlow;
-      }}
-    >
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
       {selected && (
         <button
           className="nodrag"
@@ -354,56 +294,36 @@ function OrchestratorNode({ id, data, selected }: { id: string; data: Orchestrat
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      <Handle type="target" position={Position.Top} style={{ background: C.purple, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
-      <Handle type="source" position={Position.Bottom} style={{ background: C.purple, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        {isInternal && <InternalMBadge />}
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: isInternal ? 'rgba(160,240,208,0.12)' : 'rgba(208,188,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isInternal ? '#a0f0d0' : C.purple} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M2 20h20"/>
-            <path d="M5 20l2-8 5 4 5-4 2 8"/>
-            <circle cx="12" cy="4" r="2" fill={isInternal ? '#a0f0d0' : C.purple}/>
-          </svg>
-        </div>
-        <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: 'Inter, sans-serif' }}>{data.displayName}</div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: isInternal ? '#a0f0d0' : C.purple, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2, fontFamily: 'Inter, sans-serif' }}>
-            Orchestrator
-          </div>
+      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <div style={{
+        width: 56, height: 56, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+        border: selected ? `2px solid ${accent}` : '2px solid transparent',
+        boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+        transition: 'all 0.18s ease',
+      }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>hub</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 120 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
+          {data.displayName}
         </div>
       </div>
-      {data.model && (
-        <div style={{ marginTop: 10, padding: '4px 8px', borderRadius: 6, background: isInternal ? 'rgba(160,240,208,0.06)' : 'rgba(208,188,255,0.08)', fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>
-          {data.model}
-        </div>
-      )}
+      <Handle type="source" position={Position.Bottom} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
     </div>
   );
 }
 
-// Change 4: AgentNode with inline SVG icon + font fixes + hover animation
+// AgentNode — icon-only, transparent, name below; uses actual agent icon field first
 function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean }; selected?: boolean }) {
   const isInternal = data.tags?.includes('internal') ?? false;
+  const accent = isInternal ? '#a0f0d0' : C.green;
+  const selGlow = isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(74,222,128,0.35)';
+  const selBg   = isInternal ? 'rgba(160,240,208,0.10)' : 'rgba(74,222,128,0.10)';
+  const icon = data.icon || agentIconForLibrary({ slug: data.name, icon: data.icon } as any);
   return (
-    <div
-      style={{
-        minWidth: 160, maxWidth: 220, width: 'fit-content', padding: '12px 16px', borderRadius: 12,
-        background: isInternal ? 'rgba(0,160,120,0.08)' : C.greenBg,
-        border: `1px solid ${data._scanning ? C.cyan : selected ? (isInternal ? '#a0f0d0' : C.green) : (isInternal ? 'rgba(160,240,208,0.35)' : C.greenBorder)}`,
-        boxShadow: data._scanning ? '0 0 24px rgba(0,240,255,0.7)' : selected ? '0 0 20px rgba(160,240,208,0.25)' : '0 0 10px rgba(160,240,208,0.08)',
-        fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
-        transformOrigin: 'center', position: 'relative',
-        paddingTop: isInternal ? '22px' : '12px',
-      }}
-      onMouseEnter={e => {
-        e.currentTarget.style.transform = 'scale(1.03)';
-        e.currentTarget.style.boxShadow = '0 0 24px rgba(74,222,128,0.3)';
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.transform = 'scale(1)';
-        e.currentTarget.style.boxShadow = selected ? '0 0 20px rgba(74,222,128,0.25)' : '0 0 10px rgba(74,222,128,0.08)';
-      }}
-    >
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
       {selected && (
         <button
           className="nodrag"
@@ -419,30 +339,20 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      {isInternal && <InternalMBadge />}
-      <Handle type="target" position={Position.Top} style={{ background: isInternal ? '#a0f0d0' : C.green, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 7, background: isInternal ? 'rgba(160,240,208,0.12)' : 'rgba(74,222,128,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isInternal ? '#a0f0d0' : C.green} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="7" y="7" width="10" height="12" rx="2"/>
-            <path d="M10 7V5a2 2 0 0 1 4 0v2"/>
-            <circle cx="10.5" cy="12" r="1" fill={isInternal ? '#a0f0d0' : C.green}/>
-            <circle cx="13.5" cy="12" r="1" fill={isInternal ? '#a0f0d0' : C.green}/>
-            <path d="M10 15.5h4"/>
-          </svg>
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'Inter, sans-serif' }}>
-            {data.displayName}
-          </div>
-          <div style={{ fontSize: 10, fontWeight: 700, color: isInternal ? '#a0f0d0' : C.green, letterSpacing: 1, textTransform: 'uppercase', marginTop: 1, fontFamily: 'Inter, sans-serif' }}>
-            Agent
-          </div>
-          {data.description && (
-            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', fontFamily: 'Inter, sans-serif' }}>
-              {data.description}
-            </div>
-          )}
+      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <div style={{
+        width: 56, height: 56, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+        border: selected ? `2px solid ${accent}` : '2px solid transparent',
+        boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+        transition: 'all 0.18s ease',
+      }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
+          {data.displayName}
         </div>
       </div>
     </div>
@@ -536,6 +446,7 @@ function buildNodesFromApp(
           transport: agent.transport,
           endpointUrl: agent.endpoint_url,
           tags: agent.tags ?? [],
+          icon: agent.icon ?? null,
         } satisfies AgentData,
       });
       edges.push({ id: `e_orch_agent_${i}`, source: orchId, target: aId, animated: true, style: EDGE_STYLE });
@@ -726,7 +637,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
                   <div key={a.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                     <div
                       draggable
-                      onDragStart={e => dragItem(e, 'agent', { agentId: a.id, name: a.slug, displayName: a.display_name, description: a.description, transport: a.transport, endpointUrl: a.endpoint_url })}
+                      onDragStart={e => dragItem(e, 'agent', { agentId: a.id, name: a.slug, displayName: a.display_name, description: a.description, transport: a.transport, endpointUrl: a.endpoint_url, icon: a.icon ?? null })}
                       style={{ ...itemStyle, background: C.greenBg, borderColor: C.greenBorder, marginBottom: 0 }}
                       onMouseEnter={e => (e.currentTarget.style.background = 'rgba(74,222,128,0.1)')}
                       onMouseLeave={e => (e.currentTarget.style.background = C.greenBg)}
@@ -931,8 +842,25 @@ function PropertiesPanel({
                   </label>
                   <input style={{ ...inputStyle, fontFamily: 'JetBrains Mono, monospace' }} value={d.slug} onChange={e => { onSlugManualEdit(); onUpdateNode(selectedNode.id, { slug: e.target.value }); }} placeholder="my-app-slug" />
                   {d.slug && (
-                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6, padding: '5px 8px', background: C.surfaceLow, borderRadius: 5, fontFamily: 'JetBrains Mono, monospace', wordBreak: 'break-all' }}>
-                      {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws` : `http://<host>:8088/apps/${d.slug}/sse`}
+                    <div style={{
+                      fontSize: 11, color: C.textMuted, marginTop: 6, padding: '5px 8px',
+                      background: C.surfaceLow, borderRadius: 5, fontFamily: 'JetBrains Mono, monospace',
+                      wordBreak: 'break-all', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+                    }}>
+                      <span style={{ flex: 1 }}>
+                        {d.epType === 'websocket' ? `ws://<host>:8088/apps/${d.slug}/ws` : `http://<host>:8088/apps/${d.slug}/sse`}
+                      </span>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(
+                          d.epType === 'websocket'
+                            ? `ws://localhost:8088/apps/${d.slug}/ws`
+                            : `http://localhost:8088/apps/${d.slug}/sse`
+                        )}
+                        title="Copy endpoint URL"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.cyan, flexShrink: 0, padding: 0 }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 14 }}>content_copy</span>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -2246,7 +2174,7 @@ const APP_CARD_STYLES = `
 `;
 
 // EP metadata
-const EP_ICON: Record<string, string> = { websocket: 'settings_input_component', sse: 'stream', webrtc: 'videocam' };
+const EP_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam' };
 const EP_LABEL: Record<string, string> = { websocket: 'WebSocket', sse: 'SSE', webrtc: 'WebRTC' };
 
 function epIconColor(type: string): { color: string; glow: string; border: string } {
@@ -2258,6 +2186,7 @@ function epIconColor(type: string): { color: string; glow: string; border: strin
 // ── AppCard sub-component ─────────────────────────────────────────────────────
 function AppCard({
   app,
+  index,
   onEdit,
   onToggle,
   onDelete,
@@ -2266,6 +2195,7 @@ function AppCard({
   copiedId,
 }: {
   app: Application;
+  index: number;
   onEdit: (a: Application) => void;
   onToggle: (a: Application) => void;
   onDelete: (a: Application) => void;
@@ -2286,13 +2216,15 @@ function AppCard({
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
 
-  // Liveness probe — only run for enabled apps, once on mount
+  // Liveness probe — staggered by card index to avoid simultaneous requests
   useEffect(() => {
     if (!app.enabled) { setReachable(null); return; }
     let cancelled = false;
-    themApi.pingApp(app.slug).then(ok => { if (!cancelled) setReachable(ok); });
-    return () => { cancelled = true; };
-  }, [app.enabled, app.slug]);
+    const t = setTimeout(() => {
+      themApi.pingApp(app.slug).then(ok => { if (!cancelled) setReachable(ok); });
+    }, index * 150);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [app.enabled, app.slug, index]);
 
   const ep = epIconColor(app.entry_point_type);
   const accessMode = (app.access_policy as any)?.mode ?? 'token';
@@ -2492,10 +2424,11 @@ function ListView({
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
-          {list.map(app => (
+          {list.map((app, i) => (
             <AppCard
               key={app.id}
               app={app}
+              index={i}
               onEdit={onEdit}
               onToggle={onToggle}
               onDelete={onDelete}

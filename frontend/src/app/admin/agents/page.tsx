@@ -1391,11 +1391,34 @@ export default function AdminAgentsPage() {
                 )}
               </div>
             </Field>
-            <Field label="Status">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                <input type="checkbox" checked={form.enabled} onChange={(e) => set('enabled', e.target.checked)} />
-                <span style={{ fontSize: '14px', color: 'var(--tm-text)' }}>Enabled</span>
-              </label>
+            <Field label="">
+              <button
+                type="button"
+                onClick={() => set('enabled', !form.enabled)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '8px 16px', borderRadius: '9px', border: 'none',
+                  cursor: 'pointer', fontSize: '14px', fontWeight: 600,
+                  background: form.enabled ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.15)',
+                  color: form.enabled ? '#34d399' : '#94a3b8',
+                  transition: 'all 0.18s',
+                }}
+              >
+                <span style={{
+                  width: '32px', height: '18px', borderRadius: '9px', flexShrink: 0,
+                  background: form.enabled ? '#34d399' : '#475569',
+                  position: 'relative', display: 'inline-block',
+                  transition: 'background 0.18s',
+                }}>
+                  <span style={{
+                    position: 'absolute', top: '3px',
+                    left: form.enabled ? '17px' : '3px',
+                    width: '12px', height: '12px', borderRadius: '50%',
+                    background: '#fff', transition: 'left 0.18s',
+                  }} />
+                </span>
+                {form.enabled ? 'Enabled' : 'Disabled'}
+              </button>
             </Field>
             {error && <div style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(220,38,38,.08)', border: '1px solid rgba(220,38,38,.2)', color: '#f87171', fontSize: '13px', marginBottom: '16px' }}>{error}</div>}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
