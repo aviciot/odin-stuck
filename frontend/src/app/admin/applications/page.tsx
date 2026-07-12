@@ -899,21 +899,21 @@ function validateConnection(
   if (!src || !tgt) return `Unknown node type`;
 
   const compatible = src.emits.some(sig => tgt.accepts.includes(sig));
-  if (!compatible) return `${sourceType} → ${targetType} is not a valid connection`;
+  if (!compatible) return `Cannot connect ${sourceType} → ${targetType}`;
+
+  // Prevent duplicate edge before cardinality check
+  if (edges.some(e => e.source === sourceId && e.target === targetId)) {
+    return `These nodes are already connected`;
+  }
 
   if (src.maxOutgoing !== undefined) {
     const out = edges.filter(e => e.source === sourceId).length;
-    if (out >= src.maxOutgoing) return `${sourceType} supports at most ${src.maxOutgoing} outgoing connection`;
+    if (out >= src.maxOutgoing) return `Entry point already has an orchestrator — remove it first`;
   }
 
   if (tgt.maxIncoming !== undefined) {
     const inc = edges.filter(e => e.target === targetId).length;
-    if (inc >= tgt.maxIncoming) return `${targetType} supports at most ${tgt.maxIncoming} incoming connection`;
-  }
-
-  // Prevent duplicate edge
-  if (edges.some(e => e.source === sourceId && e.target === targetId)) {
-    return `Already connected`;
+    if (inc >= tgt.maxIncoming) return `This node already has the maximum number of incoming connections`;
   }
 
   return null;
@@ -1006,7 +1006,13 @@ function BuilderView({
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [libWidth, setLibWidth] = useState(280);
   const rfWrapper = useRef<HTMLDivElement>(null);
+  const nodesRef = useRef<Node[]>(initial.nodes);
+  const edgesRef = useRef<Edge[]>(initial.edges);
   const { screenToFlowPosition } = useReactFlow();
+
+  // Keep refs in sync so onConnect can read current state synchronously
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { edgesRef.current = edges; }, [edges]);
 
   function showToast(msg: string, ok: boolean) {
     setToast({ msg, ok });
@@ -1014,18 +1020,15 @@ function BuilderView({
   }
 
   const onConnect = useCallback((c: Connection) => {
-    setNodes((nds: Node[]) => {
-      setEdges((eds: Edge[]) => {
-        const srcNode = nds.find(n => n.id === c.source);
-        const tgtNode = nds.find(n => n.id === c.target);
-        if (!srcNode || !tgtNode) return eds;
-        const err = validateConnection(srcNode.type!, tgtNode.type!, c.source!, c.target!, eds);
-        if (err) { showToast(err, false); return eds; }
-        return addEdge({ ...c, animated: true, style: { stroke: C.cyan, strokeWidth: 2 } }, eds);
-      });
-      return nds;
-    });
-  }, [setEdges, setNodes]); // eslint-disable-line react-hooks/exhaustive-deps
+    const nds = nodesRef.current;
+    const eds = edgesRef.current;
+    const srcNode = nds.find(n => n.id === c.source);
+    const tgtNode = nds.find(n => n.id === c.target);
+    if (!srcNode || !tgtNode) return;
+    const err = validateConnection(srcNode.type!, tgtNode.type!, c.source!, c.target!, eds);
+    if (err) { showToast(err, false); return; }
+    setEdges(eds => addEdge({ ...c, animated: true, style: { stroke: C.cyan, strokeWidth: 2 } }, eds));
+  }, [setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function onDragOver(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
