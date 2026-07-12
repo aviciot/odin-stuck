@@ -718,11 +718,19 @@ function PropertiesPanel({
   onUpdateNode,
   slugLocked,
   onSlugManualEdit,
+  appName,
+  onAppNameChange,
+  chain,
+  app,
 }: {
   selectedNode: Node | null;
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
   slugLocked: boolean;
   onSlugManualEdit: () => void;
+  appName: string;
+  onAppNameChange: (name: string) => void;
+  chain: ChainStatus;
+  app: Application | null;
 }) {
   const [propTab, setPropTab] = useState<'properties' | 'configuration'>('properties');
 
@@ -754,13 +762,88 @@ function PropertiesPanel({
       display: 'flex', flexDirection: 'column',
     }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase', paddingBottom: 8, borderBottom: `1px solid ${C.outlineVariant}`, marginBottom: 16 }}>
-        Properties
+        {selectedNode ? 'Node Properties' : 'Application'}
       </div>
 
       {!selectedNode ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: C.textMuted, padding: 20, textAlign: 'center' }}>
-          <span className="material-icons" style={{ fontSize: 36, opacity: 0.3 }}>touch_app</span>
-          <div style={{ fontSize: 13 }}>Select a node to configure it</div>
+        /* ── App-level properties (shown when canvas background is clicked) ── */
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {/* App header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: 'rgba(0,209,255,0.06)', border: '1px solid rgba(0,209,255,0.18)' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.cyan }}>deployed_code</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {appName || 'Untitled Application'}
+              </div>
+              <div style={{ fontSize: 10, color: C.textMuted }}>
+                {app ? `ID: ${app.id.slice(0, 8)}…` : 'Not yet saved'}
+              </div>
+            </div>
+          </div>
+
+          {/* Name field */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' }}>Application Name</label>
+            <input
+              style={{
+                width: '100%', padding: '7px 10px', borderRadius: 6,
+                border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+                color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+              }}
+              value={appName}
+              onChange={e => onAppNameChange(e.target.value)}
+              placeholder="My Application"
+            />
+          </div>
+
+          {/* Chain status */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6, display: 'block' }}>Canvas Status</label>
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 8,
+              padding: '8px 10px', borderRadius: 8,
+              background: chain.ready ? 'rgba(74,222,128,0.06)' : 'rgba(255,180,171,0.06)',
+              border: `1px solid ${chain.ready ? 'rgba(74,222,128,0.2)' : 'rgba(255,180,171,0.2)'}`,
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0, marginTop: 4,
+                background: chain.color, boxShadow: chain.ready ? `0 0 6px ${chain.color}` : 'none',
+                display: 'inline-block',
+              }} />
+              <span style={{ fontSize: 12, color: chain.color, lineHeight: 1.5 }}>{chain.label}</span>
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6, display: 'block' }}>Canvas Info</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              {[
+                { label: 'Entry Points', value: String(chain.epNode ? 1 : 0) },
+                { label: 'Orchestrator', value: chain.orchNode ? (chain.orchNode.data as OrchestratorData).displayName : '—' },
+                { label: 'Agents', value: String(chain.agentCount) },
+                { label: 'Status', value: app?.enabled ? 'Deployed' : 'Draft' },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ padding: '7px 10px', borderRadius: 7, background: C.surfaceLow, border: `1px solid ${C.outlineVariant}` }}>
+                  <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {app && (
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' }}>Created</label>
+              <div style={{ fontSize: 12, color: C.textMuted }}>
+                {new Date(app.created_at).toLocaleString()}
+              </div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 8, padding: '8px 0', borderTop: `1px solid ${C.outlineVariant}`, fontSize: 11, color: C.textMuted, lineHeight: 1.6 }}>
+            Click any node to edit its properties.
+          </div>
         </div>
       ) : (
         <>
@@ -1465,7 +1548,19 @@ function BuilderView({
           />
         </div>
 
-        <PropertiesPanel selectedNode={selectedNode} onUpdateNode={updateNodeData} slugLocked={slugLocked} onSlugManualEdit={() => setSlugLocked(true)} />
+        <PropertiesPanel
+          selectedNode={selectedNode}
+          onUpdateNode={updateNodeData}
+          slugLocked={slugLocked}
+          onSlugManualEdit={() => setSlugLocked(true)}
+          appName={appName}
+          onAppNameChange={name => {
+            setAppName(name);
+            if (!slugLocked && epNode) updateNodeData(epNode.id, { slug: toSlug(name) });
+          }}
+          chain={chain}
+          app={app}
+        />
       </div>
 
       {/* Status bar */}
