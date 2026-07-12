@@ -1055,11 +1055,9 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
 
 const LOGO_KEYFRAMES = `
 @keyframes logo-breathe {
-  0%   { opacity: var(--logo-op);              transform: scale(1); }
-  25%  { opacity: calc(var(--logo-op) * 1.3);  transform: scale(1.015); }
-  50%  { opacity: calc(var(--logo-op) * 1.55); transform: scale(1.025); }
-  75%  { opacity: calc(var(--logo-op) * 1.3);  transform: scale(1.015); }
-  100% { opacity: var(--logo-op);              transform: scale(1); }
+  0%   { opacity: 0.10; transform: scale(1); }
+  50%  { opacity: 0.22; transform: scale(1.02); }
+  100% { opacity: 0.10; transform: scale(1); }
 }
 @keyframes logo-sway {
   0%, 100% { transform: rotate3d(0,1,0,0deg); }
@@ -1145,13 +1143,11 @@ function CanvasLogo({ state }: { state: LogoState }) {
       <style>{LOGO_KEYFRAMES}</style>
       <div
         style={{
-          // @ts-ignore
-          '--logo-op': def.opacity,
           animation: def.animation,
           opacity: def.opacity,
           filter: def.filter,
           willChange: 'transform, opacity, filter',
-        } as React.CSSProperties}
+        }}
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
