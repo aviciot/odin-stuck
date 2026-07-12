@@ -1012,7 +1012,7 @@ interface LogoStateDef {
 }
 
 const LOGO_STATES: Record<LogoState, LogoStateDef> = {
-  idle:     { opacity: 0.18, filter: 'drop-shadow(0 0 18px rgba(0,240,255,0.18))',    animation: 'logo-breathe 20s ease-in-out infinite' },
+  idle:     { opacity: 0.35, filter: 'drop-shadow(0 0 24px rgba(0,240,255,0.5))',     animation: 'logo-breathe 20s ease-in-out infinite' },
   dirty:    { opacity: 0.22, filter: 'drop-shadow(0 0 14px rgba(245,158,11,0.25))',   animation: 'logo-sway 2.5s ease-in-out infinite' },
   warning:  { opacity: 0.30, filter: 'drop-shadow(0 0 16px rgba(245,158,11,0.35))',   animation: 'logo-breathe 1.8s ease-in-out infinite' },
   error:    { opacity: 0.35, filter: 'drop-shadow(0 0 18px rgba(255,107,138,0.4))',   animation: 'logo-shake 0.5s ease-in-out' },
@@ -1022,9 +1022,9 @@ const LOGO_STATES: Record<LogoState, LogoStateDef> = {
 
 const LOGO_KEYFRAMES = `
 @keyframes logo-breathe {
-  0%   { opacity: 0.10; }
-  50%  { opacity: 0.32; }
-  100% { opacity: 0.10; }
+  0%   { opacity: 0.18; }
+  50%  { opacity: 0.45; }
+  100% { opacity: 0.18; }
 }
 @keyframes logo-sway {
   0%, 100% { transform: rotate3d(0,1,0,0deg); }
