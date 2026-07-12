@@ -376,7 +376,8 @@ export default function OrchestratorsPage() {
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 20 }}>
               {list.map((o) => {
-                const pColor = providerColor(o.llm_provider);
+                const isInternal = o.name === 'workflow_advisor';
+                const pColor = isInternal ? '#a0f0d0' : providerColor(o.llm_provider);
                 const pGlow  = `${pColor}38`;
                 const pBorder = `${pColor}70`;
                 const agentCount = o.allowed_agent_ids?.length ?? 0;
@@ -384,7 +385,26 @@ export default function OrchestratorsPage() {
                 const hasMemory = o.memory_enabled;
 
                 return (
-                  <div key={o.id} className="orch-glass-card" style={{ borderRadius: 20, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                  <div key={o.id} className="orch-glass-card" style={{ borderRadius: 20, display: 'flex', flexDirection: 'column', position: 'relative', ...(isInternal ? { border: '1px solid rgba(160,240,208,0.25)', boxShadow: '0 0 18px rgba(160,240,208,0.06)' } : {}) }}>
+                    {/* Internal indicator */}
+                    {isInternal && (
+                      <div title="Internal the-M system component" style={{ position: 'absolute', top: 10, right: 10, display: 'flex', alignItems: 'center', gap: 4, pointerEvents: 'none', zIndex: 2 }}>
+                        <svg width="16" height="13" viewBox="0 0 1407 1118" style={{ opacity: 0.7, flexShrink: 0 }}>
+                          <polygon points="88,77 558,187 446,102 331,15 98,75" fill="#a0f0d0"/>
+                          <polygon points="1323,77 855,187 1094,4 1284,107" fill="#a0f0d0"/>
+                          <polygon points="70,97 345,609 70,334" fill="#a0f0d0"/>
+                          <polygon points="1342,97 1067,609 1342,330" fill="#a0f0d0"/>
+                          <polygon points="682,361 381,292 532,410 664,367" fill="#a0f0d0"/>
+                          <polygon points="732,361 1033,291 881,410 740,348" fill="#a0f0d0"/>
+                          <polygon points="535,446 693,572 693,377 632,396" fill="#a0f0d0"/>
+                          <polygon points="878,446 721,377 721,572 881,512" fill="#a0f0d0"/>
+                          <polygon points="100,461 345,1105 345,641" fill="#a0f0d0"/>
+                          <polygon points="1312,462 1067,641 1067,1106 1316,484" fill="#a0f0d0"/>
+                        </svg>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: '#a0f0d0', letterSpacing: 0.8, textTransform: 'uppercase', opacity: 0.8 }}>internal</span>
+                      </div>
+                    )}
+
                     {/* Card body — click to edit */}
                     <div style={{ padding: '22px 22px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: 14, cursor: 'pointer' }} onClick={() => openEdit(o)}>
 
