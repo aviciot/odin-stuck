@@ -34,6 +34,7 @@ One line per doc. Read this first, then open only what you need.
 | `A2A_AGENTS.md` | Working with A2A test agents — start/stop commands, DB enable/disable, cache bust, playground prompts, raw JSON-RPC test, adapter integration test | A2A agent code changes, new test agents added |
 | `AUTH.md` | Touching auth flow, cookies, JWT, bearer tokens — covers JWT (dashboard) vs bearer tokens (WS), cache flow, token hashing, cookie names | Auth flow changes, new token types |
 | `FLOWS.md` | Understanding end-to-end orchestration — covers full sequence for a multi-agent run, Redis pub/sub trace events | Orchestration flow changes |
+| `WORKFLOW_ADVISOR.md` | Touching the AI Workflow Advisor — advisor agent, proposal protocol, Apply flow, serialization, cache invalidation | Changes to `agents/workflow_advisor/`, `AdvisorPanel`, `serializeWorkflow`, proposal types |
 
 ---
 
@@ -60,3 +61,5 @@ One line per doc. Read this first, then open only what you need.
 | What tests exist and when to run them | `scripts/tests/INDEX.md` |
 | What's currently broken | `STATUS.md` |
 | Why we use `init` callback not `server_settings` | `LESSONS.md` |
+| How the AI Workflow Advisor works end-to-end | `WORKFLOW_ADVISOR.md` |
+| How proposal blocks are parsed and applied to the DB | `WORKFLOW_ADVISOR.md` |

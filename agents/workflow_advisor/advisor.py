@@ -51,6 +51,18 @@ Key implications:
   production (the one connected to the orchestrator).
 - Isolated nodes (not connected to anything) are inert — they do nothing and
   confuse the builder.
+- maxIterations controls how many LLM→agent→LLM cycles the orchestrator can
+  run before it stops.  A workflow with 4 agents may need maxIterations ≥ 6
+  (one call per agent plus synthesis turns).  The default is 10 — flag if it
+  looks too low for the number of assigned agents.
+- historyWindow controls how many prior conversation turns are fed back to the
+  LLM on each turn.  null or 0 means no memory — every turn starts fresh.
+  For multi-step advisory or diagnostic workflows, historyWindow should be ≥ 5.
+- maxParallelTools > 1 enables the LLM to call multiple agents simultaneously
+  (asyncio.gather).  Flag if it's 1 for a workflow with many independent agents
+  that could benefit from parallel execution.
+- memoryEnabled=true activates summarization of long conversations.  Useful
+  for long-running workflows but adds latency.
 
 ## What makes a good orchestrator system prompt
 
@@ -82,22 +94,56 @@ A weak description:
 - Describes implementation details instead of capability ("Calls the REST API
   and returns JSON") — the LLM cannot use that to decide when to invoke it
 
+## Actionable proposals (them-proposal blocks)
+
+When you recommend a concrete change the user could apply in one click, emit a
+machine-readable proposal block immediately after the sentence that proposes it.
+Use a fenced block tagged `them-proposal` containing a single JSON object:
+
+```them-proposal
+{"id":"p1","type":"update_prompt","targetType":"orchestrator",
+ "targetId":"<the orchestratorId from the WORKFLOW GRAPH>",
+ "targetName":"<orchestrator name>","field":"system_prompt",
+ "current":"<existing value — copy exactly from the graph>",
+ "suggested":"<your full replacement — complete, ready to save>",
+ "reason":"<one sentence explaining the improvement>"}
+```
+
+Valid type/field pairs:
+- update_prompt        → field: system_prompt       (targetType: orchestrator)
+- update_description   → field: description          (targetType: agent)
+- update_display_name  → field: display_name         (targetType: orchestrator or agent)
+- update_config        → field: max_iterations | history_window | max_parallel_tools
+                         (targetType: orchestrator; suggested/current are integers)
+
+Rules:
+- Use the exact `orchestratorId` or `agentId` (UUID) from the WORKFLOW GRAPH.
+  Never invent an id.  If the id is missing from the graph, describe the change
+  in prose only — do NOT emit a block.
+- `suggested` for prompts/descriptions must be the COMPLETE final text, not a
+  diff, not "…keep the rest the same".
+- Number ids sequentially per response: p1, p2, p3, …
+- Emit a block only when you are confident the change improves the workflow.
+  Do not propose a change that merely restates the current value.
+- Still write your normal prose analysis.  A block always follows the prose
+  sentence that motivates it — never emit a bare block with no context.
+- Never emit raw JSON outside of a them-proposal block.
+
 ## Your response style
 
 Default (initial analysis):
 - Open with one line: workflow name, node count, overall health emoji
   (✅ healthy / ⚠️ needs attention / ❌ broken)
-- Then bullet points, grouped: Issues → Warnings → Suggestions → Security
+- Then sections: Issues → Warnings → Suggestions (with proposal blocks inline)
 - Each bullet: one sentence, specific, actionable.  Reference actual node
   names, agent slugs, and prompt excerpts.
 - End with one sentence overall assessment.
-- Total length: ~200–400 words.  No headers, no markdown fences.
+- Total length: ~250–500 words (proposals add to this — that's fine).
 
 Follow-up requests ("suggest a prompt", "explain that", "rewrite the description"):
-- Be verbose.  Provide the full suggested text, ready to copy-paste.
-- Explain your reasoning briefly.
+- Be verbose.  Provide the full suggested text as a them-proposal block.
+- Explain your reasoning briefly before the block.
 
-Never produce raw JSON in your responses.
 Never say "I cannot" — always attempt to help even with incomplete data.
 Be constructive.  Frame issues as opportunities, not failures.\
 """
@@ -106,15 +152,20 @@ Be constructive.  Frame issues as opportunities, not failures.\
 def _build_analysis_prompt(workflow: dict) -> str:
     """
     Converts the workflow graph dict into a structured prompt Claude can reason about.
-    Truncates long system prompts to avoid context bloat.
     """
     nodes = workflow.get("nodes", [])
     edges = workflow.get("edges", [])
-    security = workflow.get("security_reports", {})
 
-    ep_nodes = [n for n in nodes if n.get("type") == "entry_point"]
-    orch_nodes = [n for n in nodes if n.get("type") == "orchestrator"]
+    ep_nodes    = [n for n in nodes if n.get("type") == "entry_point"]
+    orch_nodes  = [n for n in nodes if n.get("type") == "orchestrator"]
     agent_nodes = [n for n in nodes if n.get("type") == "agent"]
+
+    # Build agent id→slug map from the canvas so orchestrators can name their members
+    agent_id_to_slug: dict = {}
+    for n in agent_nodes:
+        aid = n.get("agentId") or n.get("id")
+        if aid:
+            agent_id_to_slug[aid] = n.get("slug") or n.get("displayName") or aid
 
     lines = ["WORKFLOW GRAPH\n"]
 
@@ -134,15 +185,33 @@ def _build_analysis_prompt(workflow: dict) -> str:
         lines.append(f"Orchestrators ({len(orch_nodes)}):")
         for n in orch_nodes:
             raw_prompt = n.get("systemPrompt", "") or ""
-            prompt_preview = (raw_prompt[:500] + "…[truncated]") if len(raw_prompt) > 500 else raw_prompt
             prompt_word_count = len(raw_prompt.split())
-            lines.append(f"  - id={n['id']} name={n.get('name','?')!r} "
-                         f"model={n.get('model','?')} "
-                         f"maxParallelTools={n.get('maxParallelTools',1)}")
-            lines.append(f"    assignedAgentIds: {n.get('allowedAgentIds', [])}")
+            max_iter = n.get("maxIterations", "?")
+            hist_win = n.get("historyWindow")
+            mem = n.get("memoryEnabled", False)
+            parallel = n.get("maxParallelTools", 1)
+
+            # Resolve assigned agents — new format is list of {id, slug} objects;
+            # legacy format is a plain list of id strings
+            raw_assigned = n.get("assignedAgents") or n.get("allowedAgentIds") or []
+            assigned_slugs = []
+            for entry in raw_assigned:
+                if isinstance(entry, dict):
+                    slug = entry.get("slug") or agent_id_to_slug.get(entry.get("id", ""), entry.get("id", "?"))
+                else:
+                    slug = agent_id_to_slug.get(str(entry), str(entry))
+                assigned_slugs.append(slug)
+
+            lines.append(
+                f"  - name={n.get('name','?')!r} displayName={n.get('displayName','?')!r} "
+                f"model={n.get('model','?')} maxParallelTools={parallel} "
+                f"maxIterations={max_iter} historyWindow={hist_win!r} "
+                f"memoryEnabled={mem}"
+            )
+            lines.append(f"    assignedAgents ({len(assigned_slugs)}): {assigned_slugs}")
             lines.append(f"    systemPrompt ({prompt_word_count} words):")
-            if prompt_preview:
-                for line in prompt_preview.split("\n"):
+            if raw_prompt.strip():
+                for line in raw_prompt.split("\n"):
                     lines.append(f"      {line}")
             else:
                 lines.append("      (EMPTY)")
@@ -156,9 +225,16 @@ def _build_analysis_prompt(workflow: dict) -> str:
         lines.append(f"Agents ({len(agent_nodes)}):")
         for n in agent_nodes:
             desc = n.get("description", "") or ""
-            lines.append(f"  - id={n['id']} slug={n.get('slug','?')!r} "
-                         f"transport={n.get('transport','?')} "
-                         f"hasAuth={n.get('hasAuthToken', False)}")
+            scan = n.get("scanResult") or n.get("lastScanResult")
+            scan_str = ""
+            if isinstance(scan, dict):
+                scan_str = (f" [scan: score={scan.get('score','?')}/100 "
+                            f"risk={scan.get('risk','?')} — {scan.get('summary','')[:80]}]")
+            lines.append(
+                f"  - slug={n.get('slug','?')!r} displayName={n.get('displayName','?')!r} "
+                f"transport={n.get('transport','?')} hasAuth={n.get('hasAuthToken', False)}"
+                f"{scan_str}"
+            )
             lines.append(f"    description: {desc!r}" if desc else "    description: (EMPTY)")
     else:
         lines.append("Agents: NONE")
@@ -171,19 +247,7 @@ def _build_analysis_prompt(workflow: dict) -> str:
         for e in edges:
             lines.append(f"  {e.get('source','?')} → {e.get('target','?')}")
     else:
-        lines.append("Connections: NONE (no edges)")
-
-    lines.append("")
-
-    # Security reports
-    if security:
-        lines.append("Security Reports:")
-        for slug, report in security.items():
-            if isinstance(report, dict):
-                lines.append(f"  Agent {slug!r}: score={report.get('score','?')}/100 "
-                             f"risk={report.get('risk','?')} — {report.get('summary','')}")
-    else:
-        lines.append("Security Reports: none available")
+        lines.append("Connections: NONE (no edges — everything is isolated)")
 
     lines.append("\nAnalyze this workflow and provide your advisory.")
     return "\n".join(lines)

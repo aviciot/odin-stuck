@@ -69,7 +69,68 @@ interface EntryPointData { label: string; epType: EntryPointType; accessMode: 't
 interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
 interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; icon?: string | null; [key: string]: unknown; }
 
-interface AdvisorMessage { role: 'user' | 'assistant'; text: string; streaming?: boolean; }
+type ProposalStatus = 'pending' | 'applying' | 'applied' | 'failed' | 'stale';
+const PROPOSAL_ALLOWED_FIELDS = new Set([
+  'system_prompt', 'description', 'display_name',
+  'max_iterations', 'history_window', 'max_parallel_tools',
+]);
+interface Proposal {
+  id: string; type: string;
+  targetType: 'orchestrator' | 'agent';
+  targetId: string; targetName: string; field: string;
+  current: string | number; suggested: string | number; reason: string;
+  status: ProposalStatus; error?: string;
+}
+interface AdvisorMessage { role: 'user' | 'assistant'; text: string; streaming?: boolean; proposals?: Proposal[]; }
+
+function parseAdvisorBuffer(buf: string): { text: string; proposals: Proposal[] } {
+  const OPEN = '```them-proposal';
+  const CLOSE = '```';
+  const proposals: Proposal[] = [];
+  let text = buf;
+  let searchFrom = 0;
+  while (true) {
+    const openIdx = text.indexOf(OPEN, searchFrom);
+    if (openIdx === -1) break;
+    const afterOpen = text.indexOf('\n', openIdx);
+    if (afterOpen === -1) break; // opening fence not yet fully received
+    const closeIdx = text.indexOf('\n' + CLOSE, afterOpen);
+    if (closeIdx === -1) {
+      // Block not closed yet — hide everything from opening fence onward
+      text = text.slice(0, openIdx).trimEnd() + (text.slice(0, openIdx).trim() ? '\n\n_Preparing suggestion…_' : '');
+      break;
+    }
+    const jsonStr = text.slice(afterOpen + 1, closeIdx).trim();
+    const blockEnd = closeIdx + 1 + CLOSE.length;
+    try {
+      const obj = JSON.parse(jsonStr);
+      if (obj.id && obj.targetId && obj.targetType && PROPOSAL_ALLOWED_FIELDS.has(obj.field)) {
+        proposals.push({
+          id: String(obj.id), type: String(obj.type ?? ''),
+          targetType: obj.targetType, targetId: String(obj.targetId),
+          targetName: String(obj.targetName ?? obj.targetId), field: String(obj.field),
+          current: obj.current ?? '', suggested: obj.suggested ?? '',
+          reason: String(obj.reason ?? ''), status: 'pending',
+        });
+      }
+    } catch { /* malformed — silently drop */ }
+    // Remove the fenced block from display text
+    text = text.slice(0, openIdx).trimEnd() + text.slice(blockEnd);
+    // Don't advance searchFrom — new text may have shifted
+  }
+  return { text, proposals };
+}
+
+function mergeProposals(existing: Proposal[] | undefined, incoming: Proposal[]): Proposal[] {
+  if (!existing || existing.length === 0) return incoming;
+  const statusMap = new Map(existing.map(p => [p.id, p.status]));
+  const errorMap = new Map(existing.map(p => [p.id, p.error]));
+  return incoming.map(p => ({
+    ...p,
+    status: statusMap.get(p.id) ?? p.status,
+    error: errorMap.get(p.id),
+  }));
+}
 
 function getBridgeWs(): string {
   if (typeof window === 'undefined') return '';
@@ -1115,9 +1176,105 @@ function CanvasLogo({ state }: { state: LogoState }) {
 }
 
 // ── Advisor panel ─────────────────────────────────────────────────────────────
+const FIELD_LABEL: Record<string, string> = {
+  system_prompt: 'System prompt', description: 'Description',
+  display_name: 'Display name', max_iterations: 'Max iterations',
+  history_window: 'History window', max_parallel_tools: 'Max parallel tools',
+};
+const FIELD_ICON: Record<string, string> = {
+  system_prompt: 'edit_note', description: 'description', display_name: 'label',
+  max_iterations: 'repeat', history_window: 'history', max_parallel_tools: 'fork_right',
+};
+
+function ProposalCard({ proposal, msgIndex, onApply }: {
+  proposal: Proposal; msgIndex: number; onApply: (msgIndex: number, p: Proposal) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const st = proposal.status;
+  const isText = typeof proposal.suggested === 'string' && (proposal.suggested as string).length > 60;
+
+  const btnBg = st === 'applied' ? 'rgba(16,185,129,0.2)'
+    : st === 'failed' ? 'rgba(239,68,68,0.2)'
+    : st === 'stale' ? 'rgba(251,191,36,0.15)'
+    : 'rgba(0,240,255,0.12)';
+  const btnColor = st === 'applied' ? '#34d399'
+    : st === 'failed' ? '#f87171'
+    : st === 'stale' ? '#fbbf24'
+    : C.cyan;
+  const btnLabel = st === 'applying' ? '…' : st === 'applied' ? 'Applied ✓' : st === 'failed' ? 'Retry' : st === 'stale' ? 'Apply anyway' : 'Apply';
+
+  return (
+    <div style={{
+      marginTop: 8, borderRadius: 8, border: `1px solid rgba(0,240,255,0.18)`,
+      background: 'rgba(0,240,255,0.04)', overflow: 'hidden',
+    }}>
+      {/* Card header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 10px' }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.cyan, flexShrink: 0 }}>
+          {FIELD_ICON[proposal.field] ?? 'tune'}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: C.cyan, flex: 1 }}>
+          {FIELD_LABEL[proposal.field] ?? proposal.field}
+          <span style={{ fontWeight: 400, color: C.textMuted }}> · {proposal.targetName}</span>
+        </span>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: C.textMuted, padding: 0, lineHeight: 1 }}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>{expanded ? 'expand_less' : 'expand_more'}</span>
+        </button>
+      </div>
+
+      {/* Reason */}
+      <div style={{ padding: '0 10px 7px', fontSize: 11, color: '#94a3b8', lineHeight: 1.5 }}>{proposal.reason}</div>
+
+      {/* Diff preview (expandable) */}
+      {expanded && (
+        <div style={{ borderTop: `1px solid rgba(0,240,255,0.1)`, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div>
+            <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 2 }}>Current</div>
+            <div style={{
+              fontSize: 11, color: '#94a3b8', background: 'rgba(255,255,255,0.03)', borderRadius: 4,
+              padding: '5px 7px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              maxHeight: isText ? 80 : 'none', overflowY: isText ? 'auto' : 'visible',
+            }}>{String(proposal.current) || '(empty)'}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#34d399', marginBottom: 2 }}>Suggested</div>
+            <div style={{
+              fontSize: 11, color: '#d1fae5', background: 'rgba(16,185,129,0.06)', borderRadius: 4,
+              padding: '5px 7px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              maxHeight: isText ? 120 : 'none', overflowY: isText ? 'auto' : 'visible',
+            }}>{String(proposal.suggested)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Apply button */}
+      <div style={{ padding: '6px 10px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          disabled={st === 'applying' || st === 'applied'}
+          onClick={() => onApply(msgIndex, proposal)}
+          style={{
+            padding: '5px 12px', borderRadius: 6, border: `1px solid ${btnColor}`,
+            background: btnBg, color: btnColor, fontSize: 11, fontWeight: 700,
+            cursor: st === 'applying' || st === 'applied' ? 'not-allowed' : 'pointer',
+            opacity: st === 'applying' ? 0.7 : 1,
+          }}
+        >{btnLabel}</button>
+        {proposal.error && <span style={{ fontSize: 10, color: '#f87171', flex: 1 }}>{proposal.error}</span>}
+        {st === 'stale' && !proposal.error && (
+          <span style={{ fontSize: 10, color: '#fbbf24' }}>Canvas changed since analysis</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AdvisorPanel({
   messages, busy, input, scanning,
   onInputChange, onSend, onClose, onRescan,
+  onApplyProposal, onApplyAll,
 }: {
   messages: AdvisorMessage[];
   busy: boolean;
@@ -1127,13 +1284,15 @@ function AdvisorPanel({
   onSend: (text: string) => void;
   onClose: () => void;
   onRescan: () => void;
+  onApplyProposal: (msgIndex: number, p: Proposal) => void;
+  onApplyAll: (msgIndex: number) => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   return (
     <div style={{
-      width: 360, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column',
+      width: 380, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column',
       background: 'rgba(10,14,23,0.97)', borderLeft: `1px solid rgba(0,240,255,0.15)`,
       boxShadow: '-4px 0 24px rgba(0,0,0,0.4)',
     }}>
@@ -1177,24 +1336,46 @@ function AdvisorPanel({
             Scanning your workflow…
           </div>
         )}
-        {messages.map((m, i) => (
-          <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
-            {m.role === 'assistant' && (
-              <span style={{ fontSize: 10, color: C.textMuted, marginBottom: 3, paddingLeft: 2 }}>AI Advisor</span>
-            )}
-            <div style={{
-              maxWidth: '92%', padding: '9px 12px',
-              borderRadius: m.role === 'user' ? '12px 12px 2px 12px' : '2px 12px 12px 12px',
-              background: m.role === 'user' ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.04)',
-              border: `1px solid ${m.role === 'user' ? 'rgba(0,240,255,0.2)' : C.outlineVariant}`,
-              fontSize: 13, color: m.role === 'user' ? C.text : '#d1d5db',
-              lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-            }}>
-              {m.text}
-              {m.streaming && <span style={{ opacity: 0.6, marginLeft: 2 }}>▋</span>}
+        {messages.map((m, i) => {
+          const pendingCount = (m.proposals ?? []).filter(p => p.status === 'pending' || p.status === 'stale').length;
+          return (
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+              {m.role === 'assistant' && (
+                <span style={{ fontSize: 10, color: C.textMuted, marginBottom: 3, paddingLeft: 2 }}>AI Advisor</span>
+              )}
+              <div style={{
+                maxWidth: '96%', padding: '9px 12px',
+                borderRadius: m.role === 'user' ? '12px 12px 2px 12px' : '2px 12px 12px 12px',
+                background: m.role === 'user' ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${m.role === 'user' ? 'rgba(0,240,255,0.2)' : C.outlineVariant}`,
+                fontSize: 13, color: m.role === 'user' ? C.text : '#d1d5db',
+                lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>
+                {m.text}
+                {m.streaming && <span style={{ opacity: 0.6, marginLeft: 2 }}>▋</span>}
+              </div>
+              {/* Proposal cards */}
+              {(m.proposals ?? []).length > 0 && (
+                <div style={{ width: '96%', display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  {m.proposals!.map(p => (
+                    <ProposalCard key={`${i}-${p.id}`} proposal={p} msgIndex={i} onApply={onApplyProposal} />
+                  ))}
+                  {pendingCount >= 2 && (
+                    <button
+                      onClick={() => onApplyAll(i)}
+                      style={{
+                        marginTop: 8, padding: '6px 0', borderRadius: 7,
+                        border: `1px solid rgba(0,240,255,0.3)`,
+                        background: 'rgba(0,240,255,0.08)', color: C.cyan,
+                        fontSize: 11, fontWeight: 700, cursor: 'pointer', width: '100%',
+                      }}
+                    >Apply all ({pendingCount})</button>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
         {busy && messages[messages.length - 1]?.role !== 'assistant' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 2 }}>
             <span style={{ fontSize: 11, color: C.cyan, fontStyle: 'italic' }}>Thinking…</span>
@@ -1585,12 +1766,16 @@ function BuilderView({
   agents,
   onBack,
   onSaved,
+  onOrchestratorsChange,
+  onAgentsChange,
 }: {
   app: Application | null;
   orchestrators: OrchestratorFull[];
   agents: Agent[];
   onBack: () => void;
   onSaved: () => void;
+  onOrchestratorsChange: (update: (prev: OrchestratorFull[]) => OrchestratorFull[]) => void;
+  onAgentsChange: (update: (prev: Agent[]) => Agent[]) => void;
 }) {
   const initial = app
     ? buildNodesFromApp(app, orchestrators.find(o => o.id === app.orchestrator_id), agents)
@@ -1695,6 +1880,11 @@ function BuilderView({
   function serializeWorkflow(): object {
     const nds = nodesRef.current;
     const eds = edgesRef.current;
+
+    // Build agent id→slug lookup so orchestrators can name their assigned agents
+    const agentIdToSlug: Record<string, string> = {};
+    for (const a of agents) agentIdToSlug[a.id] = a.slug || a.id;
+
     return {
       nodes: nds.map(n => {
         if (n.type === 'entryPoint') {
@@ -1705,21 +1895,38 @@ function BuilderView({
           const d = n.data as OrchestratorData;
           const full = orchestrators.find(o => o.id === d.orchestratorId);
           const rawPrompt = full?.system_prompt ?? '';
+          const assignedAgentIds = full?.allowed_agent_ids ?? [];
           return {
-            type: 'orchestrator', id: n.id, name: d.name, displayName: d.displayName,
-            model: d.model, maxParallelTools: d.maxParallelTools,
-            systemPrompt: rawPrompt.slice(0, 600) + (rawPrompt.length > 600 ? '…' : ''),
-            allowedAgentIds: full?.allowed_agent_ids ?? [],
+            type: 'orchestrator',
+            id: n.id,
+            orchestratorId: full?.id,
+            name: d.name,
+            displayName: d.displayName,
+            model: d.model,
+            maxParallelTools: d.maxParallelTools,
+            maxIterations: full?.max_iterations ?? 10,
+            historyWindow: full?.history_window ?? null,
+            memoryEnabled: full?.memory_enabled ?? false,
+            systemPrompt: rawPrompt.slice(0, 800) + (rawPrompt.length > 800 ? '…[truncated]' : ''),
+            assignedAgents: assignedAgentIds.map(aid => ({
+              id: aid,
+              slug: agentIdToSlug[aid] ?? aid,
+            })),
           };
         }
         if (n.type === 'agent') {
           const d = n.data as AgentData;
           const full = agents.find(a => a.id === d.agentId);
           return {
-            type: 'agent', id: n.id, slug: d.name, displayName: d.displayName,
-            description: d.description, transport: d.transport,
+            type: 'agent',
+            id: n.id,
+            agentId: full?.id,
+            slug: d.name,
+            displayName: d.displayName,
+            description: d.description,
+            transport: d.transport,
             hasAuthToken: full?.auth_token_set ?? false,
-            lastScanResult: full?.last_scan_result
+            scanResult: full?.last_scan_result
               ? { score: full.last_scan_result.score, risk: full.last_scan_result.risk, summary: full.last_scan_result.summary }
               : null,
           };
@@ -1775,18 +1982,22 @@ function BuilderView({
           setAdvisorMessages(prev => [...prev, { role: 'assistant', text: '', streaming: true }]);
         } else if (msg.type === 'token') {
           advisorBufRef.current += (msg.text ?? '') as string;
-          const buf = advisorBufRef.current;
+          const { text: parsed, proposals } = parseAdvisorBuffer(advisorBufRef.current);
+          setAdvisorMessages(prev => {
+            const last = prev[prev.length - 1];
+            const merged = mergeProposals(last?.proposals, proposals);
+            const next: AdvisorMessage = { role: 'assistant', text: parsed, streaming: true, proposals: merged };
+            if (last?.role === 'assistant') return [...prev.slice(0, -1), next];
+            return [...prev, next];
+          });
+        } else if (msg.type === 'done') {
+          const { text: parsed, proposals } = parseAdvisorBuffer(advisorBufRef.current);
           setAdvisorMessages(prev => {
             const last = prev[prev.length - 1];
             if (last?.role === 'assistant') {
-              return [...prev.slice(0, -1), { role: 'assistant', text: buf, streaming: true }];
+              const merged = mergeProposals(last.proposals, proposals);
+              return [...prev.slice(0, -1), { ...last, text: parsed, proposals: merged, streaming: false }];
             }
-            return [...prev, { role: 'assistant', text: buf, streaming: true }];
-          });
-        } else if (msg.type === 'done') {
-          setAdvisorMessages(prev => {
-            const last = prev[prev.length - 1];
-            if (last?.role === 'assistant') return [...prev.slice(0, -1), { ...last, streaming: false }];
             return prev;
           });
           setAdvisorBusy(false);
@@ -1845,6 +2056,65 @@ function BuilderView({
     setAdvisorContextId(null);
     advisorBufRef.current = '';
     handleAdvisorOpen();
+  }
+
+  function setProposalStatus(msgIndex: number, proposalId: string, status: ProposalStatus, error?: string) {
+    setAdvisorMessages(prev => prev.map((m, i) => {
+      if (i !== msgIndex || !m.proposals) return m;
+      return {
+        ...m,
+        proposals: m.proposals.map(p =>
+          p.id === proposalId ? { ...p, status, error } : p
+        ),
+      };
+    }));
+  }
+
+  function reflectProposalOnCanvas(proposal: Proposal, updated: OrchestratorFull | Agent) {
+    // Update the full lists in parent so re-serialization sees the new value
+    if (proposal.targetType === 'orchestrator') {
+      onOrchestratorsChange(prev => prev.map(o => o.id === proposal.targetId ? updated as OrchestratorFull : o));
+    } else {
+      onAgentsChange(prev => prev.map(a => a.id === proposal.targetId ? updated as Agent : a));
+    }
+    // Update canvas node data for fields that live there
+    const nodeId = nodesRef.current.find(n => {
+      const d = n.data as Record<string, unknown>;
+      return d.orchestratorId === proposal.targetId || d.agentId === proposal.targetId;
+    })?.id;
+    if (!nodeId) return;
+    if (proposal.field === 'display_name') updateNodeData(nodeId, { displayName: proposal.suggested });
+    if (proposal.field === 'description') updateNodeData(nodeId, { description: proposal.suggested });
+    if (proposal.field === 'max_parallel_tools') updateNodeData(nodeId, { maxParallelTools: proposal.suggested });
+  }
+
+  async function applyProposal(msgIndex: number, proposal: Proposal) {
+    if (proposal.status === 'applying' || proposal.status === 'applied') return;
+    setProposalStatus(msgIndex, proposal.id, 'applying');
+    try {
+      const body: Record<string, unknown> = { [proposal.field]: proposal.suggested };
+      let updated: OrchestratorFull | Agent;
+      if (proposal.targetType === 'orchestrator') {
+        updated = await themApi.updateOrchestrator(proposal.targetId, body);
+      } else {
+        updated = await themApi.updateAgent(proposal.targetId, body);
+      }
+      reflectProposalOnCanvas(proposal, updated);
+      setProposalStatus(msgIndex, proposal.id, 'applied');
+      showToast(`Applied: ${FIELD_LABEL[proposal.field] ?? proposal.field} on ${proposal.targetName}`, true);
+    } catch (e) {
+      setProposalStatus(msgIndex, proposal.id, 'failed', String(e));
+      showToast(`Failed to apply ${FIELD_LABEL[proposal.field] ?? proposal.field}`, false);
+    }
+  }
+
+  async function applyAll(msgIndex: number) {
+    const msg = advisorMessages[msgIndex];
+    if (!msg?.proposals) return;
+    const pending = msg.proposals.filter(p => p.status === 'pending' || p.status === 'stale' || p.status === 'failed');
+    for (const p of pending) {
+      await applyProposal(msgIndex, p);
+    }
   }
 
   const onConnect = useCallback((c: Connection) => {
@@ -2137,6 +2407,8 @@ function BuilderView({
             onSend={text => advisorSend(text)}
             onClose={() => { setAdvisorOpen(false); triggerLogo('idle', 1); }}
             onRescan={handleAdvisorRescan}
+            onApplyProposal={applyProposal}
+            onApplyAll={applyAll}
           />
         )}
 
@@ -2691,6 +2963,8 @@ export default function ApplicationsPage() {
                 agents={agents}
                 onBack={backToList}
                 onSaved={onBuilderSaved}
+                onOrchestratorsChange={setOrchestrators}
+                onAgentsChange={setAgents}
               />
             </ReactFlowProvider>
           </div>
