@@ -1501,7 +1501,7 @@ function BuilderView({
     const tgtNode = nds.find(n => n.id === c.target);
     if (!srcNode || !tgtNode) return;
     const err = validateConnection(srcNode.type!, tgtNode.type!, c.source!, c.target!, eds);
-    if (err) { showToast(err, false); return; }
+    if (err) { showToast(err, false); triggerLogo('warning', 1800); return; }
     setEdges(eds => addEdge({ ...c, animated: true, style: { stroke: C.cyan, strokeWidth: 2 } }, eds));
   }, [setEdges]); // eslint-disable-line react-hooks/exhaustive-deps
 
