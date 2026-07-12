@@ -131,26 +131,20 @@ const CANVAS_STYLES = `
 // ── Node Components ──────────────────────────────────────────────────────────
 // Change 2: EntryPointNode with inline SVG icon + font fixes + hover animation
 function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: boolean }) {
+  const slugMissing = !data.slug;
   return (
     <div
       style={{
-        minWidth: 160, width: 'fit-content', padding: '14px 18px', borderRadius: 12,
-        background: C.cyanBg, border: `1px solid ${selected ? C.cyan : C.cyanBorder}`,
+        minWidth: 200, width: 'fit-content', padding: '14px 18px', borderRadius: 12,
+        background: C.cyanBg,
+        border: `1px solid ${slugMissing ? 'rgba(255,180,100,0.6)' : selected ? C.cyan : C.cyanBorder}`,
         boxShadow: selected ? '0 0 20px rgba(0,240,255,0.3)' : C.cyanGlow,
         fontFamily: 'Inter, sans-serif', cursor: 'default', transition: 'all 0.2s',
         transformOrigin: 'center',
       }}
-      onMouseEnter={e => {
-        e.currentTarget.style.transform = 'scale(1.03)';
-        e.currentTarget.style.boxShadow = '0 0 28px rgba(0,240,255,0.35)';
-      }}
-      onMouseLeave={e => {
-        e.currentTarget.style.transform = 'scale(1)';
-        e.currentTarget.style.boxShadow = selected ? '0 0 20px rgba(0,240,255,0.3)' : C.cyanGlow;
-      }}
     >
       <Handle type="source" position={Position.Bottom} style={{ background: C.cyan, border: `2px solid ${C.bg}`, width: 10, height: 10 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(0,240,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           {data.epType === 'sse' ? (
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.cyan} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -170,6 +164,28 @@ function EntryPointNode({ data, selected }: { data: EntryPointData; selected?: b
             Entry Point
           </div>
         </div>
+      </div>
+      {/* Inline slug input — always visible on node */}
+      <div style={{ borderTop: '1px solid rgba(0,240,255,0.12)', paddingTop: 8 }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: slugMissing ? '#f59e0b' : C.cyan, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>
+          {slugMissing ? '⚠ Slug required' : 'Slug'}
+        </div>
+        <input
+          className="nodrag"
+          value={data.slug}
+          onChange={() => {/* updated via Properties panel */}}
+          placeholder="my-app"
+          readOnly
+          style={{
+            width: '100%', padding: '4px 8px', borderRadius: 5, fontSize: 12,
+            fontFamily: 'JetBrains Mono, monospace', boxSizing: 'border-box',
+            background: 'rgba(0,0,0,0.25)',
+            border: `1px solid ${slugMissing ? 'rgba(245,158,11,0.5)' : 'rgba(0,240,255,0.2)'}`,
+            color: slugMissing ? '#f59e0b' : C.text,
+            cursor: 'default',
+          }}
+          title="Click the node then set slug in the Properties panel →"
+        />
       </div>
     </div>
   );
