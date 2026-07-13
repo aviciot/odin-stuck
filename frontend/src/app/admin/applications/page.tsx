@@ -65,7 +65,7 @@ const deleteNodeRef = { current: (_id: string) => {} };
 const ENTRY_POINT_TYPES = ['websocket', 'sse', 'webrtc'] as const;
 type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 
-interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; [key: string]: unknown; }
+interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; [key: string]: unknown; }
 interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
 interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; icon?: string | null; [key: string]: unknown; }
 
@@ -477,6 +477,8 @@ function buildNodesFromApp(
         epType: (epApp.entry_point_type as EntryPointType) ?? 'websocket',
         accessMode: ((epApp.access_policy as any)?.mode ?? 'token') as 'token' | 'public',
         slug: epApp.slug,
+        appName: epApp.name,
+        convTokenLimit: epApp.conversation_token_limit != null ? String(epApp.conversation_token_limit) : '',
       } satisfies EntryPointData,
     });
     if (orch) {
@@ -743,6 +745,7 @@ function PropertiesPanel({
   onConvTokenLimitChange,
   chain,
   app,
+  epCount,
 }: {
   selectedNode: Node | null;
   onUpdateNode: (id: string, data: Record<string, unknown>) => void;
@@ -754,6 +757,7 @@ function PropertiesPanel({
   onConvTokenLimitChange: (val: string) => void;
   chain: ChainStatus;
   app: Application | null;
+  epCount: number;
 }) {
   const [propTab, setPropTab] = useState<'properties' | 'configuration'>('properties');
 
@@ -804,40 +808,45 @@ function PropertiesPanel({
             </div>
           </div>
 
-          {/* Name field */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>Application Name</label>
-            <input
-              style={{
-                width: '100%', padding: '7px 10px', borderRadius: 6,
-                border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
-                color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
-              }}
-              value={appName}
-              onChange={e => onAppNameChange(e.target.value)}
-              placeholder="My Application"
-            />
-          </div>
-
-          {/* Conversation token limit */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>
-              Conversation Token Limit
-              <span style={{ marginLeft: 6, fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span>
-            </label>
-            <input
-              type="number"
-              min={1}
-              style={{
-                width: '100%', padding: '7px 10px', borderRadius: 6,
-                border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
-                color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
-              }}
-              value={convTokenLimit}
-              onChange={e => onConvTokenLimitChange(e.target.value)}
-              placeholder="e.g. 50000"
-            />
-          </div>
+          {epCount <= 1 ? (
+            <>
+              {/* Name field — single EP only; multi-EP uses per-node appName */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>Application Name</label>
+                <input
+                  style={{
+                    width: '100%', padding: '7px 10px', borderRadius: 6,
+                    border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+                    color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+                  }}
+                  value={appName}
+                  onChange={e => onAppNameChange(e.target.value)}
+                  placeholder="My Application"
+                />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>
+                  Conversation Token Limit
+                  <span style={{ marginLeft: 6, fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span>
+                </label>
+                <input
+                  type="number" min={1}
+                  style={{
+                    width: '100%', padding: '7px 10px', borderRadius: 6,
+                    border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+                    color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+                  }}
+                  value={convTokenLimit}
+                  onChange={e => onConvTokenLimitChange(e.target.value)}
+                  placeholder="e.g. 50000"
+                />
+              </div>
+            </>
+          ) : (
+            <div style={{ marginBottom: 14, padding: '8px 10px', borderRadius: 6, background: 'rgba(0,240,255,0.05)', border: '1px solid rgba(0,240,255,0.15)', fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>
+              Multiple entry points — select each entry point node to edit its name and token limit individually.
+            </div>
+          )}
 
           {/* Chain status */}
           <div style={{ marginBottom: 14 }}>
@@ -901,8 +910,12 @@ function PropertiesPanel({
             return (
               <div>
                 <div style={fieldWrap}>
-                  <label style={labelStyle}>Name</label>
-                  <input style={inputStyle} value={d.label} onChange={e => onUpdateNode(selectedNode.id, { label: e.target.value })} />
+                  <label style={labelStyle}>App Name</label>
+                  <input style={inputStyle} value={d.appName ?? d.label} onChange={e => onUpdateNode(selectedNode.id, { appName: e.target.value, label: e.target.value })} placeholder="My Application" />
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Token Limit <span style={{ fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span></label>
+                  <input type="number" min={1} style={inputStyle} value={d.convTokenLimit ?? ''} onChange={e => onUpdateNode(selectedNode.id, { convTokenLimit: e.target.value })} placeholder="e.g. 50000" />
                 </div>
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Type</label>
@@ -1868,6 +1881,16 @@ function BuilderView({
   const epNode = nodes.find((n: Node) => n.type === 'entryPoint');
 
   deleteNodeRef.current = (id: string) => {
+    const node = nodesRef.current.find(n => n.id === id);
+    // If deleting an entry point that maps to a saved app row, delete it from DB too
+    if (node?.type === 'entryPoint') {
+      const epData = node.data as EntryPointData;
+      const existing = allApps.find(a => a.slug === epData.slug);
+      if (existing?.id) {
+        themApi.deleteApplication(existing.id).catch(() => {});
+        onSaved(); // refresh parent list
+      }
+    }
     setNodes((nds: Node[]) => nds.filter(n => n.id !== id));
     setEdges((eds: Edge[]) => eds.filter(e => e.source !== id && e.target !== id));
     setSelectedNode((prev: Node | null) => prev?.id === id ? null : prev);
@@ -2280,28 +2303,32 @@ function BuilderView({
       }
 
       // Save each entry point as its own app row (create or update by slug)
-      let lastSaved: Application | null = null;
+      const savedMap: Record<string, Application> = {};
       for (const { epNode, orchNode } of connectedEps) {
         const epData = epNode.data as EntryPointData;
         const orchData = orchNode.data as OrchestratorData;
         const existing = allApps.find(a => a.slug === epData.slug) ?? (connectedEps.length === 1 ? currentApp : null);
+        // Per-node name/limit take priority; fall back to shared top-bar values for single-EP
+        const resolvedName = epData.appName?.trim() || epData.label || epData.slug;
+        const resolvedLimit = epData.convTokenLimit !== undefined ? epData.convTokenLimit : (connectedEps.length === 1 ? convTokenLimit : '');
         const body = {
-          name: appName || epData.label || epData.slug,
+          name: resolvedName,
           slug: epData.slug,
           entry_point_type: epData.epType,
           orchestrator_id: orchData.orchestratorId,
           access_policy: { mode: epData.accessMode },
           enabled: deploy ? true : (existing?.enabled ?? false),
-          conversation_token_limit: convTokenLimit !== '' ? parseInt(convTokenLimit, 10) : null,
+          conversation_token_limit: resolvedLimit !== '' ? parseInt(resolvedLimit, 10) : null,
         };
-        if (existing?.id) {
-          lastSaved = await themApi.updateApplication(existing.id, body);
-        } else {
-          lastSaved = await themApi.createApplication(body);
-        }
+        const saved = existing?.id
+          ? await themApi.updateApplication(existing.id, body)
+          : await themApi.createApplication(body);
+        savedMap[epData.slug] = saved;
       }
 
-      if (lastSaved) setCurrentApp(lastSaved);
+      // currentApp tracks the primary app (the one the builder was opened with)
+      const primarySaved = app?.slug ? savedMap[app.slug] : Object.values(savedMap)[0] ?? null;
+      if (primarySaved) setCurrentApp(primarySaved);
       setIsDirty(false);
       triggerLogo('success', deploy ? 2500 : 1800);
       showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
@@ -2315,7 +2342,8 @@ function BuilderView({
   }
 
   function handleTest() {
-    if (!currentApp?.enabled) { showToast('Deploy the application first', false); return; }
+    const anyEnabled = currentApp?.enabled || allApps.some(a => nodes.some((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === a.slug && a.enabled));
+    if (!anyEnabled) { showToast('Deploy the application first', false); return; }
     const epNodes = nodes.filter((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug);
     if (epNodes.length === 0) { showToast('No entry points configured', false); return; }
     const buildEntry = (n: Node): EpPickerEntry => {
@@ -2407,10 +2435,10 @@ function BuilderView({
           <button
             onClick={handleTest}
             disabled={saving}
-            title={!currentApp?.enabled ? 'Deploy first to test' : 'Open in playground'}
+            title={!currentApp?.enabled && !allApps.some(a => nodes.some((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === a.slug && a.enabled)) ? 'Deploy first to test' : 'Open in playground'}
             style={{
               padding: '7px 18px', borderRadius: 8, border: `1px solid ${C.outlineVariant}`,
-              background: 'transparent', color: currentApp?.enabled ? C.green : C.textMuted,
+              background: 'transparent', color: (currentApp?.enabled || allApps.some(a => nodes.some((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === a.slug && a.enabled))) ? C.green : C.textMuted,
               cursor: saving ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600,
               opacity: saving ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 6,
               transition: 'all 0.2s',
@@ -2492,6 +2520,7 @@ function BuilderView({
           onConvTokenLimitChange={val => { setConvTokenLimit(val); setIsDirty(true); }}
           chain={chain}
           app={currentApp}
+          epCount={nodes.filter((n: Node) => n.type === 'entryPoint').length}
         />
       </div>
 
