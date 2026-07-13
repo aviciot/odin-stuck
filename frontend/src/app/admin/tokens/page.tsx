@@ -5,15 +5,15 @@ import AuthGuard from '@/components/AuthGuard';
 import { themApi, type AccessToken, type OrchestratorFull } from '@/lib/api';
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
-const BG     = '#060a14';
+const BG     = 'var(--tm-bg)';
 const CYAN   = '#00d1ff';
 const AMBER  = '#f59e0b';
 const GREEN  = '#34d399';
 const RED    = '#f87171';
-const TEXT   = '#e2e8f0';
-const MUTED  = '#64748b';
-const BORDER = 'rgba(255,255,255,0.07)';
-const SURFACE = 'rgba(10,18,32,0.92)';
+const TEXT   = 'var(--tm-card-text)';
+const MUTED  = 'var(--tm-card-text-muted)';
+const BORDER = 'var(--tm-card-border)';
+const SURFACE = 'var(--tm-card)';
 
 const TOKEN_CSS = `
   .token-panel {
@@ -34,7 +34,7 @@ const TOKEN_CSS = `
     gap: 12px;
     align-items: center;
     padding: 14px 20px;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid var(--tm-divider);
     transition: background 180ms ease, box-shadow 180ms ease;
   }
   .token-row:last-of-type {
@@ -108,7 +108,7 @@ function CopyBox({ value, onDone }: { value: string; onDone: () => void }) {
         <code style={{
           flex: 1, fontSize: 11, color: TEXT, wordBreak: 'break-all',
           fontFamily: 'JetBrains Mono, monospace',
-          background: 'rgba(0,0,0,0.3)', padding: '8px 12px', borderRadius: 8,
+          background: 'var(--tm-inset-deep)', padding: '8px 12px', borderRadius: 8,
           border: '1px solid rgba(255,255,255,0.06)',
         }}>{value}</code>
         <button onClick={copy} style={{
@@ -212,7 +212,7 @@ export default function TokensPage() {
                 gridTemplateColumns: '1fr 200px 130px 130px 90px 80px',
                 gap: 12, padding: '10px 20px',
                 borderBottom: `1px solid ${BORDER}`,
-                background: 'rgba(255,255,255,0.015)',
+                background: 'var(--tm-filter-bg)',
               }}>
                 {['Token', 'Scope', 'Expires', 'Last used', 'Status', ''].map((h) => (
                   <div key={h} style={{ fontSize: 10, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.6px' }}>{h}</div>
@@ -233,7 +233,7 @@ export default function TokensPage() {
                 const expanded = expandedId === t.id;
                 const orchFull = orchestrators.find((o) => o.id === t.orchestrator_id);
                 return (
-                <div key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <div key={t.id} style={{ borderBottom: '1px solid var(--tm-divider)' }}>
                 <div
                   className="token-row"
                   style={{ cursor: 'default', borderBottom: 'none', userSelect: 'none' }}
@@ -373,7 +373,7 @@ export default function TokensPage() {
         >
           <div
             style={{
-              background: 'rgba(10,18,32,0.97)', border: `1px solid ${BORDER}`,
+              background: 'var(--tm-card-chrome)', border: `1px solid ${BORDER}`,
               backdropFilter: 'blur(20px)', borderRadius: 20,
               width: '100%', maxWidth: 440, padding: 32,
               boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
@@ -426,7 +426,7 @@ export default function TokensPage() {
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 28 }}>
               <button
                 onClick={() => setShowForm(false)}
-                style={{ padding: '8px 18px', borderRadius: 8, border: `1px solid ${BORDER}`, background: 'transparent', color: TEXT, cursor: 'pointer', fontSize: 13 }}
+                style={{ padding: '8px 18px', borderRadius: 8, border: '1px solid var(--tm-btn-2-border)', background: 'transparent', color: TEXT, cursor: 'pointer', fontSize: 13 }}
               >
                 Cancel
               </button>
@@ -455,13 +455,13 @@ export default function TokensPage() {
 const INP: React.CSSProperties = {
   width: '100%',
   background: 'rgba(255,255,255,0.04)',
-  border: `1px solid rgba(255,255,255,0.07)`,
+  border: `1px solid var(--tm-card-border)`,
   borderRadius: 8, padding: '9px 12px',
-  color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box',
+  color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box',
   outline: 'none', fontFamily: 'Inter, sans-serif',
 };
 
 const LBL: React.CSSProperties = {
-  display: 'block', fontSize: 11, fontWeight: 700, color: '#64748b',
+  display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--tm-card-text-muted)',
   marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px',
 };

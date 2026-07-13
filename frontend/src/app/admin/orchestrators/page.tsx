@@ -44,13 +44,13 @@ const EMPTY_FORM = {
 };
 
 // ── Design tokens (matches agents/applications pages) ──────────────────────
-const BG      = '#060a14';
+const BG      = 'var(--tm-bg)';
 const CYAN    = '#00d1ff';
 const PURPLE  = '#a78bfa';
 const GREEN   = '#34d399';
-const TEXT    = '#e2e8f0';
-const MUTED   = '#64748b';
-const BORDER  = 'rgba(255,255,255,0.07)';
+const TEXT    = 'var(--tm-card-text)';
+const MUTED   = 'var(--tm-card-text-muted)';
+const BORDER  = 'var(--tm-card-border)';
 
 // provider → accent color
 function providerColor(p: string | null): string {
@@ -76,8 +76,8 @@ const ORCH_CARD_CSS = `
 .orch-glass-card {
     background:
       linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.006) 40%, rgba(0,0,0,0.06) 100%),
-      rgba(10,18,32,0.92);
-    border: 1px solid rgba(255,255,255,0.07);
+      var(--tm-card);
+    border: 1px solid var(--tm-card-border);
     backdrop-filter: blur(12px);
     box-shadow:
       0 8px 32px rgba(0,0,0,0.4),
@@ -119,8 +119,8 @@ const ORCH_CARD_CSS = `
     transform: translateY(-1px);
   }
   .orch-card-btn--edit {
-    background: rgba(30,41,59,0.55); color: #94a3b8;
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--tm-btn-2-bg); color: #94a3b8;
+    border: 1px solid var(--tm-btn-2-border);
   }
   .orch-card-btn--edit:hover {
     border-color: rgba(129,140,248,0.45);
@@ -128,7 +128,7 @@ const ORCH_CARD_CSS = `
     background: rgba(99,102,241,0.1);
   }
   .orch-card-btn--toggle-on {
-    background: rgba(30,41,59,0.55); color: #f87171;
+    background: var(--tm-btn-2-bg); color: #f87171;
     border: 1px solid rgba(248,113,113,0.2);
   }
   .orch-card-btn--toggle-on:hover {
@@ -136,7 +136,7 @@ const ORCH_CARD_CSS = `
     background: rgba(248,113,113,0.08);
   }
   .orch-card-btn--toggle-off {
-    background: rgba(30,41,59,0.55); color: #34d399;
+    background: var(--tm-btn-2-bg); color: #34d399;
     border: 1px solid rgba(52,211,153,0.2);
   }
   .orch-card-btn--toggle-off:hover {
@@ -385,7 +385,7 @@ export default function OrchestratorsPage() {
                 const hasMemory = o.memory_enabled;
 
                 return (
-                  <div key={o.id} className="orch-glass-card" style={{ borderRadius: 20, display: 'flex', flexDirection: 'column', position: 'relative', ...(isInternal ? { background: 'linear-gradient(160deg, rgba(0,160,120,0.08) 0%, rgba(0,80,60,0.06) 100%), rgba(10,18,32,0.92)' } : {}) }}>
+                  <div key={o.id} className="orch-glass-card" style={{ borderRadius: 20, display: 'flex', flexDirection: 'column', position: 'relative', ...(isInternal ? { background: 'linear-gradient(160deg, rgba(0,160,120,0.08) 0%, rgba(0,80,60,0.06) 100%), var(--tm-card)' } : {}) }}>
 
                     {/* Card body — click to edit */}
                     <div style={{ padding: '22px 22px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: 14, cursor: 'pointer' }} onClick={() => openEdit(o)}>
@@ -464,9 +464,9 @@ export default function OrchestratorsPage() {
                           <button
                             onClick={() => del(o)}
                             title="Delete orchestrator"
-                            style={{ width: 32, height: 32, borderRadius: 8, cursor: 'pointer', background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 150ms ease, border-color 150ms ease' }}
+                            style={{ width: 32, height: 32, borderRadius: 8, cursor: 'pointer', background: 'rgba(30,41,59,0.5)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--tm-card-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'color 150ms ease, border-color 150ms ease' }}
                             onMouseEnter={e => { e.currentTarget.style.color = '#f87171'; e.currentTarget.style.borderColor = 'rgba(248,113,113,0.4)'; }}
-                            onMouseLeave={e => { e.currentTarget.style.color = '#64748b'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.color = 'var(--tm-card-text-muted)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; }}
                           >
                             <span className="material-symbols-outlined" style={{ fontSize: 16 }}>delete</span>
                           </button>
@@ -476,7 +476,7 @@ export default function OrchestratorsPage() {
                       {/* Stat tiles */}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                         {/* Model tile */}
-                        <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--tm-filter-bg)', border: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 18, color: PURPLE, flexShrink: 0 }}>psychology</span>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 10, color: MUTED, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Model</div>
@@ -486,7 +486,7 @@ export default function OrchestratorsPage() {
                           </div>
                         </div>
                         {/* Agents tile */}
-                        <div style={{ padding: '8px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ padding: '8px 12px', borderRadius: 10, background: 'var(--tm-filter-bg)', border: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span className="material-symbols-outlined" style={{ fontSize: 18, color: CYAN, flexShrink: 0 }}>smart_toy</span>
                           <div style={{ minWidth: 0 }}>
                             <div style={{ fontSize: 10, color: MUTED, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 1 }}>Agents</div>
@@ -497,10 +497,10 @@ export default function OrchestratorsPage() {
 
                       {/* Limits row */}
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: 11, color: MUTED, padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORDER}` }}>
+                        <span style={{ fontSize: 11, color: MUTED, padding: '3px 8px', borderRadius: 6, background: 'var(--tm-filter-bg)', border: `1px solid ${BORDER}` }}>
                           ⚡ {o.max_iterations} iters
                         </span>
-                        <span style={{ fontSize: 11, color: MUTED, padding: '3px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: `1px solid ${BORDER}` }}>
+                        <span style={{ fontSize: 11, color: MUTED, padding: '3px 8px', borderRadius: 6, background: 'var(--tm-filter-bg)', border: `1px solid ${BORDER}` }}>
                           🔄 {o.rate_limit_rpm} rpm
                         </span>
                         {hasVoice && (

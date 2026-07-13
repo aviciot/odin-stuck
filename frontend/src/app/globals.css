@@ -19,6 +19,37 @@
   --tm-green:          #005b3d;
   --tm-green-bg:       rgba(0,118,80,.12);
   --tm-green-dim:      #4edea3;
+  /* card / panel surfaces */
+  --tm-card:               #ffffff;
+  --tm-card-chrome:        #ffffff;
+  --tm-panel:              rgba(255,255,255,.75);
+  --tm-inset:              #f2f4f6;
+  --tm-inset-deep:         #eceef0;
+  /* card borders */
+  --tm-card-border:        #e0e3e8;
+  --tm-modal-border:       #d5dae2;
+  --tm-input-border:       #d9dee5;
+  --tm-divider:            #eceef0;
+  /* text inside panels */
+  --tm-card-text:          #191c1e;
+  --tm-card-text-muted:    #757688;
+  --tm-card-text-subtle:   #9098a1;
+  --tm-card-text-hint:     #444556;
+  /* secondary chrome buttons */
+  --tm-btn-2-bg:           #f2f4f6;
+  --tm-btn-2-border:       #d9dee5;
+  --tm-btn-2-text:         #444556;
+  /* overflow / dropdown menu */
+  --tm-menu-bg:            #ffffff;
+  --tm-menu-border:        #d9dee5;
+  /* filter bar / search */
+  --tm-filter-bg:          #f7f9fb;
+  --tm-filter-border:      #e0e3e8;
+  /* applications canvas */
+  --tm-canvas-inset:       #eef1f5;
+  --tm-canvas-container:   #f4f6f9;
+  --tm-canvas-border:      #cdd3db;
+  --tm-canvas-glass-border: rgba(0,0,0,.10);
 }
 
 html.dark {
@@ -34,12 +65,43 @@ html.dark {
   --tm-accent:         #5b7fff;
   --tm-accent-bg:      rgba(91,127,255,.15);
   --tm-accent-subtle:  rgba(91,127,255,.12);
-  --tm-sidebar:        #13151a;
+  --tm-sidebar:        #0a1626;
   --tm-topbar:         #0f1117;
   --tm-topbar-border:  #1e2230;
   --tm-green:          #4edea3;
   --tm-green-bg:       rgba(78,222,163,.12);
   --tm-green-dim:      #4edea3;
+  /* card / panel surfaces */
+  --tm-card:               rgba(10,18,32,0.92);
+  --tm-card-chrome:        rgba(10,22,38,.97);
+  --tm-panel:              rgba(15,23,42,0.7);
+  --tm-inset:              rgba(5,15,28,.50);
+  --tm-inset-deep:         rgba(0,0,0,0.35);
+  /* card borders */
+  --tm-card-border:        rgba(255,255,255,0.07);
+  --tm-modal-border:       rgba(132,158,190,.2);
+  --tm-input-border:       rgba(132,157,188,.18);
+  --tm-divider:            rgba(255,255,255,0.05);
+  /* text inside panels */
+  --tm-card-text:          #e2e8f0;
+  --tm-card-text-muted:    #64748b;
+  --tm-card-text-subtle:   #94a3b8;
+  --tm-card-text-hint:     #cbd5e1;
+  /* secondary chrome buttons */
+  --tm-btn-2-bg:           rgba(30,41,59,0.55);
+  --tm-btn-2-border:       rgba(255,255,255,0.08);
+  --tm-btn-2-text:         #94a3b8;
+  /* overflow / dropdown menu */
+  --tm-menu-bg:            #0c1830;
+  --tm-menu-border:        rgba(255,255,255,0.08);
+  /* filter bar / search */
+  --tm-filter-bg:          rgba(255,255,255,0.03);
+  --tm-filter-border:      rgba(255,255,255,0.06);
+  /* applications canvas */
+  --tm-canvas-inset:       #0d1c2d;
+  --tm-canvas-container:   #122131;
+  --tm-canvas-border:      #3b494b;
+  --tm-canvas-glass-border: rgba(30,41,59,0.5);
 }
 
 body {

@@ -276,17 +276,15 @@ def build_provider(orch):
 
 def build_provider_from_config(provider_name: str, model: str, api_key_encrypted: Optional[str], base_url: Optional[str] = None):
     """Build provider from serialized config (used inside Activities — no ORM dependency)."""
-    from app.config import Settings
+    from app.config import settings
     from app.services.providers import create_provider
     from app.utils.crypto import decrypt_value
-
-    env = Settings()
 
     if api_key_encrypted:
         api_key = decrypt_value(api_key_encrypted)
     else:
         defaults = _PROVIDER_DEFAULT_KEYS.get(provider_name, _PROVIDER_DEFAULT_KEYS["anthropic"])
-        api_key = defaults(env)[0]
+        api_key = defaults(settings)[0]
 
     return create_provider(provider_name, api_key=api_key, model=model)
 

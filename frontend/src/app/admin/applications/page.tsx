@@ -27,10 +27,10 @@ import '@xyflow/react/dist/style.css';
 
 // ── Design tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg: '#051424',
-  surface: 'rgba(15,23,42,0.7)',
-  surfaceContainer: '#122131',
-  surfaceLow: '#0d1c2d',
+  bg: 'var(--tm-bg)',
+  surface: 'var(--tm-panel)',
+  surfaceContainer: 'var(--tm-canvas-container)',
+  surfaceLow: 'var(--tm-canvas-inset)',
   cyan: '#00f0ff',
   cyanBg: 'rgba(0,240,255,0.05)',
   cyanBorder: 'rgba(0,240,255,0.4)',
@@ -42,14 +42,14 @@ const C = {
   green: '#4ade80',
   greenBg: 'rgba(74,222,128,0.05)',
   greenBorder: 'rgba(74,222,128,0.3)',
-  text: '#d4e4fa',
-  textMuted: '#b9cacb',
-  outline: '#849495',
-  outlineVariant: '#3b494b',
+  text: 'var(--tm-card-text)',
+  textMuted: 'var(--tm-card-text-muted)',
+  outline: 'var(--tm-canvas-border)',
+  outlineVariant: 'var(--tm-canvas-border)',
   error: '#ffb4ab',
   errorBg: 'rgba(255,180,171,0.1)',
-  glass: 'rgba(15,23,42,0.7)',
-  glassBorder: 'rgba(30,41,59,0.5)',
+  glass: 'var(--tm-panel)',
+  glassBorder: 'var(--tm-canvas-glass-border)',
 };
 
 const glass = {
@@ -148,14 +148,14 @@ const CANVAS_STYLES = `
   .builder-root input,
   .builder-root select,
   .builder-root textarea {
-    color: #e2e8f0 !important;
-    background-color: #0d1c2d !important;
-    -webkit-text-fill-color: #e2e8f0 !important;
+    color: var(--tm-card-text) !important;
+    background-color: var(--tm-canvas-inset) !important;
+    -webkit-text-fill-color: var(--tm-card-text) !important;
   }
   .builder-root input::placeholder,
   .builder-root textarea::placeholder {
-    color: #4a6580 !important;
-    -webkit-text-fill-color: #4a6580 !important;
+    color: var(--tm-card-text-muted) !important;
+    -webkit-text-fill-color: var(--tm-card-text-muted) !important;
   }
   .builder-root input[style*="color: #f59e0b"],
   .builder-root input[style*="color:#f59e0b"] {
@@ -164,8 +164,8 @@ const CANVAS_STYLES = `
   }
   /* Slug input on entry-point node */
   .ep-slug-set {
-    color: #e2e8f0 !important;
-    -webkit-text-fill-color: #e2e8f0 !important;
+    color: var(--tm-card-text) !important;
+    -webkit-text-fill-color: var(--tm-card-text) !important;
   }
   .ep-slug-missing {
     color: #f59e0b !important;
@@ -212,7 +212,7 @@ const CANVAS_STYLES = `
     left: calc(100% + 10px);
     top: 50%;
     transform: translateY(-50%);
-    background: rgba(8,18,36,0.97);
+    background: var(--tm-card-chrome);
     border: 1px solid rgba(0,240,255,0.22);
     border-radius: 8px;
     padding: 8px 11px;
@@ -635,7 +635,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
                     </div>
                     <div className="nl-tip">
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.cyan, marginBottom: 4 }}>{meta.title}</div>
-                      <div style={{ fontSize: 11, color: '#cbd5e1', lineHeight: 1.5 }}>{meta.desc}</div>
+                      <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>{meta.desc}</div>
                     </div>
                   </div>
                 );
@@ -670,7 +670,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
                   <div className="nl-tip">
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.purple, marginBottom: 4 }}>{o.display_name}</div>
                     {o.llm_model && <div style={{ fontSize: 10, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace', marginBottom: 6 }}>{o.llm_model}</div>}
-                    <div style={{ fontSize: 11, color: '#cbd5e1', lineHeight: 1.5 }}>{trunc(o.system_prompt ?? o.name)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>{trunc(o.system_prompt ?? o.name)}</div>
                   </div>
                 </div>
               ))}
@@ -704,7 +704,7 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
                     <div className="nl-tip">
                       <div style={{ fontSize: 11, fontWeight: 700, color: C.green, marginBottom: 4 }}>{a.display_name}</div>
                       <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>{a.transport} · {a.slug}</div>
-                      <div style={{ fontSize: 11, color: '#cbd5e1', lineHeight: 1.5 }}>{trunc(a.description)}</div>
+                      <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>{trunc(a.description)}</div>
                     </div>
                   </div>
                 );
@@ -762,13 +762,13 @@ function PropertiesPanel({
     );
   }
 
-  const labelStyle: React.CSSProperties = { fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' };
+  const labelStyle: React.CSSProperties = { fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' };
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '7px 10px', borderRadius: 6,
     border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
-    color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+    color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
   };
-  const readOnlyStyle: React.CSSProperties = { ...inputStyle, color: '#cbd5e1', background: 'rgba(10,18,32,0.6)', cursor: 'default' };
+  const readOnlyStyle: React.CSSProperties = { ...inputStyle, color: 'var(--tm-card-text-hint)', background: 'rgba(10,18,32,0.6)', cursor: 'default' };
   const fieldWrap: React.CSSProperties = { marginBottom: 14 };
 
   return (
@@ -799,12 +799,12 @@ function PropertiesPanel({
 
           {/* Name field */}
           <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' }}>Application Name</label>
+            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>Application Name</label>
             <input
               style={{
                 width: '100%', padding: '7px 10px', borderRadius: 6,
                 border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
-                color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+                color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
               }}
               value={appName}
               onChange={e => onAppNameChange(e.target.value)}
@@ -814,7 +814,7 @@ function PropertiesPanel({
 
           {/* Conversation token limit */}
           <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' }}>
+            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>
               Conversation Token Limit
               <span style={{ marginLeft: 6, fontSize: 10, color: '#64748b' }}>per session · blank = unlimited</span>
             </label>
@@ -824,7 +824,7 @@ function PropertiesPanel({
               style={{
                 width: '100%', padding: '7px 10px', borderRadius: 6,
                 border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
-                color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+                color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
               }}
               value={convTokenLimit}
               onChange={e => onConvTokenLimitChange(e.target.value)}
@@ -834,7 +834,7 @@ function PropertiesPanel({
 
           {/* Chain status */}
           <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6, display: 'block' }}>Canvas Status</label>
+            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 6, display: 'block' }}>Canvas Status</label>
             <div style={{
               display: 'flex', alignItems: 'flex-start', gap: 8,
               padding: '8px 10px', borderRadius: 8,
@@ -852,7 +852,7 @@ function PropertiesPanel({
 
           {/* Stats */}
           <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 6, display: 'block' }}>Canvas Info</label>
+            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 6, display: 'block' }}>Canvas Info</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
               {[
                 { label: 'Entry Points', value: String(chain.epNode ? 1 : 0) },
@@ -870,7 +870,7 @@ function PropertiesPanel({
 
           {app && (
             <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' }}>Created</label>
+              <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>Created</label>
               <div style={{ fontSize: 12, color: C.textMuted }}>
                 {new Date(app.created_at).toLocaleString()}
               </div>
@@ -1013,7 +1013,7 @@ function PropertiesPanel({
                 </div>
                 <div style={fieldWrap}>
                   <label style={labelStyle}>Description</label>
-                  <div style={{ fontSize: 12, color: '#cbd5e1', lineHeight: 1.55, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                  <div style={{ fontSize: 12, color: 'var(--tm-card-text-hint)', lineHeight: 1.55, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
                     {d.description || <span style={{ opacity: 0.4 }}>No description</span>}
                   </div>
                 </div>
@@ -1250,7 +1250,7 @@ function ProposalCard({ proposal, msgIndex, onApply }: {
       </div>
 
       {/* Reason */}
-      <div style={{ padding: '0 10px 7px', fontSize: 11, color: '#94a3b8', lineHeight: 1.5 }}>{proposal.reason}</div>
+      <div style={{ padding: '0 10px 7px', fontSize: 11, color: 'var(--tm-card-text-subtle)', lineHeight: 1.5 }}>{proposal.reason}</div>
 
       {/* Diff preview (expandable) */}
       {expanded && (
@@ -1258,7 +1258,7 @@ function ProposalCard({ proposal, msgIndex, onApply }: {
           <div>
             <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 2 }}>Current</div>
             <div style={{
-              fontSize: 11, color: '#94a3b8', background: 'rgba(255,255,255,0.03)', borderRadius: 4,
+              fontSize: 11, color: 'var(--tm-card-text-subtle)', background: 'rgba(255,255,255,0.03)', borderRadius: 4,
               padding: '5px 7px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               maxHeight: isText ? 80 : 'none', overflowY: isText ? 'auto' : 'visible',
             }}>{String(proposal.current) || '(empty)'}</div>
@@ -1317,7 +1317,7 @@ function AdvisorPanel({
   return (
     <div style={{
       width: 380, flexShrink: 0, height: '100%', display: 'flex', flexDirection: 'column',
-      background: 'rgba(10,14,23,0.97)', borderLeft: `1px solid rgba(0,240,255,0.15)`,
+      background: 'var(--tm-card-chrome)', borderLeft: `1px solid rgba(0,240,255,0.15)`,
       boxShadow: '-4px 0 24px rgba(0,0,0,0.4)',
     }}>
       {/* Header */}
@@ -1372,7 +1372,7 @@ function AdvisorPanel({
                 borderRadius: m.role === 'user' ? '12px 12px 2px 12px' : '2px 12px 12px 12px',
                 background: m.role === 'user' ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.04)',
                 border: `1px solid ${m.role === 'user' ? 'rgba(0,240,255,0.2)' : C.outlineVariant}`,
-                fontSize: 13, color: m.role === 'user' ? C.text : '#d1d5db',
+                fontSize: 13, color: m.role === 'user' ? C.text : 'var(--tm-card-text-hint)',
                 lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               }}>
                 {m.text}
@@ -1425,7 +1425,7 @@ function AdvisorPanel({
             rows={2}
             style={{
               flex: 1, background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.outlineVariant}`,
-              borderRadius: 8, color: '#e2e8f0', fontSize: 13, padding: '7px 10px',
+              borderRadius: 8, color: 'var(--tm-card-text)', fontSize: 13, padding: '7px 10px',
               resize: 'none', outline: 'none', fontFamily: 'inherit',
               opacity: (busy || scanning) ? 0.5 : 1,
             }}
@@ -2336,7 +2336,7 @@ function BuilderView({
               placeholder="Application name…"
               style={{
                 background: 'transparent', border: 'none', outline: 'none',
-                fontSize: 15, fontWeight: 700, color: '#e2e8f0',
+                fontSize: 15, fontWeight: 700, color: 'var(--tm-card-text)',
                 fontFamily: 'Geist, sans-serif', width: '100%', padding: 0,
               }}
             />
@@ -2568,7 +2568,7 @@ const APP_CARD_STYLES = `
 }
 .app-card-btn--urls {
   background: rgba(30,41,59,0.55);
-  color: #94a3b8;
+  color: var(--tm-card-text-subtle);
   border: 1px solid rgba(255,255,255,0.08);
 }
 .app-card-btn--urls:hover {

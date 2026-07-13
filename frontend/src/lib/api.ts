@@ -120,6 +120,7 @@ export interface Run {
   total_tokens_in?: number;
   total_tokens_out?: number;
   total_cost_usd?: string;
+  parent_run_id?: string | null;
 }
 
 export interface RunStep {

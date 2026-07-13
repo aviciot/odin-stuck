@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/stores/authStore';
+import { useEffect, useState } from 'react';
 
 const NAV = [
   { href: '/dashboard', icon: 'dashboard', label: 'Command Center' },
@@ -20,6 +21,19 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuthStore();
+  const [dark, setDark] = useState(false);
+
+  // Sync state with the class set by the inline script in layout.tsx
+  useEffect(() => {
+    setDark(document.documentElement.classList.contains('dark'));
+  }, []);
+
+  function toggleTheme() {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.classList.toggle('dark', next);
+    try { localStorage.setItem('tm-theme', next ? 'dark' : 'light'); } catch(e) {}
+  }
 
   const isActive = (href: string) =>
     href === '/dashboard' ? pathname === href : pathname.startsWith(href);
@@ -95,8 +109,28 @@ export default function Sidebar() {
           ) : null}
         </nav>
 
-        {/* Footer: user */}
+        {/* Footer: theme toggle + user */}
         <div style={{ padding: '16px 24px', borderTop: '1px solid rgba(255,255,255,.06)' }}>
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
+              background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.08)',
+              borderRadius: '8px', padding: '7px 10px', marginBottom: '12px',
+              cursor: 'pointer', color: 'rgba(255,255,255,.5)', fontSize: '12px',
+              transition: 'all .15s',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#e8eaed'; (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,.09)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.5)'; (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,.05)'; }}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>
+              {dark ? 'light_mode' : 'dark_mode'}
+            </span>
+            {dark ? 'Light mode' : 'Dark mode'}
+          </button>
+
           {/* User */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{

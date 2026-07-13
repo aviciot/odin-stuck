@@ -68,6 +68,12 @@ async def main():
             print(f"  debate_flow already a2a_exposed=true (id={debate_flow_id})")
 
         # ── 3. Create / update debate_master orchestrator ──────────────────
+        # Re-fetch debate_flow_id fresh (avoid stale ORM UUID after prior commit)
+        result = await db.execute(
+            select(Orchestrator.id).where(Orchestrator.name == DEBATE_FLOW_NAME)
+        )
+        debate_flow_id_fresh = result.scalar_one()
+
         result = await db.execute(
             select(Orchestrator).where(Orchestrator.name == MASTER_NAME)
         )
@@ -85,14 +91,14 @@ async def main():
                 max_parallel_tools=2,
                 rate_limit_rpm=60,
                 daily_budget_usd="5.00",
-                allowed_agent_ids=[debate_flow_id],   # sub-orchestrator UUID
+                allowed_agent_ids=[debate_flow_id_fresh],   # sub-orchestrator UUID
                 enabled=True,
                 a2a_exposed=False,
                 memory_enabled=False,
                 summarize_every_n_calls=3,
                 memory_raw_fallback_n=5,
                 history_window=10,
-                budget_tokens=20000,
+                budget_tokens=60000,
             )
             db.add(master)
             await db.commit()
@@ -100,12 +106,17 @@ async def main():
             print(f"✓ orchestrator '{MASTER_NAME}' created (id={master.id})")
         else:
             master.system_prompt     = MASTER_SYSTEM_PROMPT
-            master.allowed_agent_ids = [debate_flow_id]
+            master.allowed_agent_ids = [debate_flow_id_fresh]
             master.enabled           = True
+            master.budget_tokens     = 60000
             master.llm_api_key_encrypted = encrypted_key
             await db.commit()
             await db.refresh(master)
             print(f"  orchestrator '{MASTER_NAME}' already exists — updated (id={master.id})")
+
+        # Sanity check
+        assert master.allowed_agent_ids, "BUG: allowed_agent_ids is empty after commit!"
+        print(f"  allowed_agent_ids: {[str(x) for x in master.allowed_agent_ids]}")
 
         master_id = master.id
 

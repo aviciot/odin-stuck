@@ -363,7 +363,11 @@ function RunModal({ run, onClose }: { run: Run; onClose: () => void }) {
               {run.user_message || run.goal || 'No message'}
             </div>
             <div style={{ fontSize: '12px', color: 'var(--tm-text-muted)' }}>
-              {run.orchestrator_name} · {formatTs(run.started_at)} · {formatDuration(durationMs)}
+              <span style={{ fontWeight: 600, color: 'var(--tm-text-2)' }}>{run.orchestrator_name}</span>
+              {run.parent_run_id && (
+                <span style={{ color: '#a78bfa', marginLeft: '6px' }}>↳ child of {run.parent_run_id.slice(0, 8)}…</span>
+              )}
+              {' · '}{formatTs(run.started_at)} · {formatDuration(durationMs)}
               {detail && ` · ${(detail.total_tokens_in ?? 0) + (detail.total_tokens_out ?? 0)} tokens`}
             </div>
           </div>
@@ -598,13 +602,27 @@ export default function RunsPage() {
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
                       <td style={{ padding: '12px 16px', maxWidth: '240px' }}>
-                        <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--tm-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {run.user_message || run.goal || <em style={{ color: 'var(--tm-text-subtle)' }}>no message</em>}
-                        </p>
-                        <p style={{ fontSize: '10px', color: 'var(--tm-text-subtle)', fontFamily: 'monospace' }}>{run.id.slice(0, 8)}…</p>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+                          {run.parent_run_id && (
+                            <span title={`Child of ${run.parent_run_id.slice(0, 8)}…`} style={{ fontSize: '11px', color: '#a78bfa', marginTop: '2px', flexShrink: 0 }}>↳</span>
+                          )}
+                          <div style={{ minWidth: 0 }}>
+                            <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--tm-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {run.user_message || run.goal || <em style={{ color: 'var(--tm-text-subtle)' }}>no message</em>}
+                            </p>
+                            <p style={{ fontSize: '10px', color: 'var(--tm-text-subtle)', fontFamily: 'monospace' }}>{run.id.slice(0, 8)}…</p>
+                          </div>
+                        </div>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        <span style={{ fontSize: '13px', color: 'var(--tm-text-2)' }}>{run.orchestrator_name}</span>
+                        <div>
+                          <span style={{ fontSize: '13px', color: 'var(--tm-text-2)' }}>{run.orchestrator_name}</span>
+                          {run.parent_run_id && (
+                            <div style={{ fontSize: '10px', color: '#a78bfa', marginTop: '2px' }}>
+                              child · {run.parent_run_id.slice(0, 8)}…
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td style={{ padding: '12px 16px' }}><StatusBadge status={run.status} /></td>
                       <td style={{ padding: '12px 16px' }}>
