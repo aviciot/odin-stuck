@@ -460,20 +460,28 @@ function buildNodesFromApp(
   app: Application,
   orch: OrchestratorFull | undefined,
   agents: Agent[],
+  siblingApps: Application[] = [],
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  const epId = 'ep_0';
-  nodes.push({
-    id: epId, type: 'entryPoint',
-    position: { x: 300, y: 60 },
-    data: {
-      label: app.name,
-      epType: (app.entry_point_type as EntryPointType) ?? 'websocket',
-      accessMode: ((app.access_policy as any)?.mode ?? 'token') as 'token' | 'public',
-      slug: app.slug,
-    } satisfies EntryPointData,
+  // All apps sharing this orchestrator (primary + siblings)
+  const allEpApps = [app, ...siblingApps.filter(s => s.id !== app.id)];
+  allEpApps.forEach((epApp, idx) => {
+    const epId = `ep_${idx}`;
+    nodes.push({
+      id: epId, type: 'entryPoint',
+      position: { x: 150 + idx * 240, y: 60 },
+      data: {
+        label: epApp.name,
+        epType: (epApp.entry_point_type as EntryPointType) ?? 'websocket',
+        accessMode: ((epApp.access_policy as any)?.mode ?? 'token') as 'token' | 'public',
+        slug: epApp.slug,
+      } satisfies EntryPointData,
+    });
+    if (orch) {
+      edges.push({ id: `e_ep_orch_${idx}`, source: epId, target: `orch_${orch.id}`, animated: true, style: EDGE_STYLE });
+    }
   });
 
   if (orch) {
@@ -489,8 +497,6 @@ function buildNodesFromApp(
         maxParallelTools: orch.max_parallel_tools,
       } satisfies OrchestratorData,
     });
-    edges.push({ id: `e_ep_orch`, source: epId, target: orchId, animated: true, style: EDGE_STYLE });
-
     const allowedAgents = agents.filter(a => orch.allowed_agent_ids.includes(a.id));
     const spread = Math.max(allowedAgents.length * 180, 400);
     const startX = 300 - spread / 2 + 90;
@@ -1792,6 +1798,7 @@ function EpPickerModal({ entries, onSelect, onClose }: { entries: EpPickerEntry[
 // ── Builder view ──────────────────────────────────────────────────────────────
 function BuilderView({
   app,
+  allApps,
   orchestrators,
   agents,
   onBack,
@@ -1800,6 +1807,7 @@ function BuilderView({
   onAgentsChange,
 }: {
   app: Application | null;
+  allApps: Application[];
   orchestrators: OrchestratorFull[];
   agents: Agent[];
   onBack: () => void;
@@ -1808,7 +1816,12 @@ function BuilderView({
   onAgentsChange: (update: (prev: Agent[]) => Agent[]) => void;
 }) {
   const initial = app
-    ? buildNodesFromApp(app, orchestrators.find(o => o.id === app.orchestrator_id), agents)
+    ? buildNodesFromApp(
+        app,
+        orchestrators.find(o => o.id === app.orchestrator_id),
+        agents,
+        allApps.filter(a => a.orchestrator_id === app.orchestrator_id),
+      )
     : {
         nodes: [],
         edges: [],
@@ -2175,14 +2188,6 @@ function BuilderView({
     try { nodeData = JSON.parse(rawData) as Record<string, unknown>; } catch { return; }
 
     if (nodeType === 'entryPoint') {
-      // If an entry point already exists and is wired to an orchestrator, just update its type
-      const existingEp = nodesRef.current.find(n => n.type === 'entryPoint');
-      const isWired = existingEp && edgesRef.current.some(e => e.source === existingEp.id);
-      if (existingEp && isWired) {
-        updateNodeData(existingEp.id, { epType: nodeData.epType });
-        setSelectedNode({ ...existingEp, data: { ...existingEp.data, epType: nodeData.epType } });
-        return;
-      }
       nodeData = { ...nodeData, slug: '' };
     }
 
@@ -2245,39 +2250,58 @@ function BuilderView({
     const chain = analyzeChain(nodes, edges);
     if (!chain.ready) { showToast(chain.label, false); triggerLogo('error', 1800); return; }
 
-    const epData = chain.epNode!.data as EntryPointData;
-    const orchData = chain.orchNode!.data as OrchestratorData;
+    // Collect all connected EP→orchestrator pairs
+    const connectedEps = nodes
+      .filter((n: Node) => n.type === 'entryPoint')
+      .map((epNode: Node) => {
+        const orchEdge = edges.find((e: Edge) => e.source === epNode.id);
+        const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target && n.type === 'orchestrator') : undefined;
+        return orchNode ? { epNode, orchNode } : null;
+      })
+      .filter(Boolean) as { epNode: Node; orchNode: Node }[];
 
-    // Collect agent IDs from orchestrator edges (full replace — empty array clears them)
-    const agentIds = edges
-      .filter((e: Edge) => e.source === chain.orchNode!.id)
-      .map((e: Edge) => nodes.find((n: Node) => n.id === e.target && n.type === 'agent'))
-      .filter((n: Node | undefined): n is Node => Boolean(n))
-      .map((n: Node) => (n.data as AgentData).agentId);
+    if (connectedEps.length === 0) { showToast('Connect an entry point to an orchestrator', false); return; }
 
     setSaving(true);
     setLogoState('thinking');
     try {
-      // Always update orchestrator agent list (full replace)
-      await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
-
-      const body = {
-        name: appName || epData.label || epData.slug,
-        slug: epData.slug,
-        entry_point_type: epData.epType,
-        orchestrator_id: orchData.orchestratorId,
-        access_policy: { mode: epData.accessMode },
-        enabled: deploy ? true : (currentApp?.enabled ?? false),
-        conversation_token_limit: convTokenLimit !== '' ? parseInt(convTokenLimit, 10) : null,
-      };
-
-      let saved: Application;
-      if (currentApp?.id) {
-        saved = await themApi.updateApplication(currentApp.id, body);
-      } else {
-        saved = await themApi.createApplication(body);
+      // Update each orchestrator's agent list (deduplicated by orchestrator id)
+      const updatedOrchIds = new Set<string>();
+      for (const { orchNode } of connectedEps) {
+        const orchData = orchNode.data as OrchestratorData;
+        if (updatedOrchIds.has(orchData.orchestratorId)) continue;
+        updatedOrchIds.add(orchData.orchestratorId);
+        const agentIds = edges
+          .filter((e: Edge) => e.source === orchNode.id)
+          .map((e: Edge) => nodes.find((n: Node) => n.id === e.target && n.type === 'agent'))
+          .filter((n: Node | undefined): n is Node => Boolean(n))
+          .map((n: Node) => (n.data as AgentData).agentId);
+        await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
       }
-      setCurrentApp(saved);
+
+      // Save each entry point as its own app row (create or update by slug)
+      let lastSaved: Application | null = null;
+      for (const { epNode, orchNode } of connectedEps) {
+        const epData = epNode.data as EntryPointData;
+        const orchData = orchNode.data as OrchestratorData;
+        const existing = allApps.find(a => a.slug === epData.slug) ?? (connectedEps.length === 1 ? currentApp : null);
+        const body = {
+          name: appName || epData.label || epData.slug,
+          slug: epData.slug,
+          entry_point_type: epData.epType,
+          orchestrator_id: orchData.orchestratorId,
+          access_policy: { mode: epData.accessMode },
+          enabled: deploy ? true : (existing?.enabled ?? false),
+          conversation_token_limit: convTokenLimit !== '' ? parseInt(convTokenLimit, 10) : null,
+        };
+        if (existing?.id) {
+          lastSaved = await themApi.updateApplication(existing.id, body);
+        } else {
+          lastSaved = await themApi.createApplication(body);
+        }
+      }
+
+      if (lastSaved) setCurrentApp(lastSaved);
       setIsDirty(false);
       triggerLogo('success', deploy ? 2500 : 1800);
       showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
@@ -3082,6 +3106,7 @@ export default function ApplicationsPage() {
             <ReactFlowProvider>
               <BuilderView
                 app={editApp}
+                allApps={list}
                 orchestrators={orchestrators}
                 agents={agents}
                 onBack={backToList}
