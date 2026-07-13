@@ -917,6 +917,7 @@ export default function PlaygroundPage() {
   const initialOrch = searchParams.get('orchestrator') || '';
 
   const [orchestrators, setOrchestrators] = useState<OrchestratorFull[]>([]);
+  const [webrtcSlug, setWebrtcSlug] = useState<string | null>(null);
   const [selectedOrch, setSelectedOrch] = useState(initialOrch);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [trace, setTrace] = useState<TraceEvent[]>([]);
@@ -979,6 +980,18 @@ export default function PlaygroundPage() {
     setVoiceEnabled(orch?.voice_enabled ?? false);
     setTtsEnabled(orch?.tts_enabled ?? false);
   }, [selectedOrch, orchestrators]);
+
+  // Find a WebRTC app bound to the selected orchestrator
+  useEffect(() => {
+    if (!selectedOrch) { setWebrtcSlug(null); return; }
+    themApi.applications().then(apps => {
+      const match = apps.find(
+        (a: any) => a.entry_point_type === 'webrtc' && a.enabled &&
+          a.orchestrator_name === selectedOrch
+      );
+      setWebrtcSlug(match?.slug ?? null);
+    }).catch(() => setWebrtcSlug(null));
+  }, [selectedOrch]);
 
   useEffect(() => {
     chatBottom.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1528,6 +1541,34 @@ export default function PlaygroundPage() {
                     {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
                   </button>
                 )}
+                {/* WebRTC voice room button — shown when a webrtc app is bound to this orchestrator */}
+                <button
+                  onClick={() => webrtcSlug && window.open(`/apps/${webrtcSlug}/voice`, '_blank', 'noopener')}
+                  disabled={!webrtcSlug}
+                  title={webrtcSlug ? `Open voice room (${webrtcSlug})` : 'No WebRTC app configured for this orchestrator'}
+                  style={{
+                    width: 38, height: 38,
+                    borderRadius: 10,
+                    border: '1.5px solid',
+                    borderColor: webrtcSlug ? 'rgba(99,202,183,0.6)' : 'var(--tm-border)',
+                    background: webrtcSlug ? 'rgba(99,202,183,0.08)' : 'var(--tm-surface)',
+                    cursor: webrtcSlug ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0, alignSelf: 'flex-end',
+                    opacity: webrtcSlug ? 1 : 0.35,
+                    transition: 'border-color 150ms ease, background 150ms ease',
+                  }}
+                >
+                  {/* WebRTC logo — three interlocking circles */}
+                  <svg width="20" height="20" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="50" cy="28" r="22" fill={webrtcSlug ? '#63cab7' : 'currentColor'} opacity="0.9"/>
+                    <circle cx="30" cy="65" r="22" fill={webrtcSlug ? '#f08030' : 'currentColor'} opacity="0.9"/>
+                    <circle cx="70" cy="65" r="22" fill={webrtcSlug ? '#63cab7' : 'currentColor'} opacity="0.7"/>
+                    <circle cx="50" cy="28" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
+                    <circle cx="30" cy="65" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
+                    <circle cx="70" cy="65" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
+                  </svg>
+                </button>
                 <textarea
                   value={input}
                   onChange={e => setInput(e.target.value)}

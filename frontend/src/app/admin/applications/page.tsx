@@ -2175,6 +2175,14 @@ function BuilderView({
     try { nodeData = JSON.parse(rawData) as Record<string, unknown>; } catch { return; }
 
     if (nodeType === 'entryPoint') {
+      // If an entry point already exists and is wired to an orchestrator, just update its type
+      const existingEp = nodesRef.current.find(n => n.type === 'entryPoint');
+      const isWired = existingEp && edgesRef.current.some(e => e.source === existingEp.id);
+      if (existingEp && isWired) {
+        updateNodeData(existingEp.id, { epType: nodeData.epType });
+        setSelectedNode({ ...existingEp, data: { ...existingEp.data, epType: nodeData.epType } });
+        return;
+      }
       nodeData = { ...nodeData, slug: '' };
     }
 
