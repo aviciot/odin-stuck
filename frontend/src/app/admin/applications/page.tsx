@@ -2302,12 +2302,15 @@ function BuilderView({
         await themApi.updateOrchestrator(orchData.orchestratorId, { allowed_agent_ids: agentIds });
       }
 
+      // Fetch a fresh app list so we don't create duplicates if allApps prop is stale
+      const freshApps: Application[] = await themApi.applications().catch(() => allApps);
+
       // Save each entry point as its own app row (create or update by slug)
       const savedMap: Record<string, Application> = {};
       for (const { epNode, orchNode } of connectedEps) {
         const epData = epNode.data as EntryPointData;
         const orchData = orchNode.data as OrchestratorData;
-        const existing = allApps.find(a => a.slug === epData.slug) ?? (connectedEps.length === 1 ? currentApp : null);
+        const existing = freshApps.find(a => a.slug === epData.slug) ?? (connectedEps.length === 1 ? currentApp : null);
         // Per-node name/limit take priority; fall back to shared top-bar values for single-EP
         const resolvedName = epData.appName?.trim() || epData.label || epData.slug;
         const resolvedLimit = epData.convTokenLimit !== undefined ? epData.convTokenLimit : (connectedEps.length === 1 ? convTokenLimit : '');
