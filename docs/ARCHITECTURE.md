@@ -276,6 +276,64 @@ GET /apps/{slug}/sse?message=<text>&context_id=<uuid>
   → X-Accel-Buffering: no                   ← disables Traefik/Nginx response buffering
 ```
 
+## Applications and Entry Points (Phase 9 / Phase 10)
+
+Applications are the external-facing product layer. Each application owns one or more **entry points** — uniquely slugged URL endpoints that external clients connect to.
+
+### Data model
+
+```
+them.applications          (parent)
+  id, name, orchestrator_id, presentation, enabled
+
+them.entry_points          (child — one row per door)
+  id, application_id, slug (globally unique), entry_point_type, access_policy, conversation_token_limit, enabled
+
+them.runs.entry_point_slug  — which door each run came through
+```
+
+**One app → many entry points.** Each EP has its own URL:
+- `websocket`  → `ws://<host>/apps/{slug}/ws`
+- `sse`        → `GET http://<host>/apps/{slug}/sse?message=<text>&context_id=<uuid>`
+- `webrtc`     → `http://<host>/apps/{slug}/voice`
+
+All entry points on the same app route to the same orchestrator (set on the application row).
+
+### Entry point diff — slug as identity
+
+When updating an application (`PATCH /api/v1/admin/applications/{id}`), the server receives the full desired `entry_points` array and diffs it against the current DB state **by slug** (not by id):
+
+- Slug in both current and desired → **UPDATE** mutable fields (`entry_point_type`, `access_policy`, `conversation_token_limit`, `enabled`)
+- Slug only in desired → **CREATE** new EP row
+- Slug only in current → **DELETE** the EP row
+
+Slug is the stable identity because it is the URL endpoint. Renaming a slug is a breaking change for external clients — it is modeled as delete + create. The frontend never needs to send the EP's database `id`.
+
+### WS entry point flow
+
+```
+ws://<host>/apps/{slug}/ws
+  → load EntryPoint by slug → load Application → auth (public or token)
+  → start_orchestration_workflow(entry_point_slug=slug, ...)
+  → stream_run_events() → relay to client
+  → them.runs.entry_point_slug = slug  (traceability)
+```
+
+### Access policy
+
+`access_policy` is a JSONB column:
+- `{"mode": "public"}` — no token required; anyone with the URL can connect
+- `{"mode": "token"}` — requires a valid `them.access_tokens` bearer token
+
+### Canvas builder
+
+`frontend/src/app/admin/applications/page.tsx` — React Flow canvas:
+- Drag EP nodes (websocket / sse / webrtc) and orchestrator node onto canvas
+- Connect EP → orchestrator with an edge
+- Multiple EP nodes allowed; each gets its own slug
+- Save sends full `entry_points` array; server diffs atomically by slug
+- Playground "Test" button opens the app's EPs in the multi-EP playground
+
 ## Dashboard WebSocket — Channel Multiplexing
 
 `/ws/dashboard` is a single persistent WS connection that fans out multiple Redis pub/sub channels.
@@ -302,19 +360,27 @@ must receive these events for the UI to show them in both the trace tab and the 
 
 ```
 Browser Playground
-  ├─ Left pane: chat
-  │    └─ WebSocket → /ws/orchestrate/{name}?token=<jwt>
-  │         sends: {type:"message", content:"...", context_id:"<uuid>"}  ← context_id optional
-  │         streams: ready (run_id, context_id), token, tool_start, tool_done, iteration_start,
+  ├─ Target selector — orchestrators OR per-app entry points (grouped by app)
+  ├─ Tabs — one tab per added target; switching is a view toggle (WS stays alive)
+  │    └─ ChatColumn (per tab) — self-contained WS state machine
+  │         target: { kind:'orchestrator', name } | { kind:'entrypoint', slug, epType, ... }
+  │         WS URL: /ws/orchestrate/{name} or /apps/{slug}/ws
+  │         context_id: persisted to localStorage key them:playground:ctx:{target-id}
+  │         sends: {type:"message", content:"...", context_id:"<uuid>"}
+  │         streams: ready, token, tool_start, tool_done, iteration_start,
   │                  agent_status, file, done, canceled, error
-  │         context_id: saved to localStorage; "Resume?" banner on page load for prior sessions
-  └─ Right pane: debug tabs
+  │         on error with context_id=null: clears localStorage (dead context signal)
+  │         webrtc EP: shows voice-room button only, no chat column
+  ├─ Compare mode — 2+ tabs side-by-side; shared composer broadcasts to all active columns
+  └─ Debug tabs (per active tab)
        ├─ Trace — WS → /ws/dashboard, subscribe: ["run:{run_id}"]
        ├─ Tasks — GET /api/v1/runs/{run_id}/tasks
        ├─ Artifacts — GET /api/v1/runs/{run_id}/artifacts
        ├─ Memory — context artifacts + per-agent "Fetch Agent Card" button
        └─ Sessions — list prior context sessions; click to resume with same context_id
 ```
+
+**Poisoned context_id protection:** If a workflow closed (failed/completed/cancelled) and the client resends the same `context_id`, the server raises `DeadContextError` and emits `{"type":"error","context_id":null}`. The `null` context_id signals the client to clear localStorage and start fresh — preventing silent hung sessions.
 
 ## Adapter Abstraction
 
