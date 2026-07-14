@@ -191,25 +191,25 @@ async def _apply_entry_point_diff(
     desired: List[EntryPointIn],
 ) -> None:
     """
-    Diff desired entry_points against current children.
-    - EP in desired with matching id → update
-    - EP in desired without id (or unknown id) → create
-    - EP in current not referenced in desired → delete
+    Diff desired entry_points against current children, keyed by slug.
+    Slug is globally unique and immutable — a rename is delete + create.
+    - slug in both current and desired → update mutable fields
+    - slug only in desired → create
+    - slug only in current → delete
     All within the caller's transaction.
     """
-    existing = {ep.id: ep for ep in app.entry_points}
-    desired_ids = {ep.id for ep in desired if ep.id and ep.id in existing}
+    existing = {ep.slug: ep for ep in app.entry_points}
+    desired_slugs = {ep.slug for ep in desired}
 
-    # Delete missing
-    for ep_id, ep in existing.items():
-        if ep_id not in desired_ids:
+    # Delete rows whose slug is no longer desired
+    for slug, ep in existing.items():
+        if slug not in desired_slugs:
             await db.delete(ep)
 
-    # Update or create
+    # Update existing (by slug) or create new
     for ep_in in desired:
-        if ep_in.id and ep_in.id in existing:
-            ep = existing[ep_in.id]
-            ep.slug = ep_in.slug
+        ep = existing.get(ep_in.slug)
+        if ep is not None:
             ep.entry_point_type = ep_in.entry_point_type
             ep.access_policy = ep_in.access_policy
             ep.conversation_token_limit = ep_in.conversation_token_limit
