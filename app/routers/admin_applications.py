@@ -14,12 +14,13 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import app.database as db_module
 from app.database import get_db
-from app.models import Application, EntryPoint, Orchestrator
+from app.models import Application, EntryPoint, Orchestrator, MiddlewareWiring
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin/applications", tags=["admin-applications"])
@@ -342,3 +343,72 @@ async def delete_application(app_id: uuid.UUID, db: AsyncSession = Depends(get_d
     await db.delete(app)
     await db.commit()
     logger.info("application deleted", app_id=str(app_id), name=name)
+
+
+# ------------------------------------------------------------------ #
+# Middleware wiring endpoint                                           #
+# ------------------------------------------------------------------ #
+
+class MiddlewareWiringIn(BaseModel):
+    def_id: uuid.UUID
+    agent_id: uuid.UUID
+    position: int = 0
+    config_override: Dict[str, Any] = Field(default_factory=dict)
+    node_id: str = ""
+    enabled: bool = True
+
+
+class MiddlewareWiringsBody(BaseModel):
+    wirings: List[MiddlewareWiringIn] = Field(default_factory=list)
+
+
+async def _flush_mw_chain_cache(app_id: uuid.UUID) -> None:
+    """Bust Redis middleware chain cache for this app."""
+    redis = db_module.redis_client
+    if redis is None:
+        return
+    try:
+        pattern = f"them:mw:chain:{app_id}:*"
+        cursor = 0
+        while True:
+            cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=200)
+            if keys:
+                await redis.delete(*keys)
+            if cursor == 0:
+                break
+    except Exception as exc:
+        logger.warning("mw chain cache flush failed", app_id=str(app_id), error=str(exc))
+
+
+@router.put("/{app_id}/middleware-wirings", status_code=status.HTTP_204_NO_CONTENT)
+async def put_middleware_wirings(
+    app_id: uuid.UUID,
+    body: MiddlewareWiringsBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Idempotent full-replace of middleware wirings for an application.
+    Deletes all existing wirings then bulk-inserts the new ones.
+    """
+    await _get_or_404(db, app_id)  # 404 if app not found
+
+    # Delete all existing wirings for this app
+    await db.execute(
+        delete(MiddlewareWiring).where(MiddlewareWiring.application_id == app_id)
+    )
+
+    # Bulk insert new wirings
+    for w in body.wirings:
+        db.add(MiddlewareWiring(
+            application_id=app_id,
+            agent_id=w.agent_id,
+            def_id=w.def_id,
+            position=w.position,
+            config_override=w.config_override,
+            node_id=w.node_id or None,
+            enabled=w.enabled,
+        ))
+
+    await db.commit()
+    await _flush_mw_chain_cache(app_id)
+    logger.info("middleware wirings replaced", app_id=str(app_id), count=len(body.wirings))

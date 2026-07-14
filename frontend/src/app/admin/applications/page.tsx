@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef, DragEvent } from 'react';
 const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type OrchestratorFull, type Agent } from '@/lib/api';
+import { themApi, type Application, type OrchestratorFull, type Agent, type MiddlewareDef } from '@/lib/api';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -42,6 +42,10 @@ const C = {
   green: '#4ade80',
   greenBg: 'rgba(74,222,128,0.05)',
   greenBorder: 'rgba(74,222,128,0.3)',
+  amber: '#f59e0b',
+  amberBg: 'rgba(245,158,11,0.05)',
+  amberBorder: 'rgba(245,158,11,0.3)',
+  amberGlow: '0 0 15px rgba(245,158,11,0.15)',
   text: 'var(--tm-card-text)',
   textMuted: 'var(--tm-card-text-muted)',
   outline: 'var(--tm-canvas-border)',
@@ -68,6 +72,7 @@ type EntryPointType = typeof ENTRY_POINT_TYPES[number];
 interface EntryPointData { label: string; epType: EntryPointType; accessMode: 'token' | 'public'; slug: string; appName?: string; convTokenLimit?: string; _epId?: string; [key: string]: unknown; }
 interface OrchestratorData { orchestratorId: string; name: string; displayName: string; model: string | null; maxParallelTools: number; [key: string]: unknown; }
 interface AgentData { agentId: string; name: string; displayName: string; description: string; transport: string; endpointUrl: string; tags?: string[]; icon?: string | null; [key: string]: unknown; }
+interface MiddlewareData { defId: string; slug: string; kind: 'guard' | 'cache'; displayName: string; description: string; config: Record<string, unknown>; configOverride: Record<string, unknown>; nodeId: string; [key: string]: unknown; }
 
 type ProposalStatus = 'pending' | 'applying' | 'applied' | 'failed' | 'stale';
 const PROPOSAL_ALLOWED_FIELDS = new Set([
@@ -420,10 +425,58 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
   );
 }
 
+// MiddlewareNode — amber-colored, shield for guard / bolt for cache
+function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareData & { _scanning?: boolean }; selected?: boolean }) {
+  const accent = C.amber;
+  const selGlow = 'rgba(245,158,11,0.35)';
+  const selBg   = 'rgba(245,158,11,0.10)';
+  const icon = data.kind === 'guard' ? 'shield' : 'bolt';
+  return (
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
+      {selected && (
+        <button
+          className="nodrag"
+          onClick={(e) => { e.stopPropagation(); deleteNodeRef.current(id); }}
+          style={{
+            position: 'absolute', top: -8, right: -8,
+            width: 18, height: 18, borderRadius: '50%',
+            background: '#f87171', border: '2px solid #051424',
+            color: '#fff', fontSize: 10, fontWeight: 700,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            lineHeight: 1, padding: 0, zIndex: 10,
+          }}
+          title="Delete node (or press Delete key)"
+        >✕</button>
+      )}
+      <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+      <div style={{
+        width: 56, height: 56, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: selected ? selBg : data._scanning ? 'rgba(245,158,11,0.08)' : 'transparent',
+        border: selected ? `2px solid ${accent}` : '2px solid transparent',
+        boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
+        transition: 'all 0.18s ease',
+      }}>
+        <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
+      </div>
+      <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: selected ? '#fff' : C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'color 0.18s' }}>
+          {data.displayName}
+        </div>
+        <div style={{ fontSize: 9, color: accent, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8, opacity: 0.8 }}>
+          {data.kind}
+        </div>
+      </div>
+      <Handle type="source" position={Position.Bottom} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
+    </div>
+  );
+}
+
 const NODE_TYPES: NodeTypes = {
   entryPoint: EntryPointNode as any,
   orchestrator: OrchestratorNode as any,
   agent: AgentNode as any,
+  middleware: MiddlewareNode as any,
 };
 
 // ── Custom animated edge ──────────────────────────────────────────────────────
@@ -542,15 +595,17 @@ function trunc(s: string | null | undefined, n = 120) {
 }
 
 // ── Node Library panel ────────────────────────────────────────────────────────
-function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
+function NodeLibrary({ orchestrators, agents, middlewareDefs, width, onWidthChange }: {
   orchestrators: OrchestratorFull[];
   agents: Agent[];
+  middlewareDefs: MiddlewareDef[];
   width: number;
   onWidthChange: (w: number) => void;
 }) {
   const [openEP, setOpenEP] = useState(true);
   const [openOrch, setOpenOrch] = useState(true);
   const [openAgents, setOpenAgents] = useState(true);
+  const [openMW, setOpenMW] = useState(true);
   const dragging = useRef(false);
   const startX = useRef(0);
   const startW = useRef(0);
@@ -720,6 +775,47 @@ function NodeLibrary({ orchestrators, agents, width, onWidthChange }: {
             </div>
           )}
         </div>
+
+        {/* Middleware */}
+        {middlewareDefs.length > 0 && (
+          <div>
+            <SectionHeader label="Middleware" open={openMW} onToggle={() => setOpenMW(v => !v)} />
+            {openMW && (
+              <div className="nl-section-list">
+                {middlewareDefs.filter(m => m.enabled).map(m => {
+                  const icon = m.kind === 'guard' ? 'shield' : 'bolt';
+                  return (
+                    <div key={m.id} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
+                      <div
+                        draggable
+                        onDragStart={e => dragItem(e, 'middleware', {
+                          defId: m.id, slug: m.slug, kind: m.kind,
+                          displayName: m.display_name, description: m.description,
+                          config: m.config, configOverride: {}, nodeId: '',
+                        } satisfies MiddlewareData)}
+                        style={{ ...itemStyle, background: C.amberBg, borderColor: C.amberBorder, marginBottom: 0 }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(245,158,11,0.1)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = C.amberBg)}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: 18, color: C.amber, flexShrink: 0 }}>{icon}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.display_name}</div>
+                          <div style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.kind}</div>
+                        </div>
+                        <span className="material-symbols-outlined" style={{ fontSize: 14, color: C.textMuted, marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}>drag_indicator</span>
+                      </div>
+                      <div className="nl-tip">
+                        <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, marginBottom: 4 }}>{m.display_name}</div>
+                        <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>{m.kind} · {m.slug}</div>
+                        <div style={{ fontSize: 11, color: 'var(--tm-card-text-hint)', lineHeight: 1.5 }}>{trunc(m.description)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Resize handle */}
@@ -1061,6 +1157,127 @@ function PropertiesPanel({
                   <span className="material-symbols-outlined" style={{ fontSize: 14 }}>open_in_new</span>
                   Configure in Agents
                 </a>
+              </div>
+            );
+          })()}
+
+          {/* Middleware properties */}
+          {selectedNode.type === 'middleware' && propTab === 'properties' && (() => {
+            const mwNode = selectedNode;
+            const d = mwNode.data as MiddlewareData;
+            const icon = d.kind === 'guard' ? 'shield' : 'bolt';
+            const kindBadge = (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: C.amberBg, color: C.amber, border: `1px solid ${C.amberBorder}` }}>
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: C.amber, boxShadow: `0 0 5px ${C.amber}` }} />
+                {d.kind}
+              </span>
+            );
+            const co = (d.configOverride ?? {}) as Record<string, unknown>;
+            function setOverride(patch: Record<string, unknown>) {
+              onUpdateNode(mwNode.id, { configOverride: { ...co, ...patch } });
+            }
+            return (
+              <div>
+                {/* Header tile */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, marginBottom: 16, background: C.amberBg, border: `1px solid ${C.amberBorder}` }}>
+                  <span className="material-symbols-outlined" style={{ fontSize: 22, color: C.amber }}>{icon}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.displayName}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{d.slug}</div>
+                  </div>
+                </div>
+                <div style={fieldWrap}>
+                  <label style={labelStyle}>Kind</label>
+                  {kindBadge}
+                </div>
+                {d.description && (
+                  <div style={fieldWrap}>
+                    <label style={labelStyle}>Description</label>
+                    <div style={{ fontSize: 12, color: 'var(--tm-card-text-hint)', lineHeight: 1.55, padding: '7px 10px', borderRadius: 6, border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow }}>
+                      {d.description}
+                    </div>
+                  </div>
+                )}
+                <div style={{ marginTop: 8, marginBottom: 8, paddingTop: 8, borderTop: `1px solid ${C.outlineVariant}`, fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase' }}>
+                  Config Override
+                </div>
+                {d.kind === 'guard' && (
+                  <>
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Mode</label>
+                      <select
+                        style={{ ...inputStyle }}
+                        value={(co.mode as string) ?? ''}
+                        onChange={e => setOverride({ mode: e.target.value || undefined })}
+                      >
+                        <option value="">— default —</option>
+                        <option value="block">block</option>
+                        <option value="redact">redact</option>
+                      </select>
+                    </div>
+                    <div style={{ ...fieldWrap, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <label style={{ ...labelStyle, marginBottom: 0 }}>Detection</label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={co.pii_detection !== false}
+                          onChange={e => setOverride({ pii_detection: e.target.checked })}
+                          style={{ accentColor: C.amber }}
+                        />
+                        PII detection
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={co.injection_detection !== false}
+                          onChange={e => setOverride({ injection_detection: e.target.checked })}
+                          style={{ accentColor: C.amber }}
+                        />
+                        Injection detection
+                      </label>
+                    </div>
+                  </>
+                )}
+                {d.kind === 'cache' && (
+                  <>
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>TTL (seconds)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        style={inputStyle}
+                        value={(co.ttl_seconds as number | undefined) ?? ''}
+                        placeholder="e.g. 300"
+                        onChange={e => setOverride({ ttl_seconds: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+                      />
+                    </div>
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Scope</label>
+                      <select
+                        style={{ ...inputStyle }}
+                        value={(co.scope as string) ?? ''}
+                        onChange={e => setOverride({ scope: e.target.value || undefined })}
+                      >
+                        <option value="">— default —</option>
+                        <option value="global">global</option>
+                        <option value="app">app</option>
+                        <option value="session">session</option>
+                        <option value="user">user</option>
+                      </select>
+                    </div>
+                    <div style={fieldWrap}>
+                      <label style={labelStyle}>Max result chars</label>
+                      <input
+                        type="number"
+                        min={1}
+                        style={inputStyle}
+                        value={(co.max_result_chars as number | undefined) ?? ''}
+                        placeholder="e.g. 8000"
+                        onChange={e => setOverride({ max_result_chars: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             );
           })()}
@@ -1634,7 +1851,7 @@ function CanvasInner({
         <CanvasLogo state={logoState} />
         <MiniMap
           style={{ background: C.surfaceLow, border: `1px solid ${C.outlineVariant}`, borderRadius: 8 }}
-          nodeColor={(n: Node) => n.type === 'entryPoint' ? C.cyan : n.type === 'orchestrator' ? C.purple : C.green}
+          nodeColor={(n: Node) => n.type === 'entryPoint' ? C.cyan : n.type === 'orchestrator' ? C.purple : n.type === 'middleware' ? C.amber : C.green}
           maskColor="rgba(5,20,36,0.7)"
         />
       </ReactFlow>
@@ -1658,9 +1875,10 @@ interface NodePortDef {
 }
 
 const NODE_PORTS: Record<string, NodePortDef> = {
-  entryPoint:   { accepts: [],                     emits: ['request'] },  // multiple allowed, unique by slug
-  orchestrator: { accepts: ['request', 'signal'],   emits: ['task', 'signal'] },
-  agent:        { accepts: ['task'],                emits: ['result'] },
+  entryPoint:   { accepts: [],                           emits: ['request'] },  // multiple allowed, unique by slug
+  orchestrator: { accepts: ['request', 'signal'],         emits: ['task', 'signal'] },
+  agent:        { accepts: ['task', 'mw_task'],           emits: ['result'] },
+  middleware:   { accepts: ['task', 'mw_task'],           emits: ['mw_task'] },
   // future: router, condition, webhook, llm, transform …
 };
 
@@ -1843,6 +2061,7 @@ function BuilderView({
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [libWidth, setLibWidth] = useState(280);
+  const [middlewareDefs, setMiddlewareDefs] = useState<MiddlewareDef[]>([]);
   const [appName, setAppName] = useState(app?.name ?? '');
   const [convTokenLimit, setConvTokenLimit] = useState<string>(
     app?.entry_points?.[0]?.conversation_token_limit != null ? String(app.entry_points[0].conversation_token_limit) : ''
@@ -1882,6 +2101,11 @@ function BuilderView({
     setEdges((eds: Edge[]) => eds.filter(e => e.source !== id && e.target !== id));
     setSelectedNode((prev: Node | null) => prev?.id === id ? null : prev);
   };
+
+  // Fetch middleware defs on mount
+  useEffect(() => {
+    themApi.listMiddlewareDefs().then(setMiddlewareDefs).catch(() => {/* non-critical */});
+  }, []);
 
   // Keep refs in sync so onConnect can read current state synchronously
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
@@ -2321,6 +2545,52 @@ function BuilderView({
         const matchingNode = nodes.find((n: Node) => n.type === 'entryPoint' && (n.data as EntryPointData).slug === ep.slug);
         if (matchingNode) updateNodeData(matchingNode.id, { _epId: ep.id });
       });
+
+      // ── Sync middleware wirings ──────────────────────────────────────────────
+      // Traverse the graph: for each orch→middleware→...→agent chain, collect wirings.
+      // A middleware node between orch and agent: Orch → MW → Agent (or MW → MW → Agent)
+      try {
+        const orchNodeForMW = connectedEps[0].orchNode;
+        const wirings: Array<{ def_id: string; agent_id: string; position: number; config_override: Record<string, unknown>; node_id: string; enabled: boolean }> = [];
+
+        // Walk from orch: for each outgoing edge from orch
+        for (const orchEdge of edges.filter((e: Edge) => e.source === orchNodeForMW.id)) {
+          const firstTarget = nodes.find((n: Node) => n.id === orchEdge.target);
+          if (!firstTarget) continue;
+          if (firstTarget.type === 'middleware') {
+            // Follow the chain until we hit an agent node
+            const chain: Node[] = [];
+            let current: Node | undefined = firstTarget;
+            while (current && current.type === 'middleware') {
+              chain.push(current);
+              const nextEdge = edges.find((e: Edge) => e.source === current!.id);
+              current = nextEdge ? nodes.find((n: Node) => n.id === nextEdge.target) : undefined;
+            }
+            const agentNode = current && current.type === 'agent' ? current : undefined;
+            if (agentNode) {
+              const agentId = (agentNode.data as AgentData).agentId;
+              chain.forEach((mwNode, idx) => {
+                const md = mwNode.data as MiddlewareData;
+                wirings.push({
+                  def_id: md.defId,
+                  agent_id: agentId,
+                  position: idx,
+                  config_override: (md.configOverride ?? {}) as Record<string, unknown>,
+                  node_id: mwNode.id,
+                  enabled: true,
+                });
+              });
+            }
+          }
+          // If firstTarget is an agent (direct edge), no middleware — skip
+        }
+
+        await themApi.putMiddlewareWirings(saved.id, wirings);
+      } catch {
+        // Non-fatal — wirings are best-effort; main save succeeded
+      }
+      // ── End middleware wirings sync ──────────────────────────────────────────
+
       setIsDirty(false);
       triggerLogo('success', deploy ? 2500 : 1800);
       showToast(deploy ? '🚀 Application deployed!' : 'Saved successfully', true);
@@ -2460,7 +2730,7 @@ function BuilderView({
 
       {/* Builder area */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }} ref={rfWrapper}>
-        <NodeLibrary orchestrators={orchestrators} agents={agents} width={libWidth} onWidthChange={setLibWidth} />
+        <NodeLibrary orchestrators={orchestrators} agents={agents} middlewareDefs={middlewareDefs} width={libWidth} onWidthChange={setLibWidth} />
 
         {/* Canvas */}
         <div style={{ flex: 1, position: 'relative', height: 'calc(100vh - 56px)' }}>

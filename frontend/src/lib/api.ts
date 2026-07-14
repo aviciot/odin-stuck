@@ -20,6 +20,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) => request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+  put: <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
@@ -195,6 +196,26 @@ export interface Application {
   updated_at: string;
 }
 
+export interface MiddlewareDef {
+  id: string;
+  slug: string;
+  kind: 'guard' | 'cache';
+  display_name: string;
+  description: string;
+  config: Record<string, unknown>;
+  is_builtin: boolean;
+  enabled: boolean;
+}
+
+export interface MiddlewareWiringIn {
+  def_id: string;
+  agent_id: string;
+  position: number;
+  config_override: Record<string, unknown>;
+  node_id: string;
+  enabled: boolean;
+}
+
 export interface AccessToken {
   id: string;
   label: string;
@@ -318,6 +339,9 @@ export const themApi = {
   createApplication: (body: unknown) => api.post<Application>('/admin/applications', body),
   updateApplication: (id: string, body: unknown) => api.patch<Application>(`/admin/applications/${id}`, body),
   deleteApplication: (id: string) => api.delete<void>(`/admin/applications/${id}`),
+  listMiddlewareDefs: () => api.get<MiddlewareDef[]>('/admin/middleware-defs'),
+  putMiddlewareWirings: (appId: string, wirings: MiddlewareWiringIn[]) =>
+    api.put<void>(`/admin/applications/${appId}/middleware-wirings`, { wirings }),
   tokens: () => api.get<AccessToken[]>('/admin/tokens'),
   createToken: (body: unknown) => api.post<AccessToken>('/admin/tokens', body),
   updateToken: (id: string, body: unknown) => api.patch<AccessToken>(`/admin/tokens/${id}`, body),
