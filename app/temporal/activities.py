@@ -18,6 +18,7 @@ from temporalio import activity
 
 import app.database as db_module
 from app.adapters.factory import get_adapter
+from app.middleware import build_agent_pipeline, MiddlewareContext
 from app.services import context_service, run_recorder, task_store
 from app.temporal.loaders import (
     agent_to_config,
@@ -77,6 +78,7 @@ async def load_orchestration_context_activity(
     context_id: str,
     current_task_id: str,
     history_window: int = 20,
+    entry_point_slug: Optional[str] = None,
 ) -> dict:
     """
     Load orchestrator config, agent list, tool definitions, and prior conversation history.
@@ -109,6 +111,17 @@ async def load_orchestration_context_activity(
         )
         orch_config = orch_to_config(orch, price_in, price_out)
 
+        # Resolve application_id from entry_point_slug (needed for middleware chain)
+        application_id: Optional[str] = None
+        if entry_point_slug:
+            from sqlalchemy import select as _select
+            from app.models import EntryPoint
+            ep_row = (await db.execute(
+                _select(EntryPoint.application_id).where(EntryPoint.slug == entry_point_slug)
+            )).scalar_one_or_none()
+            if ep_row is not None:
+                application_id = str(ep_row)
+
         # Load prior conversation history once (not per-iteration)
         prior_history: list = []
         try:
@@ -133,6 +146,7 @@ async def load_orchestration_context_activity(
         "agents": [_dataclass_to_dict(a) for a in agent_configs],
         "tools": tools,
         "prior_history": prior_history,
+        "application_id": application_id,
     }
 
 
@@ -583,7 +597,26 @@ async def invoke_agent_activity(inp: InvokeAgentInput) -> InvokeAgentResult:
                     )
                 except Exception:
                     pass
-            adapter = get_adapter(agent_proxy, context_id=inp.context_id)
+            mw_ctx = MiddlewareContext(
+                run_id=inp.run_id,
+                context_id=inp.context_id,
+                agent_id=inp.agent_id,
+                agent_slug=inp.agent_slug,
+                user_id=inp.user_id_str,
+                session_id=inp.session_id_str,
+                application_id=inp.application_id,
+                tool_call_id=inp.tool_call_id,
+                timeout=float(inp.timeout_seconds),
+                redis=db_module.redis_client,
+                db_session_factory=db_module.AsyncSessionLocal,
+            )
+            adapter = await build_agent_pipeline(
+                agent_proxy,
+                db=own_db,
+                redis=db_module.redis_client,
+                ctx=mw_ctx,
+                context_id=inp.context_id,
+            )
             async for event in adapter.stream_invoke(
                 input=effective_input,
                 timeout=float(inp.timeout_seconds),

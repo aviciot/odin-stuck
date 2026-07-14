@@ -109,6 +109,7 @@ class OrchestrationWorkflow:
                     # uses it only to exclude current task from history
                     "00000000-0000-0000-0000-000000000000",
                     inp.history_window,
+                    inp.entry_point_slug,
                 ],
                 schedule_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),
@@ -118,6 +119,7 @@ class OrchestrationWorkflow:
             agent_dicts = ctx_result["agents"]
             tools = ctx_result["tools"]
             prior_history = ctx_result["prior_history"]
+            application_id = ctx_result.get("application_id")
             orch_config = _dict_to_orch_config(orch_dict)
 
             # Seed message state: prior turns + current user message
@@ -304,6 +306,9 @@ class OrchestrationWorkflow:
                         injected_context=self.context_summary,
                         input_schema=agent_dict.get("input_schema"),
                         max_retries=max(1, int(agent_dict.get("max_retries", 2) or 2)),
+                        application_id=application_id,
+                        user_id_str=str(inp.user_id),
+                        session_id_str=inp.session_id,
                     )
                     try:
                         async with parallel_sem:

@@ -23,6 +23,7 @@ from app.routers import admin_agents
 from app.routers import admin_orchestrators
 from app.routers import admin_tokens
 from app.routers import admin_applications
+from app.routers import admin_middleware
 from app.routers import ws_orchestrator
 from app.routers import ws_dashboard
 from app.routers import runs
@@ -169,6 +170,7 @@ app.include_router(admin_agents.router, prefix="/api/v1", dependencies=[Depends(
 app.include_router(admin_orchestrators.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(admin_tokens.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(admin_applications.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
+app.include_router(admin_middleware.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(ws_orchestrator.router)
 app.include_router(ws_dashboard.router)
 app.include_router(runs.router, prefix="/api/v1")

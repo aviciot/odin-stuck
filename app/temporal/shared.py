@@ -149,6 +149,9 @@ class InvokeAgentInput:
     injected_context: Optional[str]
     input_schema: Optional[dict]
     max_retries: int = 2
+    application_id: Optional[str] = None   # for middleware chain resolution
+    user_id_str: Optional[str] = None       # for cache scope=user
+    session_id_str: Optional[str] = None    # for cache scope=session
 
 
 @dataclass
