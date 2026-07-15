@@ -1201,7 +1201,7 @@ def test_18_orch_as_agent():
     # Models
     try:
         s = src("app/models.py")
-        check("Orchestrator.a2a_exposed column", "a2a_exposed" in s)
+        check("Orchestrator.a2a_exposed column dropped (Phase 12)", "a2a_exposed" not in s)
         check("Orchestrator.budget_tokens column", "budget_tokens" in s)
         check("Orchestrator.delegatable column", "delegatable" in s)
         check("AppOrchestrator model defined", "class AppOrchestrator(Base)" in s)
@@ -1618,8 +1618,8 @@ def test_22_applications():
         check("them:orchestrators: key flushed", "them:orchestrators:" in s)
         check("them:agents:registry key flushed", "them:agents:registry" in s)
         check("409 on duplicate slug", "409" in s or "HTTP_409_CONFLICT" in s)
-        check("orchestrator FK verified on create", "Orchestrator" in s)
-        check("orchestrator_name join in list", "orch_map" in s or "_batch_orch_names" in s)
+        check("orchestrator FK verified on create (Phase 12: via Orchestrator namespace check)", "Orchestrator" in s)
+        check("orchestrator_id batch lookup removed (Phase 12)", "_batch_orch_names" not in s and "orch_names.get" not in s)
         check("ApplicationCreate defined", "ApplicationCreate" in s)
         check("ApplicationUpdate defined", "ApplicationUpdate" in s)
         check("ApplicationOut defined", "ApplicationOut" in s)
@@ -2251,9 +2251,9 @@ def test_28_loaders_resolution():
         check("is_app_orchestrator written to cache dict", '"is_app_orchestrator"' in s)
         check("isinstance(row, AppOrchestrator) evaluated on DB-miss path", "isinstance(row, AppOrchestrator)" in s)
 
-        # load_agents uses delegatable (primary) and a2a_exposed (fallback)
+        # load_agents uses delegatable only (a2a_exposed fallback dropped in Phase 12)
         check("load_agents checks delegatable", "delegatable" in s)
-        check("load_agents falls back to a2a_exposed for legacy orchs", "a2a_exposed" in s)
+        check("load_agents a2a_exposed fallback dropped (Phase 12)", "a2a_exposed" not in s)
 
     except Exception as exc:
         check("loaders.py structure", False, str(exc))

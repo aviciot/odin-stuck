@@ -180,7 +180,7 @@ async def _run_temporal(
     )
 
     try:
-        workflow_handle, workflow_id = await start_orchestration_workflow(
+        workflow_handle, workflow_id, pubsub = await start_orchestration_workflow(
             orchestrator_name=name,
             user_message=user_message,
             user_id=user_id,
@@ -190,7 +190,13 @@ async def _run_temporal(
             history_window=history_window,
         )
     except Exception as exc:
-        await edge.emit({"type": "error", "message": f"Failed to start workflow: {exc}"})
+        from app.temporal.bridge_client import DeadContextError
+        is_dead = isinstance(exc, DeadContextError)
+        await edge.emit({
+            "type": "error",
+            "message": str(exc) if is_dead else f"Failed to start workflow: {exc}",
+            "context_id": None,
+        })
         return
 
     cancel_event = asyncio.Event()
@@ -224,6 +230,7 @@ async def _run_temporal(
             workflow_handle=workflow_handle,
             emit_fn=_capture_run_id,
             cancel_event=cancel_event,
+            pubsub=pubsub,
         )
     )
     cancel_task = asyncio.ensure_future(_cancel_listener())

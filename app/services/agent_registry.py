@@ -47,7 +47,7 @@ def _agent_to_dict(agent: Agent) -> dict:
 
 
 def _orch_to_pseudo_agent_dict(orch) -> dict:
-    """Map a delegatable AppOrchestrator (or legacy a2a_exposed Orchestrator) to the same dict shape as _agent_to_dict."""
+    """Map a delegatable AppOrchestrator or delegatable Orchestrator to the same dict shape as _agent_to_dict."""
     return {
         "id": str(orch.id),
         "slug": f"orch__{orch.name}",
@@ -80,9 +80,9 @@ async def _load_from_db(db: AsyncSession) -> list[dict]:
     for orch in app_orch_result.scalars().all():
         agents.append(_orch_to_pseudo_agent_dict(orch))
 
-    # Also expose legacy a2a_exposed Orchestrators as sub_orchestrator pseudo-agents (fallback)
+    # Also expose delegatable Orchestrators as sub_orchestrator pseudo-agents
     orch_result = await db.execute(
-        select(Orchestrator).where(Orchestrator.enabled == True, Orchestrator.a2a_exposed == True)
+        select(Orchestrator).where(Orchestrator.enabled == True, Orchestrator.delegatable == True)
     )
     for orch in orch_result.scalars().all():
         agents.append(_orch_to_pseudo_agent_dict(orch))

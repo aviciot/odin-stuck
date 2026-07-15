@@ -13,7 +13,7 @@ import json
 import uuid
 from typing import Callable, Coroutine, Optional
 
-from temporalio.client import WorkflowHandle
+from temporalio.client import WorkflowHandle, WorkflowExecutionStatus
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 import app.database as db_module
@@ -21,6 +21,11 @@ from app.temporal.client import get_temporal_client
 from app.temporal.shared import OrchestrationInput
 from app.temporal.workflows import OrchestrationWorkflow
 from app.utils.logger import logger
+
+
+class DeadContextError(Exception):
+    """Raised when a client resends a context_id whose workflow already closed/failed.
+    The caller must discard that context_id and tell the client to start fresh."""
 
 _TASK_QUEUE = None  # resolved lazily
 
@@ -46,18 +51,33 @@ async def start_orchestration_workflow(
     session_id: uuid.UUID,
     history_window: int = 20,
     entry_point_slug: Optional[str] = None,
-) -> tuple[WorkflowHandle, str]:
+) -> tuple[WorkflowHandle, str, object]:
     """
     Start or signal-resume an OrchestrationWorkflow for the given context_id.
 
     Workflow ID = f"ctx-{context_id}" — one per conversation thread.
 
-    Returns (workflow_handle, workflow_id). The run_id is extracted from
-    the workflow's ready event on the Redis stream after starting.
+    Returns (workflow_handle, workflow_id, pubsub) where pubsub is already
+    subscribed to the context channel BEFORE the workflow starts — this
+    eliminates the race where a fast workflow publishes its ready event
+    before stream_run_events has a chance to subscribe.
+
+    Pass the returned pubsub directly to stream_run_events(..., pubsub=pubsub).
+    The pubsub is closed by stream_run_events when own_pubsub=False and the
+    caller passes it in; here we return it and the caller is responsible via
+    stream_run_events closing it. Actually stream_run_events only closes if
+    own_pubsub — so caller must close on error paths. See error handling below.
     """
     client = await get_temporal_client()
     workflow_id = f"ctx-{context_id}"
     task_queue = _get_task_queue()
+    ctx_channel = f"{_DASH_RUN_PREFIX}{context_id}:ctx"
+
+    # Subscribe BEFORE starting the workflow so we never miss the ready event.
+    pubsub = None
+    if db_module.redis_client is not None:
+        pubsub = db_module.redis_client.pubsub()
+        await pubsub.subscribe(ctx_channel)
 
     inp = OrchestrationInput(
         orchestrator_name=orchestrator_name,
@@ -84,9 +104,46 @@ async def start_orchestration_workflow(
         )
     except WorkflowAlreadyStartedError:
         handle = client.get_workflow_handle(workflow_id)
+        # Part B: check whether the existing workflow is still running.
+        # If it closed (completed, failed, cancelled, terminated, timed out),
+        # the context_id is dead — re-attaching would stream nothing or the
+        # old failure. Raise DeadContextError so the caller can tell the client
+        # to discard this context_id and start fresh.
+        try:
+            desc = await handle.describe()
+            status = desc.status
+            _CLOSED = {
+                WorkflowExecutionStatus.COMPLETED,
+                WorkflowExecutionStatus.FAILED,
+                WorkflowExecutionStatus.CANCELED,
+                WorkflowExecutionStatus.TERMINATED,
+                WorkflowExecutionStatus.TIMED_OUT,
+            }
+            if status in _CLOSED:
+                logger.warning(
+                    "bridge_client: context workflow is closed — rejecting reuse",
+                    workflow_id=workflow_id,
+                    status=str(status),
+                )
+                raise DeadContextError(
+                    f"Context {context_id} points to a closed workflow ({status}). "
+                    "Start a new conversation."
+                )
+        except DeadContextError:
+            raise
+        except Exception as desc_exc:
+            # describe() failed (e.g. workflow not found at all) — also dead
+            logger.warning(
+                "bridge_client: could not describe existing workflow — treating as dead",
+                workflow_id=workflow_id,
+                error=str(desc_exc),
+            )
+            raise DeadContextError(
+                f"Context {context_id} is no longer valid. Start a new conversation."
+            )
         logger.info("bridge_client: attached to existing workflow", workflow_id=workflow_id)
 
-    return handle, workflow_id
+    return handle, workflow_id, pubsub
 
 
 async def stream_run_events(
@@ -94,6 +151,7 @@ async def stream_run_events(
     workflow_handle: WorkflowHandle,
     emit_fn: Callable[[dict], Coroutine],
     cancel_event: Optional[asyncio.Event] = None,
+    pubsub=None,  # pre-subscribed pubsub handle (avoids ready-event race)
 ) -> None:
     """
     Stream events from a running OrchestrationWorkflow to the WS client.
@@ -105,6 +163,9 @@ async def stream_run_events(
 
     Terminates when a terminal event (done/error) arrives or workflow completes.
     Always emits the final done/error from workflow_handle.result() as a guarantee.
+
+    IMPORTANT: pass a pre-subscribed pubsub (created before start_workflow) to
+    avoid the race where a fast workflow publishes ready before we subscribe.
     """
     if db_module.redis_client is None:
         logger.warning("bridge_client: Redis not available — waiting for workflow result only")
@@ -122,8 +183,12 @@ async def stream_run_events(
     run_id: list[str] = []
     terminal_received = False
 
-    pubsub = db_module.redis_client.pubsub()
-    await pubsub.subscribe(ctx_channel)
+    # Use the pre-subscribed pubsub if provided; otherwise create one now.
+    # Creating one now risks missing the ready event if the workflow is fast.
+    own_pubsub = pubsub is None
+    if own_pubsub:
+        pubsub = db_module.redis_client.pubsub()
+        await pubsub.subscribe(ctx_channel)
 
     try:
         # Phase 1: wait for ready event on context channel
@@ -215,10 +280,11 @@ async def stream_run_events(
         await pubsub.unsubscribe(run_channel)
 
     finally:
-        try:
-            await pubsub.aclose()
-        except Exception:
-            pass
+        if own_pubsub:
+            try:
+                await pubsub.aclose()
+            except Exception:
+                pass
 
 
 async def cancel_workflow(workflow_id: str) -> None:

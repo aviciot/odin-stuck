@@ -315,12 +315,9 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
     metadata = params.get("metadata", {})
     skill_id = metadata.get("skill") or metadata.get("orchestrator") or "default"
 
-    # Look up EntryPoint by slug first; fall back to treating skill_id as a literal
-    # orchestrator name for backward compat with legacy a2a_exposed orchestrators.
-    #
-    # Resolution: Application.orchestrator_id → Orchestrator.name. load_orchestrator_row
-    # (Phase 6) resolves app_orchestrators first, then falls back to orchestrators — so
-    # using the legacy Orchestrator.name here hits the fallback path cleanly.
+    # Look up EntryPoint by slug; a2a EPs always have app_orchestrator_id set.
+    # load_orchestrator_row resolves app_orchestrators first, so ep.app_orchestrator.name
+    # is the authoritative routing key.
     orchestrator_name = skill_id
     if skill_id and skill_id != "default" and db_module.AsyncSessionLocal is not None:
         try:
@@ -329,7 +326,6 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
             from app.models import (
                 EntryPoint as _EntryPoint,
                 AppOrchestrator as _AppOrchestrator,
-                Orchestrator as _OrchestratorModel,
             )
             async with db_module.AsyncSessionLocal() as _ep_db:
                 ep_result = await _ep_db.execute(
@@ -340,26 +336,12 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
                         _EntryPoint.entry_point_type == "a2a",
                         _EntryPoint.enabled == True,
                     )
-                    .options(
-                        _ep_selectinload(_EntryPoint.app_orchestrator),
-                        _ep_selectinload(_EntryPoint.application),
-                    )
+                    .options(_ep_selectinload(_EntryPoint.app_orchestrator))
                 )
                 ep = ep_result.scalar_one_or_none()
-                if ep is not None:
-                    # Resolve Application.orchestrator_id → them.orchestrators.name
-                    # because task_runner._load_orchestrator_row resolves against
-                    # them.orchestrators (not them.app_orchestrators).
-                    app = ep.application
-                    if app and app.orchestrator_id:
-                        orch_row = await _ep_db.get(_OrchestratorModel, app.orchestrator_id)
-                        if orch_row and orch_row.enabled:
-                            orchestrator_name = orch_row.name
-                        else:
-                            orchestrator_name = skill_id  # fallback: orch disabled or missing
-                    else:
-                        orchestrator_name = skill_id  # fallback: no orchestrator_id on app
-                # else: keep orchestrator_name = skill_id (backward compat — legacy a2a_exposed)
+                if ep is not None and ep.app_orchestrator is not None and ep.app_orchestrator.enabled:
+                    orchestrator_name = ep.app_orchestrator.name
+                # else: keep orchestrator_name = skill_id (legacy delegatable Orchestrator path)
         except Exception as _ep_exc:
             logger.warning("a2a: EP slug lookup failed, using skill_id as orchestrator name",
                            skill_id=skill_id, error=str(_ep_exc))

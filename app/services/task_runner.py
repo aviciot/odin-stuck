@@ -74,7 +74,7 @@ class _OrchestratorProxy:
     max_parallel_tools: int
     rate_limit_rpm: int
     daily_budget_usd: Decimal
-    a2a_exposed: bool = False
+    delegatable: bool = False
     memory_enabled: bool = False
     summarize_every_n_calls: int = 3
     memory_raw_fallback_n: int = 5
@@ -107,7 +107,7 @@ async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orches
                     max_parallel_tools=data.get("max_parallel_tools", 4),
                     rate_limit_rpm=data.get("rate_limit_rpm", 60),
                     daily_budget_usd=Decimal(str(data.get("daily_budget_usd", "0"))),
-                    a2a_exposed=data.get("a2a_exposed", False),
+                    delegatable=data.get("delegatable", False),
                     memory_enabled=data.get("memory_enabled", False),
                     summarize_every_n_calls=data.get("summarize_every_n_calls", 3),
                     memory_raw_fallback_n=data.get("memory_raw_fallback_n", 5),
@@ -144,7 +144,7 @@ async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orches
                 "max_parallel_tools": row.max_parallel_tools,
                 "rate_limit_rpm": row.rate_limit_rpm,
                 "daily_budget_usd": str(row.daily_budget_usd),
-                "a2a_exposed": getattr(row, "a2a_exposed", False),
+                "delegatable": getattr(row, "delegatable", False),
                 "memory_enabled": getattr(row, "memory_enabled", False),
                 "summarize_every_n_calls": getattr(row, "summarize_every_n_calls", 3),
                 "memory_raw_fallback_n": getattr(row, "memory_raw_fallback_n", 5),

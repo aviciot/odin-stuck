@@ -16,7 +16,7 @@ Auth:
 
 Design:
   Entry points are thin adapters. They load the EntryPoint row (joined to its
-  Application for orchestrator_id), verify auth, then delegate to task_runner.run().
+  Application and AppOrchestrator), verify auth, then delegate to task_runner.run().
   entry_point_slug is threaded through to run_recorder so logs/history show
   which door a run came through.
 """
@@ -237,7 +237,6 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
 
     async with db_module.AsyncSessionLocal() as db:
         ep = await _load_entry_point(db, slug)
-        app_row = ep.application
 
         policy = ep.access_policy or {}
         if policy.get("mode") != "public":
@@ -253,11 +252,6 @@ async def rest_entry(slug: str, body: RestRequest, request: Request):
             raise HTTPException(status_code=400, detail="This entry point is A2A-only. Use the /a2a endpoint.")
 
         orch = ep.app_orchestrator
-        if orch is None:
-            # fallback for pre-migration rows without app_orchestrator_id
-            from app.models import Orchestrator
-            if app_row and app_row.orchestrator_id:
-                orch = await db.get(Orchestrator, app_row.orchestrator_id)
         if orch is None or not orch.enabled:
             raise HTTPException(status_code=503, detail="Bound orchestrator unavailable")
 
@@ -411,7 +405,6 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
 
     async with db_module.AsyncSessionLocal() as db:
         ep = await _load_entry_point(db, slug)
-        app_row = ep.application
 
         policy = ep.access_policy or {}
         if policy.get("mode") != "public":
@@ -427,11 +420,6 @@ async def sse_entry(slug: str, request: Request, message: str, context_id: Optio
             raise HTTPException(status_code=400, detail="This entry point is A2A-only. Use the /a2a endpoint.")
 
         orch = ep.app_orchestrator
-        if orch is None:
-            # fallback for pre-migration rows without app_orchestrator_id
-            from app.models import Orchestrator
-            if app_row and app_row.orchestrator_id:
-                orch = await db.get(Orchestrator, app_row.orchestrator_id)
         if orch is None or not orch.enabled:
             raise HTTPException(status_code=503, detail="Bound orchestrator unavailable")
 
@@ -513,7 +501,6 @@ async def ws_entry(slug: str, websocket: WebSocket):
     try:
         async with db_module.AsyncSessionLocal() as db:
             ep = await _load_entry_point(db, slug)
-            app_row = ep.application
             policy = ep.access_policy or {}
             conv_token_limit = ep.conversation_token_limit
 
@@ -523,11 +510,6 @@ async def ws_entry(slug: str, websocket: WebSocket):
                 return
 
             orch = ep.app_orchestrator
-            if orch is None:
-                # fallback for pre-migration rows without app_orchestrator_id
-                from app.models import Orchestrator
-                if app_row and app_row.orchestrator_id:
-                    orch = await db.get(Orchestrator, app_row.orchestrator_id)
             if orch is None or not orch.enabled:
                 await websocket.send_json({"type": "error", "message": "Bound orchestrator unavailable"})
                 await websocket.close(code=4003)

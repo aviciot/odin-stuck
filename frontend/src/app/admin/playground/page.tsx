@@ -1,9 +1,33 @@
 'use client';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type OrchestratorFull, type TaskOut, type ArtifactOut, type AgentCard, type ContextSession } from '@/lib/api';
+import { themApi, type OrchestratorFull, type TaskOut, type ArtifactOut, type AgentCard, type ContextSession, type Application, type EntryPoint } from '@/lib/api';
+
+// ── Connection target ──────────────────────────────────────────────────────
+type ConnTarget =
+  | { kind: 'orchestrator'; name: string; label: string }
+  | { kind: 'entrypoint'; slug: string; epType: 'websocket' | 'sse'; appName: string; orchName: string };
+
+function targetLabel(t: ConnTarget): string {
+  if (t.kind === 'orchestrator') return t.label;
+  return `${t.appName} · ${t.slug}`;
+}
+
+function targetId(t: ConnTarget): string {
+  if (t.kind === 'orchestrator') return `orch:${t.name}`;
+  return `ep:${t.slug}`;
+}
+
+function targetWsUrl(t: ConnTarget, token: string): string {
+  const base = getBridgeWs();
+  if (t.kind === 'orchestrator') return `${base}/ws/orchestrate/${t.name}?token=${encodeURIComponent(token)}`;
+  return `${base}/apps/${t.slug}/ws?token=${encodeURIComponent(token)}`;
+}
+
+// Tab colour palette — cycles for each open tab
+const TAB_COLORS = ['#7c3aed', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#f87171'];
 
 function getBridgeWs(): string {
   if (typeof window === 'undefined') return '';
@@ -910,15 +934,22 @@ function Spinner() {
   );
 }
 
-// ── Component ──────────────────────────────────────────────────────────────
+// ── ChatColumn ─────────────────────────────────────────────────────────────
+// A fully self-contained chat column. Each tab in the multi-EP playground
+// mounts exactly one ChatColumn. The column manages its own WS state machine.
+// sharedInput: when in Compare mode the parent feeds text here instead of the
+// internal textarea (the column fires it on every non-null update).
 
-export default function PlaygroundPage() {
-  const searchParams = useSearchParams();
-  const initialOrch = searchParams.get('orchestrator') || '';
+interface ChatColumnProps {
+  target: ConnTarget;
+  color: string;              // accent colour for this column
+  sharedInput?: string | null; // Compare mode: broadcast message from parent
+  onSharedSent?: () => void;  // tells parent to clear sharedInput
+  showHeader?: boolean;
+  compact?: boolean;           // smaller padding when ≥3 columns
+}
 
-  const [orchestrators, setOrchestrators] = useState<OrchestratorFull[]>([]);
-  const [webrtcSlug, setWebrtcSlug] = useState<string | null>(null);
-  const [selectedOrch, setSelectedOrch] = useState(initialOrch);
+function ChatColumn({ target, color, sharedInput, onSharedSent, showHeader = true, compact = false }: ChatColumnProps) {
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [input, setInput] = useState('');
@@ -942,57 +973,42 @@ export default function PlaygroundPage() {
   const assistantBuf = useRef('');
   const chatBottom = useRef<HTMLDivElement>(null);
   const traceBottom = useRef<HTMLDivElement | null>(null);
+  const busyRef = useRef(false);
 
-  // Restore last session from localStorage on mount
+  // Keep busyRef in sync so closures can read current value without stale closure
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+
+  // Derive orchestrator name from target (for TTS)
+  const orchName = target.kind === 'orchestrator' ? target.name : target.orchName;
+
+  // Load voice/tts flags for orchestrator targets
   useEffect(() => {
-    const saved = localStorage.getItem('them:playground:context_id');
+    if (target.kind !== 'orchestrator') return;
+    themApi.orchestrators().then(list => {
+      const o = list.find(o => o.name === target.name);
+      setVoiceEnabled(o?.voice_enabled ?? false);
+      setTtsEnabled(o?.tts_enabled ?? false);
+    }).catch(() => {});
+  }, [target.kind === 'orchestrator' ? target.name : '']);
+
+  // Restore context_id from localStorage (only for orchestrator targets — EPs are stateless-keyed by slug)
+  useEffect(() => {
+    const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`;
+    const saved = localStorage.getItem(storageKey);
     if (!saved) return;
-    // Verify the session still exists and fetch its metadata
     themApi.contexts().then(sessions => {
       const match = sessions.find(s => s.context_id === saved);
       if (match) setRestoredSession(match);
-      else localStorage.removeItem('them:playground:context_id');
+      else localStorage.removeItem(storageKey);
     }).catch(() => {});
   }, []);
 
-  // Persist context_id to localStorage whenever it changes
+  // Persist context_id
   useEffect(() => {
-    if (contextId) localStorage.setItem('them:playground:context_id', contextId);
+    if (!contextId) return;
+    const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`;
+    localStorage.setItem(storageKey, contextId);
   }, [contextId]);
-
-  // Load orchestrators list, then check voice_enabled for the selected one
-  useEffect(() => {
-    themApi.orchestrators().then(list => {
-      const enabled = list.filter(o => o.enabled);
-      setOrchestrators(enabled);
-      const name = initialOrch || (enabled.length > 0 ? enabled[0].name : '');
-      if (!initialOrch && enabled.length > 0) setSelectedOrch(enabled[0].name);
-      const orch = enabled.find(o => o.name === name);
-      setVoiceEnabled(orch?.voice_enabled ?? false);
-      setTtsEnabled(orch?.tts_enabled ?? false);
-    });
-  }, [initialOrch]);
-
-  // When selected orchestrator changes, update voice_enabled + tts_enabled
-  useEffect(() => {
-    if (!selectedOrch) return;
-    const orch = orchestrators.find(o => o.name === selectedOrch);
-    setVoiceEnabled(orch?.voice_enabled ?? false);
-    setTtsEnabled(orch?.tts_enabled ?? false);
-  }, [selectedOrch, orchestrators]);
-
-  // Find a WebRTC app bound to the selected orchestrator
-  useEffect(() => {
-    if (!selectedOrch) { setWebrtcSlug(null); return; }
-    themApi.applications().then(apps => {
-      for (const a of apps) {
-        if (!a.enabled || a.orchestrator_name !== selectedOrch) continue;
-        const webrtcEp = a.entry_points?.find((ep: any) => ep.entry_point_type === 'webrtc' && ep.enabled);
-        if (webrtcEp) { setWebrtcSlug(webrtcEp.slug); return; }
-      }
-      setWebrtcSlug(null);
-    }).catch(() => setWebrtcSlug(null));
-  }, [selectedOrch]);
 
   useEffect(() => {
     chatBottom.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1002,46 +1018,39 @@ export default function PlaygroundPage() {
     traceBottom.current?.scrollIntoView({ behavior: 'smooth' });
   }, [trace]);
 
-  // ── Dashboard WS for trace ───────────────────────────────────────────────
+  // ── Dashboard WS ────────────────────────────────────────────────────────
   const openDashWs = useCallback(async (rid: string) => {
     const r = await fetch('/api/auth/token');
     if (!r.ok) return;
     const { token } = await r.json();
-
     const ws = new WebSocket(`${getBridgeWs()}/ws/dashboard?token=${encodeURIComponent(token)}`);
     dashWs.current = ws;
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'subscribe', channels: [`run:${rid}`] }));
-    };
-
+    ws.onopen = () => { ws.send(JSON.stringify({ type: 'subscribe', channels: [`run:${rid}`] })); };
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'ping') return;
-        if (msg.channel?.startsWith('run:')) {
-          setTrace(prev => [...prev, { ts: Date.now(), ...msg.event }]);
-        }
+        if (msg.channel?.startsWith('run:')) setTrace(prev => [...prev, { ts: Date.now(), ...msg.event }]);
       } catch {}
     };
-
     ws.onerror = () => ws.close();
   }, []);
 
-  // ── Send message ─────────────────────────────────────────────────────────
+  // ── Send ─────────────────────────────────────────────────────────────────
   const sendText = useCallback(async (text: string, currentContextId?: string | null) => {
-    if (!text.trim() || !selectedOrch || busy) return;
+    if (!text.trim() || busyRef.current) return;
     setInput('');
     setBusy(true);
+    busyRef.current = true;
     setTrace([]);
     setAgentInvocations([]);
     setMessages(prev => [...prev, { role: 'user', text }]);
 
     const r = await fetch('/api/auth/token');
-    if (!r.ok) { setBusy(false); return; }
+    if (!r.ok) { setBusy(false); busyRef.current = false; return; }
     const { token } = await r.json();
 
-    const ws = new WebSocket(`${getBridgeWs()}/ws/orchestrate/${selectedOrch}?token=${encodeURIComponent(token)}`);
+    const ws = new WebSocket(targetWsUrl(target, token));
     chatWs.current = ws;
     assistantBuf.current = '';
 
@@ -1067,9 +1076,7 @@ export default function PlaygroundPage() {
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
-            if (last?.role === 'assistant') {
-              copy[copy.length - 1] = { ...last, text: assistantBuf.current };
-            }
+            if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, text: assistantBuf.current };
             return copy;
           });
 
@@ -1079,77 +1086,53 @@ export default function PlaygroundPage() {
           const elapsed_ms = msg.elapsed_ms as number;
           const now = Date.now();
           const HOLD_MS = 2000;
-
           setActivities(prev => {
             const existing = prev.find(a => a.agent === agent);
             if (!existing) {
-              // New agent — add row, show state immediately
               const next = [...prev, { agent, state, elapsed_ms, displayState: state, visibleUntil: now + HOLD_MS }];
-              activitiesRef.current = next;
-              return next;
+              activitiesRef.current = next; return next;
             }
-            // Existing — respect 2s hold before updating displayState
             const displayState = now >= existing.visibleUntil ? state : existing.displayState;
             const visibleUntil = now >= existing.visibleUntil ? now + HOLD_MS : existing.visibleUntil;
             const next = prev.map(a => a.agent === agent ? { ...a, state, elapsed_ms, displayState, visibleUntil } : a);
-            activitiesRef.current = next;
-            return next;
+            activitiesRef.current = next; return next;
           });
 
         } else if (msg.type === 'iteration_start') {
           const agents = (msg.agents as string[] | undefined) ?? [];
-          setStatus(agents.length > 1
-            ? `Iter ${msg.iteration} — waiting for ${agents.join(', ')}…`
-            : agents.length === 1
-              ? `Iter ${msg.iteration} — calling ${agents[0]}…`
-              : `Iteration ${msg.iteration}…`
-          );
+          setStatus(agents.length > 1 ? `Iter ${msg.iteration} — waiting for ${agents.join(', ')}…`
+            : agents.length === 1 ? `Iter ${msg.iteration} — calling ${agents[0]}…`
+            : `Iteration ${msg.iteration}…`);
 
         } else if (msg.type === 'tool_start') {
           const slug = (msg.tool as string).replace(/^agent__/, '');
           setStatus(`Calling ${slug}…`);
           setAgentInvocations(prev => {
-            const existing = prev.find(a => a.tool === msg.tool);
-            if (existing) return prev;
+            if (prev.find(a => a.tool === msg.tool)) return prev;
             return [...prev, { slug, tool: msg.tool as string, startedAt: Date.now() }];
           });
 
         } else if (msg.type === 'tool_done') {
           const slug = (msg.tool as string).replace(/^agent__/, '');
           setAgentInvocations(prev => {
-            const updated = prev.map(a =>
-              a.tool === msg.tool
-                ? { ...a, endedAt: Date.now(), latencyMs: msg.latency_ms as number ?? Date.now() - a.startedAt }
-                : a
-            );
+            const updated = prev.map(a => a.tool === msg.tool
+              ? { ...a, endedAt: Date.now(), latencyMs: msg.latency_ms as number ?? Date.now() - a.startedAt }
+              : a);
             const stillRunning = updated.filter(a => !a.endedAt).map(a => a.slug);
-            if (stillRunning.length > 0) {
-              setStatus(`${slug} done — waiting for ${stillRunning.join(', ')}…`);
-            } else {
-              setStatus(`${slug} done`);
-            }
+            setStatus(stillRunning.length > 0 ? `${slug} done — waiting for ${stillRunning.join(', ')}…` : `${slug} done`);
             return updated;
           });
 
         } else if (msg.type === 'file') {
-          // File artifact from A2A agent — inject as a separate chat bubble with download
-          const fm: FileMsg = {
-            filename: msg.filename as string,
-            media_type: msg.media_type as string,
-            text: msg.text as string ?? '',
-          };
+          const fm: FileMsg = { filename: msg.filename as string, media_type: msg.media_type as string, text: msg.text as string ?? '' };
           setMessages(prev => {
-            // Close any pending assistant bubble first
             const copy = [...prev];
             const last = copy[copy.length - 1];
-            if (last?.role === 'assistant' && last.pending) {
-              copy[copy.length - 1] = { ...last, pending: false };
-            }
+            if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, pending: false };
             return [...copy, { role: 'assistant', text: '', file: fm }];
           });
 
         } else if (msg.type === 'done') {
-          // Fade out activity bar after brief delay so user sees final states
           setTimeout(() => { setActivities([]); activitiesRef.current = []; }, 1500);
           setMessages(prev => {
             const copy = [...prev];
@@ -1157,36 +1140,26 @@ export default function PlaygroundPage() {
             if (last?.role === 'assistant' && !last.file) copy[copy.length - 1] = { ...last, pending: false };
             return copy;
           });
-          // TTS — stream audio chunks via MediaSource for low-latency playback
           if (ttsEnabled && assistantBuf.current) {
             const textToSpeak = assistantBuf.current;
-            const orchName = selectedOrch;
             setSpeaking(true);
             themApi.tts(orchName, textToSpeak)
               .then(async res => {
                 if (!res.body) throw new Error('no body');
-                // MediaSource lets us start playing before all bytes arrive
                 const ms = new MediaSource();
                 const url = URL.createObjectURL(ms);
                 const audio = new Audio(url);
                 audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
                 audio.onerror = () => { setSpeaking(false); URL.revokeObjectURL(url); };
-
-                await new Promise<void>((resolve) => { ms.addEventListener('sourceopen', () => resolve(), { once: true }); });
+                await new Promise<void>(resolve => { ms.addEventListener('sourceopen', () => resolve(), { once: true }); });
                 audio.play();
-
                 const sb = ms.addSourceBuffer('audio/mpeg');
-                const reader = res.body.getReader();
-
+                const reader = res.body!.getReader();
                 const pump = async () => {
                   while (true) {
                     const { done, value } = await reader.read();
                     if (done) { ms.endOfStream(); break; }
-                    // Wait for sourceBuffer to be ready before appending
-                    await new Promise<void>(r => {
-                      if (!sb.updating) { r(); return; }
-                      sb.addEventListener('updateend', () => r(), { once: true });
-                    });
+                    await new Promise<void>(r => { if (!sb.updating) { r(); return; } sb.addEventListener('updateend', () => r(), { once: true }); });
                     sb.appendBuffer(value);
                   }
                 };
@@ -1195,104 +1168,117 @@ export default function PlaygroundPage() {
               .catch(() => setSpeaking(false));
           }
           setStatus(`Done — ${msg.iterations} iteration(s)`);
-          setBusy(false);
-          ws.close();
-          dashWs.current?.close();
+          setBusy(false); busyRef.current = false;
+          ws.close(); dashWs.current?.close();
 
         } else if (msg.type === 'canceled') {
           setActivities([]); activitiesRef.current = [];
-          setBusy(false);
+          setBusy(false); busyRef.current = false;
           setStatus('Canceled');
-          ws.close();
-          dashWs.current?.close();
+          ws.close(); dashWs.current?.close();
 
         } else if (msg.type === 'error') {
           setActivities([]); activitiesRef.current = [];
+          const isTokenLimit = msg.code === 4029;
+          const errText = isTokenLimit ? 'Conversation token limit reached' : `Error: ${msg.message}`;
+          // Part C: server sends context_id:null when the context never established
+          // (dead workflow reuse, first-turn failure). Discard it so next message starts fresh.
+          if ('context_id' in msg && msg.context_id === null) {
+            setContextId(null);
+            const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? (target as {kind:'orchestrator';name:string}).name : (target as {kind:'entrypoint';slug:string}).slug}`;
+            localStorage.removeItem(storageKey);
+          }
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last?.role === 'assistant' && last.pending) {
-              copy[copy.length - 1] = { role: 'assistant', text: `Error: ${msg.message}`, pending: false };
+              copy[copy.length - 1] = { role: 'assistant', text: errText, pending: false };
             } else {
-              copy.push({ role: 'assistant', text: `Error: ${msg.message}` });
+              copy.push({ role: 'assistant', text: errText });
             }
             return copy;
           });
-          setStatus(`Error: ${msg.message}`);
-          setBusy(false);
+          setStatus(isTokenLimit ? 'Token limit reached' : `Error: ${msg.message}`);
+          setBusy(false); busyRef.current = false;
           ws.close();
         }
       } catch {}
     };
 
-    ws.onerror = (err) => {
-      console.error('Orchestrator WS error', err);
-      setStatus('WebSocket error — check console');
-      setBusy(false);
-    };
-
+    ws.onerror = () => { setStatus('WebSocket error — check console'); setBusy(false); busyRef.current = false; };
     ws.onclose = (ev) => {
-      console.log('Orchestrator WS closed', ev.code, ev.reason);
-      if (busy) setBusy(false);
+      // Always clear busy on close — guards against hung sessions where no
+      // terminal event (done/error/canceled) arrived before the socket closed.
+      if (ev.code === 4029) {
+        setStatus('Token limit reached');
+        setMessages(prev => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, text: 'Conversation token limit reached', pending: false };
+          return copy;
+        });
+      } else if (busyRef.current) {
+        // Closed without a terminal event — mark the pending bubble as stopped
+        setMessages(prev => {
+          const copy = [...prev];
+          const last = copy[copy.length - 1];
+          if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, text: last.text || '(connection closed)', pending: false };
+          return copy;
+        });
+        setStatus('Connection closed');
+      }
+      setBusy(false); busyRef.current = false;
     };
-  }, [selectedOrch, busy, openDashWs]);
+  }, [target, openDashWs, ttsEnabled, orchName]);
+
+  // React to sharedInput — fire when parent broadcasts (Compare mode)
+  const prevSharedInput = useRef<string | null>(null);
+  useEffect(() => {
+    if (sharedInput == null || sharedInput === prevSharedInput.current) return;
+    prevSharedInput.current = sharedInput;
+    if (sharedInput.trim()) {
+      sendText(sharedInput, contextId);
+      onSharedSent?.();
+    }
+  }, [sharedInput, contextId, sendText, onSharedSent]);
 
   const send = useCallback(() => sendText(input, contextId), [input, contextId, sendText]);
 
   const stopRun = useCallback(() => {
-    if (chatWs.current && chatWs.current.readyState === WebSocket.OPEN) {
-      chatWs.current.send(JSON.stringify({ type: 'cancel' }));
-    }
-    setBusy(false);
+    if (chatWs.current?.readyState === WebSocket.OPEN) chatWs.current.send(JSON.stringify({ type: 'cancel' }));
+    setBusy(false); busyRef.current = false;
     setStatus('Canceling…');
     setMessages(prev => {
       const copy = [...prev];
       const last = copy[copy.length - 1];
-      if (last?.role === 'assistant' && last.pending) {
-        copy[copy.length - 1] = { ...last, text: last.text || '(stopped)', pending: false };
-      }
+      if (last?.role === 'assistant' && last.pending) copy[copy.length - 1] = { ...last, text: last.text || '(stopped)', pending: false };
       return copy;
     });
-    // Let the server send a 'canceled' event which closes sockets cleanly.
-    // Fallback: force-close after 3s if the server never responds.
-    setTimeout(() => {
-      chatWs.current?.close();
-      dashWs.current?.close();
-    }, 3000);
+    setTimeout(() => { chatWs.current?.close(); dashWs.current?.close(); }, 3000);
   }, []);
 
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-  };
+  const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
 
-  const clearChat = () => {
-    setMessages([]);
-    setTrace([]);
-    setStatus('');
-    setAgentInvocations([]);
-    setActivities([]);
-    activitiesRef.current = [];
-    setContextId(null);
-    setRestoredSession(null);
-    runId.current = null;
-    localStorage.removeItem('them:playground:context_id');
-  };
+  const clearChat = useCallback(() => {
+    setMessages([]); setTrace([]); setStatus(''); setAgentInvocations([]);
+    setActivities([]); activitiesRef.current = [];
+    setContextId(null); setRestoredSession(null); runId.current = null;
+    const storageKey = `them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`;
+    localStorage.removeItem(storageKey);
+  }, [target]);
 
-  const resumeSession = (s: ContextSession) => {
+  const resumeSession = useCallback((s: ContextSession) => {
     setRestoredSession(null);
     setContextId(s.context_id);
-    if (s.orchestrator_name !== selectedOrch) setSelectedOrch(s.orchestrator_name);
-    setMessages([{ role: 'assistant', text: `↩ Resumed: **${s.title}** — ${s.turn_count} prior turn${s.turn_count !== 1 ? 's' : ''}. Continue the conversation below.` }]);
+    setMessages([{ role: 'assistant', text: `↩ Resumed: **${s.title}** — ${s.turn_count} prior turn${s.turn_count !== 1 ? 's' : ''}. Continue below.` }]);
     setDebugTab('trace');
-  };
+  }, []);
 
-  // ── Voice recording ───────────────────────────────────────────────────────
+  // ── Voice ─────────────────────────────────────────────────────────────────
   const startRecording = async () => {
-    if (recordingState !== 'idle' || !selectedOrch) return;
+    if (recordingState !== 'idle') return;
     try {
-      const mediaDevices = navigator.mediaDevices ??
-        // HTTP non-localhost: mediaDevices is undefined; nothing we can do
-        (() => { throw new Error('Microphone requires HTTPS or localhost'); })();
+      const mediaDevices = navigator.mediaDevices ?? (() => { throw new Error('Microphone requires HTTPS or localhost'); })();
       const stream = await mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       const chunks: Blob[] = [];
@@ -1302,57 +1288,288 @@ export default function PlaygroundPage() {
         const blob = new Blob(chunks, { type: 'audio/webm' });
         setRecordingState('transcribing');
         try {
-          const result = await themApi.transcribe(selectedOrch, blob);
-          if (result.text) {
-            await sendText(result.text, contextId);
-          }
-        } catch (e) {
-          console.error('Transcription error', e);
-          setStatus('Transcription failed');
-          setTimeout(() => setStatus(''), 3000);
-        } finally {
-          setRecordingState('idle');
-        }
+          const result = await themApi.transcribe(orchName, blob);
+          if (result.text) await sendText(result.text, contextId);
+        } catch { setStatus('Transcription failed'); setTimeout(() => setStatus(''), 3000); }
+        finally { setRecordingState('idle'); }
       };
-      recorder.start();
-      setMediaRecorder(recorder);
-      setRecordingState('recording');
-    } catch (e) {
-      console.error('Mic access error', e);
-      setStatus('Microphone access denied');
-      setTimeout(() => setStatus(''), 3000);
-    }
+      recorder.start(); setMediaRecorder(recorder); setRecordingState('recording');
+    } catch { setStatus('Microphone access denied'); setTimeout(() => setStatus(''), 3000); }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorder && recordingState === 'recording') {
-      mediaRecorder.stop();
-      setMediaRecorder(null);
-    }
-  };
+  const stopRecording = () => { if (mediaRecorder && recordingState === 'recording') { mediaRecorder.stop(); setMediaRecorder(null); } };
 
-  // Mic button style
   const micBtnStyle = (): React.CSSProperties => {
-    if (recordingState === 'recording') {
-      return {
-        padding: '10px 14px', borderRadius: 12, border: 'none',
-        background: '#ef4444', color: '#fff', cursor: 'pointer',
-        alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        outline: '2px solid #f87171',
-      };
+    if (recordingState === 'recording') return { padding: '10px 14px', borderRadius: 12, border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center', outline: '2px solid #f87171' };
+    if (recordingState === 'transcribing') return { padding: '10px 14px', borderRadius: 12, border: 'none', background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', cursor: 'not-allowed', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+    return { padding: '10px 14px', borderRadius: 12, border: 'none', background: 'var(--tm-surface-2)', color: 'var(--tm-text-muted)', cursor: 'pointer', alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center' };
+  };
+
+  const pad = compact ? '8px 12px' : '20px 24px';
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, borderRight: '1px solid var(--tm-border)' }}>
+      {/* Column header */}
+      {showHeader && (
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--tm-border)', display: 'flex', alignItems: 'center', gap: 8, background: 'var(--tm-surface)', flexShrink: 0 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tm-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {target.kind === 'orchestrator' ? target.label : target.appName}
+          </span>
+          {target.kind === 'entrypoint' && (
+            <>
+              <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{target.slug}</span>
+              <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(124,58,237,0.15)', color: '#a78bfa', fontWeight: 600, flexShrink: 0 }}>{target.epType}</span>
+            </>
+          )}
+          {speaking && <span style={{ fontSize: 11, color: '#a78bfa', marginLeft: 'auto' }}>🔊</span>}
+          {!speaking && status && <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{status}</span>}
+          <button onClick={clearChat} style={{ marginLeft: status || speaking ? 0 : 'auto', padding: '2px 8px', borderRadius: 6, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', cursor: 'pointer', fontSize: 11, flexShrink: 0 }}>
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* Messages */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: pad, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {messages.length === 0 && restoredSession && (
+          <div style={{ margin: '40px auto', maxWidth: 360, padding: '14px 18px', borderRadius: 12, border: `1px solid ${color}`, background: 'rgba(124,58,237,0.06)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)' }}>↩ Resume last conversation?</div>
+            <div style={{ fontSize: 12, color: 'var(--tm-text-muted)' }}>
+              <span style={{ color, fontWeight: 600 }}>{restoredSession.orchestrator_name}</span>
+              {' · '}{restoredSession.turn_count} turn{restoredSession.turn_count !== 1 ? 's' : ''}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--tm-text)', fontStyle: 'italic', opacity: 0.8 }}>"{restoredSession.title}"</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => resumeSession(restoredSession)} style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', background: color, color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Resume</button>
+              <button onClick={() => { setRestoredSession(null); localStorage.removeItem(`them:playground:ctx:${target.kind === 'orchestrator' ? target.name : target.slug}`); }} style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', fontSize: 12, cursor: 'pointer' }}>Fresh start</button>
+            </div>
+          </div>
+        )}
+        {messages.length === 0 && !restoredSession && (
+          <div style={{ color: 'var(--tm-text-muted)', fontSize: 13, textAlign: 'center', marginTop: 48 }}>
+            Send a message to begin
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+            {m.file ? (
+              <div style={{ maxWidth: '82%', borderRadius: '14px 14px 14px 4px', border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', borderBottom: '1px solid var(--tm-border)', background: 'rgba(124,58,237,0.08)' }}>
+                  <span style={{ fontSize: 14 }}>{m.file.media_type === 'text/html' ? '🌐' : m.file.media_type === 'text/markdown' ? '📝' : '📄'}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tm-text)', flex: 1 }}>{m.file.filename}</span>
+                  <button onClick={() => { const b = new Blob([m.file!.text], { type: m.file!.media_type }); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = m.file!.filename; a.click(); URL.revokeObjectURL(u); }} style={{ padding: '3px 8px', borderRadius: 5, fontSize: 11, fontWeight: 600, background: color, color: '#fff', border: 'none', cursor: 'pointer' }}>Download</button>
+                </div>
+                {m.file.media_type === 'text/html' && <iframe srcDoc={m.file.text} style={{ width: '100%', height: 340, border: 'none', display: 'block' }} sandbox="allow-scripts allow-same-origin" title={m.file.filename} />}
+                {m.file.media_type === 'text/markdown' && <pre style={{ margin: 0, padding: '10px 12px', fontSize: 11, fontFamily: 'monospace', color: 'var(--tm-text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 260, overflowY: 'auto' }}>{m.file.text}</pre>}
+              </div>
+            ) : (
+              <div style={{ maxWidth: '78%', padding: '9px 13px', borderRadius: m.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background: m.role === 'user' ? color : 'var(--tm-surface)', color: m.role === 'user' ? '#fff' : 'var(--tm-text)', fontSize: 13, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                {m.pending && !m.text ? <span style={{ opacity: 0.5 }}>thinking…</span> : m.role === 'assistant' ? <div dir="auto"><MarkdownText text={m.text} /></div> : <span dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{m.text}</span>}
+              </div>
+            )}
+          </div>
+        ))}
+        <div ref={chatBottom} />
+      </div>
+
+      {/* Activity bar */}
+      <ActivityBar activities={activities} />
+
+      {/* Input — hidden in Compare mode (parent owns the composer) */}
+      {sharedInput === undefined && (
+        <div style={{ padding: '10px 14px', borderTop: '1px solid var(--tm-border)', display: 'flex', gap: 8, flexShrink: 0 }}>
+          {voiceEnabled && (
+            <button style={micBtnStyle()} onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} disabled={recordingState === 'transcribing' || busy} title={recordingState === 'recording' ? 'Release to transcribe' : 'Hold to record'}>
+              {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
+            </button>
+          )}
+          <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={onKey} disabled={busy} dir="auto" placeholder="Send a message… (Enter to send, Shift+Enter for newline)" rows={3}
+            style={{ flex: 1, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5 }} />
+          {busy ? (
+            <button onClick={stopRun} style={{ padding: '9px 16px', borderRadius: 10, border: `1.5px solid #ef4444`, background: 'transparent', color: '#ef4444', fontSize: 13, fontWeight: 600, cursor: 'pointer', alignSelf: 'flex-end' }}>Stop</button>
+          ) : (
+            <button onClick={send} disabled={!input.trim()} style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: !input.trim() ? 'var(--tm-surface)' : color, color: !input.trim() ? 'var(--tm-text-muted)' : '#fff', fontSize: 13, fontWeight: 600, cursor: !input.trim() ? 'not-allowed' : 'pointer', alignSelf: 'flex-end' }}>Send</button>
+          )}
+        </div>
+      )}
+
+      {/* Debug panel — below messages in single-column; inline tray in compare */}
+      {sharedInput === undefined && (
+        <div style={{ borderTop: '1px solid var(--tm-border)', display: 'flex', flexDirection: 'column', maxHeight: 280, flexShrink: 0 }}>
+          <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--tm-border)', display: 'flex', gap: 4, alignItems: 'center', background: 'var(--tm-surface)' }}>
+            <TabBtn label="Trace" active={debugTab === 'trace'} onClick={() => setDebugTab('trace')} />
+            <TabBtn label="Tasks" active={debugTab === 'tasks'} onClick={() => setDebugTab('tasks')} />
+            <TabBtn label="Artifacts" active={debugTab === 'artifacts'} onClick={() => setDebugTab('artifacts')} />
+            <TabBtn label="Memory" active={debugTab === 'memory'} onClick={() => setDebugTab('memory')} />
+            <TabBtn label="Sessions" active={debugTab === 'sessions'} onClick={() => setDebugTab('sessions')} />
+          </div>
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} runId={runId.current} contextId={contextId} />}
+            {debugTab === 'tasks' && <TasksTab runId={runId.current} />}
+            {debugTab === 'artifacts' && <ArtifactsTab runId={runId.current} />}
+            {debugTab === 'memory' && <MemoryTab contextId={contextId} agentInvocations={agentInvocations} allAgents={null} />}
+            {debugTab === 'sessions' && <SessionsTab currentContextId={contextId} onResume={resumeSession} />}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── TargetSelector ──────────────────────────────────────────────────────────
+// Grouped optgroup dropdown: Orchestrators (direct) + per-app EP groups.
+// Returns selected ConnTarget or null.
+
+interface TargetSelectorProps {
+  orchestrators: OrchestratorFull[];
+  applications: Application[];
+  value: ConnTarget | null;
+  onChange: (t: ConnTarget) => void;
+}
+
+function TargetSelector({ orchestrators, applications, value, onChange }: TargetSelectorProps) {
+  // Encode/decode ConnTarget to/from a string option value
+  const encodeTarget = (t: ConnTarget) => targetId(t);
+
+  const decodeTarget = useCallback((v: string): ConnTarget | null => {
+    if (v.startsWith('orch:')) {
+      const name = v.slice(5);
+      const o = orchestrators.find(o => o.name === name);
+      return o ? { kind: 'orchestrator', name, label: o.display_name || o.name } : null;
     }
-    if (recordingState === 'transcribing') {
-      return {
-        padding: '10px 14px', borderRadius: 12, border: 'none',
-        background: 'var(--tm-surface)', color: 'var(--tm-text-muted)', cursor: 'not-allowed',
-        alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      };
+    if (v.startsWith('ep:')) {
+      const slug = v.slice(3);
+      for (const app of applications) {
+        const ep = app.entry_points.find(e => e.slug === slug);
+        if (ep && (ep.entry_point_type === 'websocket' || ep.entry_point_type === 'sse')) {
+          return { kind: 'entrypoint', slug, epType: ep.entry_point_type, appName: app.name, orchName: app.orchestrator_name ?? '' };
+        }
+      }
     }
-    return {
-      padding: '10px 14px', borderRadius: 12, border: 'none',
-      background: 'var(--tm-surface-2)', color: 'var(--tm-text-muted)', cursor: 'pointer',
-      alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center',
-    };
+    return null;
+  }, [orchestrators, applications]);
+
+  const selectedValue = value ? encodeTarget(value) : '';
+
+  return (
+    <select
+      value={selectedValue}
+      onChange={e => { const t = decodeTarget(e.target.value); if (t) onChange(t); }}
+      style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, cursor: 'pointer', maxWidth: 260 }}
+    >
+      {orchestrators.length > 0 && (
+        <optgroup label="Orchestrators (direct)">
+          {orchestrators.map(o => (
+            <option key={o.id} value={`orch:${o.name}`}>{o.display_name || o.name}</option>
+          ))}
+        </optgroup>
+      )}
+      {applications.filter(a => a.enabled && a.entry_points.some(e => e.enabled && e.entry_point_type !== 'webrtc')).map(app => (
+        <optgroup key={app.id} label={`App: ${app.name}`}>
+          {app.entry_points.filter(e => e.enabled && e.entry_point_type !== 'webrtc').map(ep => (
+            <option key={ep.id} value={`ep:${ep.slug}`}>
+              {ep.slug} [{ep.entry_point_type}]
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
+// ── Component ──────────────────────────────────────────────────────────────
+
+export default function PlaygroundPage() {
+  const searchParams = useSearchParams();
+  const initialOrch = searchParams.get('orchestrator') || '';
+
+  const [orchestrators, setOrchestrators] = useState<OrchestratorFull[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+
+  // Tabs: each tab = a ConnTarget. We keep them in an ordered list.
+  const [tabs, setTabs] = useState<ConnTarget[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string>('');
+  const [compareMode, setCompareMode] = useState(false);
+
+  // Shared composer for Compare mode
+  const [composeInput, setComposeInput] = useState('');
+  const [broadcastText, setBroadcastText] = useState<string | null>(null);
+  const sentCount = useRef(0);
+
+  // WebRTC slugs associated with any orchestrator (for the voice button)
+  const [webrtcSlugs, setWebrtcSlugs] = useState<Record<string, string>>({});
+
+  // Load orchestrators + applications once
+  useEffect(() => {
+    themApi.orchestrators().then(list => {
+      const enabled = list.filter(o => o.enabled);
+      setOrchestrators(enabled);
+      // Seed first tab from URL param or first orchestrator
+      const orchName = initialOrch || (enabled.length > 0 ? enabled[0].name : '');
+      const o = enabled.find(o => o.name === orchName);
+      if (o) {
+        const t: ConnTarget = { kind: 'orchestrator', name: o.name, label: o.display_name || o.name };
+        setTabs([t]);
+        setActiveTabId(targetId(t));
+      }
+    });
+    themApi.applications().then(apps => {
+      setApplications(apps);
+      // Build webrtcSlugs map: orchName → first webrtc EP slug
+      const m: Record<string, string> = {};
+      for (const a of apps) {
+        if (!a.enabled) continue;
+        const ep = a.entry_points.find(e => e.enabled && e.entry_point_type === 'webrtc');
+        if (ep && a.orchestrator_name && !m[a.orchestrator_name]) m[a.orchestrator_name] = ep.slug;
+      }
+      setWebrtcSlugs(m);
+    }).catch(() => {});
+  }, [initialOrch]);
+
+  const activeTab = useMemo(() => tabs.find(t => targetId(t) === activeTabId) ?? null, [tabs, activeTabId]);
+
+  const openNewTab = (t: ConnTarget) => {
+    const id = targetId(t);
+    if (!tabs.some(x => targetId(x) === id)) {
+      setTabs(prev => [...prev, t]);
+    }
+    setActiveTabId(id);
+    setCompareMode(false);
+  };
+
+  const closeTab = (id: string) => {
+    setTabs(prev => {
+      const next = prev.filter(t => targetId(t) !== id);
+      if (activeTabId === id && next.length > 0) setActiveTabId(targetId(next[next.length - 1]));
+      return next;
+    });
+    if (compareMode && tabs.length <= 2) setCompareMode(false);
+  };
+
+  // WebRTC slug for the active tab's orchestrator
+  const activeWebrtcSlug = useMemo(() => {
+    if (!activeTab) return null;
+    const name = activeTab.kind === 'orchestrator' ? activeTab.name : activeTab.orchName;
+    return webrtcSlugs[name] ?? null;
+  }, [activeTab, webrtcSlugs]);
+
+  // Compare: broadcast to all columns
+  const handleBroadcast = () => {
+    if (!composeInput.trim()) return;
+    sentCount.current = 0;
+    setBroadcastText(composeInput);
+    setComposeInput('');
+  };
+
+  const onBroadcastSent = useCallback(() => {
+    sentCount.current += 1;
+    if (sentCount.current >= tabs.length) setBroadcastText(null);
+  }, [tabs.length]);
+
+  const onComposeKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleBroadcast(); }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1361,307 +1578,133 @@ export default function PlaygroundPage() {
       <div style={{ display: 'flex', height: '100vh', background: 'var(--tm-bg)' }}>
         <Sidebar />
         <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-          {/* Header */}
-          <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--tm-border)', display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--tm-text)' }}>Playground</div>
-            <select
-              value={selectedOrch}
-              onChange={e => { setSelectedOrch(e.target.value); clearChat(); }}
-              style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'var(--tm-surface)', color: 'var(--tm-text)', fontSize: 13, cursor: 'pointer' }}
+
+          {/* ── Header ── */}
+          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--tm-border)', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--tm-text)' }}>Playground</div>
+
+            {/* Target selector — adds a new tab */}
+            <TargetSelector
+              orchestrators={orchestrators}
+              applications={applications}
+              value={activeTab}
+              onChange={t => openNewTab(t)}
+            />
+
+            {/* Tab bar */}
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center', overflow: 'hidden', flex: 1, minWidth: 0 }}>
+              {tabs.map((t, idx) => {
+                const id = targetId(t);
+                const isActive = id === activeTabId;
+                const color = TAB_COLORS[idx % TAB_COLORS.length];
+                return (
+                  <div
+                    key={id}
+                    onClick={() => { setActiveTabId(id); setCompareMode(false); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5,
+                      padding: '4px 10px', borderRadius: 8, cursor: 'pointer', flexShrink: 0,
+                      background: isActive ? `${color}22` : 'var(--tm-surface)',
+                      border: `1.5px solid ${isActive ? color : 'var(--tm-border)'}`,
+                      maxWidth: 180, overflow: 'hidden',
+                    }}
+                  >
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: isActive ? 600 : 400, color: isActive ? 'var(--tm-text)' : 'var(--tm-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {targetLabel(t)}
+                    </span>
+                    {t.kind === 'entrypoint' && (
+                      <span style={{ fontSize: 9, padding: '0px 4px', borderRadius: 3, background: 'rgba(124,58,237,0.2)', color: '#a78bfa', fontWeight: 700, flexShrink: 0 }}>{t.epType === 'websocket' ? 'WS' : 'SSE'}</span>
+                    )}
+                    {tabs.length > 1 && (
+                      <span
+                        onClick={e => { e.stopPropagation(); closeTab(id); }}
+                        style={{ fontSize: 13, color: 'var(--tm-text-muted)', cursor: 'pointer', lineHeight: 1, paddingLeft: 2, flexShrink: 0 }}
+                        title="Close tab"
+                      >×</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Compare button — only when 2+ tabs */}
+            {tabs.length >= 2 && (
+              <button
+                onClick={() => setCompareMode(m => !m)}
+                style={{ padding: '5px 12px', borderRadius: 8, border: `1.5px solid ${compareMode ? '#7c3aed' : 'var(--tm-border)'}`, background: compareMode ? 'rgba(124,58,237,0.12)' : 'var(--tm-surface)', color: compareMode ? '#a78bfa' : 'var(--tm-text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}
+              >
+                {compareMode ? '⊞ Comparing' : '⊞ Compare'}
+              </button>
+            )}
+
+            {/* WebRTC voice room button */}
+            <button
+              onClick={() => activeWebrtcSlug && window.open(`/apps/${activeWebrtcSlug}/voice`, '_blank', 'noopener')}
+              disabled={!activeWebrtcSlug}
+              title={activeWebrtcSlug ? `Open voice room (${activeWebrtcSlug})` : 'No WebRTC app configured for this target'}
+              style={{ width: 34, height: 34, borderRadius: 9, border: '1.5px solid', borderColor: activeWebrtcSlug ? 'rgba(99,202,183,0.6)' : 'var(--tm-border)', background: activeWebrtcSlug ? 'rgba(99,202,183,0.08)' : 'var(--tm-surface)', cursor: activeWebrtcSlug ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, opacity: activeWebrtcSlug ? 1 : 0.35 }}
             >
-              {orchestrators.map(o => (
-                <option key={o.id} value={o.name}>{o.display_name || o.name}</option>
-              ))}
-            </select>
-            {speaking && (
-              <span style={{ fontSize: 12, color: '#a78bfa', marginLeft: 'auto' }}>🔊 Speaking…</span>
-            )}
-            {!speaking && status && (
-              <span style={{ fontSize: 12, color: 'var(--tm-text-muted)', marginLeft: 'auto' }}>{status}</span>
-            )}
-            <button onClick={clearChat} style={{ marginLeft: status ? 0 : 'auto', padding: '4px 12px', borderRadius: 8, border: '1px solid var(--tm-border)', background: 'transparent', color: 'var(--tm-text-muted)', cursor: 'pointer', fontSize: 12 }}>
-              Clear
+              <svg width="18" height="18" viewBox="0 0 100 100" fill="none">
+                <circle cx="50" cy="28" r="22" fill={activeWebrtcSlug ? '#63cab7' : 'currentColor'} opacity="0.9"/>
+                <circle cx="30" cy="65" r="22" fill={activeWebrtcSlug ? '#f08030' : 'currentColor'} opacity="0.9"/>
+                <circle cx="70" cy="65" r="22" fill={activeWebrtcSlug ? '#63cab7' : 'currentColor'} opacity="0.7"/>
+                <circle cx="50" cy="28" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
+                <circle cx="30" cy="65" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
+                <circle cx="70" cy="65" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
+              </svg>
             </button>
           </div>
 
-          {/* Split view */}
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-            {/* Chat pane */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--tm-border)' }}>
-              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                {messages.length === 0 && restoredSession && (
-                  <div style={{
-                    margin: '40px auto', maxWidth: 400, padding: '16px 20px',
-                    borderRadius: 12, border: '1px solid #7c3aed',
-                    background: 'rgba(124,58,237,0.08)',
-                    display: 'flex', flexDirection: 'column', gap: 10,
-                  }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)' }}>
-                      ↩ Resume last conversation?
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--tm-text-muted)' }}>
-                      <span style={{ color: '#a78bfa', fontWeight: 600 }}>{restoredSession.orchestrator_name}</span>
-                      {' · '}{restoredSession.turn_count} turn{restoredSession.turn_count !== 1 ? 's' : ''}
-                      {' · '}{(() => {
-                        const d = new Date(restoredSession.last_active);
-                        const diff = Date.now() - d.getTime();
-                        if (diff < 60000) return 'just now';
-                        if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-                        if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-                        return d.toLocaleDateString();
-                      })()}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--tm-text)', fontStyle: 'italic', opacity: 0.8 }}>
-                      "{restoredSession.title}"
-                    </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button onClick={() => resumeSession(restoredSession)} style={{
-                        flex: 1, padding: '7px 0', borderRadius: 8, border: 'none',
-                        background: '#7c3aed', color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                      }}>
-                        Resume
-                      </button>
-                      <button onClick={() => { setRestoredSession(null); localStorage.removeItem('them:playground:context_id'); }} style={{
-                        flex: 1, padding: '7px 0', borderRadius: 8, border: '1px solid var(--tm-border)',
-                        background: 'transparent', color: 'var(--tm-text-muted)', fontSize: 12, cursor: 'pointer',
-                      }}>
-                        Start fresh
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {messages.length === 0 && !restoredSession && (
-                  <div style={{ color: 'var(--tm-text-muted)', fontSize: 14, textAlign: 'center', marginTop: 60 }}>
-                    Select an orchestrator and send a message to begin
-                  </div>
-                )}
-                {messages.map((m, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                    {m.file ? (
-                      /* ── File artifact bubble ── */
-                      <div style={{
-                        maxWidth: '80%',
-                        borderRadius: '16px 16px 16px 4px',
-                        border: '1px solid var(--tm-border)',
-                        background: 'var(--tm-surface)',
-                        overflow: 'hidden',
-                      }}>
-                        {/* Header bar */}
-                        <div style={{
-                          display: 'flex', alignItems: 'center', gap: 10,
-                          padding: '8px 14px',
-                          borderBottom: '1px solid var(--tm-border)',
-                          background: 'rgba(124,58,237,0.08)',
-                        }}>
-                          <span style={{ fontSize: 16 }}>
-                            {m.file.media_type === 'text/html' ? '🌐' : m.file.media_type === 'text/markdown' ? '📝' : '📄'}
-                          </span>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tm-text)', flex: 1 }}>
-                            {m.file.filename}
-                          </span>
-                          <span style={{ fontSize: 11, color: 'var(--tm-text-muted)', padding: '2px 6px', border: '1px solid var(--tm-border)', borderRadius: 4 }}>
-                            {m.file.media_type}
-                          </span>
-                          <button
-                            onClick={() => {
-                              const blob = new Blob([m.file!.text], { type: m.file!.media_type });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement('a');
-                              a.href = url; a.download = m.file!.filename; a.click();
-                              URL.revokeObjectURL(url);
-                            }}
-                            style={{
-                              padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                              background: '#7c3aed', color: '#fff', border: 'none', cursor: 'pointer',
-                            }}
-                          >
-                            Download
-                          </button>
-                        </div>
-                        {/* Inline preview for HTML */}
-                        {m.file.media_type === 'text/html' && m.file.text && (
-                          <iframe
-                            srcDoc={m.file.text}
-                            style={{ width: '100%', height: 400, border: 'none', display: 'block' }}
-                            sandbox="allow-scripts allow-same-origin"
-                            title={m.file.filename}
-                          />
-                        )}
-                        {/* Inline preview for markdown/slides */}
-                        {m.file.media_type === 'text/markdown' && m.file.text && (
-                          <pre style={{
-                            margin: 0, padding: '12px 14px', fontSize: 12,
-                            fontFamily: 'monospace', color: 'var(--tm-text)',
-                            whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 300, overflowY: 'auto',
-                          }}>
-                            {m.file.text}
-                          </pre>
-                        )}
-                      </div>
-                    ) : (
-                      /* ── Normal text bubble ── */
-                      <div style={{
-                        maxWidth: '75%',
-                        padding: '10px 14px',
-                        borderRadius: m.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                        background: m.role === 'user' ? '#7c3aed' : 'var(--tm-surface)',
-                        color: m.role === 'user' ? '#fff' : 'var(--tm-text)',
-                        fontSize: 14,
-                        lineHeight: 1.5,
-                        wordBreak: 'break-word',
-                      }}>
-                        {m.pending && !m.text
-                          ? <span style={{ opacity: 0.5 }}>thinking…</span>
-                          : m.role === 'assistant'
-                            ? <div dir="auto"><MarkdownText text={m.text} /></div>
-                            : <span dir="auto" style={{ whiteSpace: 'pre-wrap' }}>{m.text}</span>
-                        }
-                      </div>
-                    )}
-                  </div>
+          {/* ── Content area ── */}
+          {tabs.length === 0 ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--tm-text-muted)', fontSize: 14 }}>
+              Select a target above to open a chat tab
+            </div>
+          ) : compareMode ? (
+            /* ── Compare mode: all tabs side-by-side ── */
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              {/* Columns */}
+              <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+                {tabs.map((t, idx) => (
+                  <ChatColumn
+                    key={targetId(t)}
+                    target={t}
+                    color={TAB_COLORS[idx % TAB_COLORS.length]}
+                    sharedInput={broadcastText}
+                    onSharedSent={onBroadcastSent}
+                    showHeader
+                    compact={tabs.length >= 3}
+                  />
                 ))}
-
-                <div ref={chatBottom} />
               </div>
-
-              {/* Activity bar — live agent status, sits above input */}
-              <ActivityBar activities={activities} />
-
-              {/* Input */}
-              <div style={{ padding: '12px 16px', borderTop: '1px solid var(--tm-border)', display: 'flex', gap: 8 }}>
-                {voiceEnabled && (
-                  <button
-                    style={micBtnStyle()}
-                    onMouseDown={startRecording}
-                    onMouseUp={stopRecording}
-                    onTouchStart={startRecording}
-                    onTouchEnd={stopRecording}
-                    disabled={recordingState === 'transcribing' || busy || !selectedOrch}
-                    title={recordingState === 'recording' ? 'Release to transcribe' : 'Hold to record'}
-                  >
-                    {recordingState === 'transcribing' ? <Spinner /> : <MicIcon />}
-                  </button>
-                )}
-                {/* WebRTC voice room button — shown when a webrtc app is bound to this orchestrator */}
-                <button
-                  onClick={() => webrtcSlug && window.open(`/apps/${webrtcSlug}/voice`, '_blank', 'noopener')}
-                  disabled={!webrtcSlug}
-                  title={webrtcSlug ? `Open voice room (${webrtcSlug})` : 'No WebRTC app configured for this orchestrator'}
-                  style={{
-                    width: 38, height: 38,
-                    borderRadius: 10,
-                    border: '1.5px solid',
-                    borderColor: webrtcSlug ? 'rgba(99,202,183,0.6)' : 'var(--tm-border)',
-                    background: webrtcSlug ? 'rgba(99,202,183,0.08)' : 'var(--tm-surface)',
-                    cursor: webrtcSlug ? 'pointer' : 'not-allowed',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0, alignSelf: 'flex-end',
-                    opacity: webrtcSlug ? 1 : 0.35,
-                    transition: 'border-color 150ms ease, background 150ms ease',
-                  }}
-                >
-                  {/* WebRTC logo — three interlocking circles */}
-                  <svg width="20" height="20" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="50" cy="28" r="22" fill={webrtcSlug ? '#63cab7' : 'currentColor'} opacity="0.9"/>
-                    <circle cx="30" cy="65" r="22" fill={webrtcSlug ? '#f08030' : 'currentColor'} opacity="0.9"/>
-                    <circle cx="70" cy="65" r="22" fill={webrtcSlug ? '#63cab7' : 'currentColor'} opacity="0.7"/>
-                    <circle cx="50" cy="28" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
-                    <circle cx="30" cy="65" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
-                    <circle cx="70" cy="65" r="22" fill="none" stroke="var(--tm-bg)" strokeWidth="3"/>
-                  </svg>
-                </button>
-                <textarea
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={onKey}
-                  disabled={busy || !selectedOrch}
-                  dir="auto"
-                  placeholder="Send a message… (Enter to send, Shift+Enter for newline)"
-                  rows={3}
-                  style={{
-                    flex: 1,
-                    padding: '10px 14px',
-                    borderRadius: 12,
-                    border: '1px solid var(--tm-border)',
-                    background: 'var(--tm-surface)',
-                    color: 'var(--tm-text)',
-                    fontSize: 13,
-                    resize: 'none',
-                    outline: 'none',
-                    fontFamily: 'inherit',
-                    lineHeight: 1.5,
-                  }}
+              {/* Shared composer */}
+              <div style={{ padding: '10px 16px', borderTop: '2px solid var(--tm-border)', display: 'flex', gap: 8, background: 'var(--tm-surface)', alignItems: 'flex-end', flexShrink: 0 }}>
+                <div style={{ fontSize: 11, color: 'var(--tm-text-muted)', alignSelf: 'center', flexShrink: 0 }}>
+                  Broadcast to {tabs.length} columns
+                </div>
+                <textarea value={composeInput} onChange={e => setComposeInput(e.target.value)} onKeyDown={onComposeKey} dir="auto"
+                  placeholder="Type a message — sends to all columns simultaneously (Enter to send)"
+                  rows={2}
+                  style={{ flex: 1, padding: '9px 12px', borderRadius: 10, border: '1px solid var(--tm-border)', background: 'var(--tm-bg)', color: 'var(--tm-text)', fontSize: 13, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5 }}
                 />
-                {busy ? (
-                  <button
-                    onClick={stopRun}
-                    style={{
-                      padding: '10px 18px',
-                      borderRadius: 12,
-                      border: '1.5px solid #ef4444',
-                      background: 'transparent',
-                      color: '#ef4444',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      alignSelf: 'flex-end',
-                    }}
-                  >
-                    Stop
-                  </button>
-                ) : (
-                  <button
-                    onClick={send}
-                    disabled={!input.trim() || !selectedOrch}
-                    style={{
-                      padding: '10px 18px',
-                      borderRadius: 12,
-                      border: 'none',
-                      background: !input.trim() || !selectedOrch ? 'var(--tm-surface)' : '#7c3aed',
-                      color: !input.trim() || !selectedOrch ? 'var(--tm-text-muted)' : '#fff',
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: !input.trim() || !selectedOrch ? 'not-allowed' : 'pointer',
-                      alignSelf: 'flex-end',
-                    }}
-                  >
-                    Send
-                  </button>
-                )}
+                <button onClick={handleBroadcast} disabled={!composeInput.trim()}
+                  style={{ padding: '9px 18px', borderRadius: 10, border: 'none', background: !composeInput.trim() ? 'var(--tm-surface)' : '#7c3aed', color: !composeInput.trim() ? 'var(--tm-text-muted)' : '#fff', fontSize: 13, fontWeight: 600, cursor: !composeInput.trim() ? 'not-allowed' : 'pointer' }}>
+                  Send all
+                </button>
               </div>
             </div>
-
-            {/* Debug panel — tabbed right tray */}
-            <div style={{ width: 400, display: 'flex', flexDirection: 'column', background: 'var(--tm-bg)', borderLeft: '1px solid var(--tm-border)' }}>
-              {/* Tab bar */}
-              <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--tm-border)', display: 'flex', gap: 4, alignItems: 'center' }}>
-                <TabBtn label="Trace" active={debugTab === 'trace'} onClick={() => setDebugTab('trace')} />
-                <TabBtn label="Tasks" active={debugTab === 'tasks'} onClick={() => setDebugTab('tasks')} />
-                <TabBtn label="Artifacts" active={debugTab === 'artifacts'} onClick={() => setDebugTab('artifacts')} />
-                <TabBtn label="Memory" active={debugTab === 'memory'} onClick={() => setDebugTab('memory')} />
-                <TabBtn label="Sessions" active={debugTab === 'sessions'} onClick={() => setDebugTab('sessions')} />
-              </div>
-              {/* Tab content */}
-              <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {debugTab === 'trace' && <TraceTab trace={trace} traceBottom={traceBottom} runId={runId.current} contextId={contextId} />}
-                {debugTab === 'tasks' && <TasksTab runId={runId.current} />}
-                {debugTab === 'artifacts' && <ArtifactsTab runId={runId.current} />}
-                {debugTab === 'memory' && (
-                  <MemoryTab
-                    contextId={contextId}
-                    agentInvocations={agentInvocations}
-                    allAgents={null}
-                  />
-                )}
-                {debugTab === 'sessions' && (
-                  <SessionsTab
-                    currentContextId={contextId}
-                    onResume={resumeSession}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
+          ) : (
+            /* ── Single tab view ── */
+            activeTab && (
+              <ChatColumn
+                key={targetId(activeTab)}
+                target={activeTab}
+                color={TAB_COLORS[tabs.indexOf(activeTab) % TAB_COLORS.length]}
+                showHeader={false}
+              />
+            )
+          )}
         </div>
       </div>
     </AuthGuard>

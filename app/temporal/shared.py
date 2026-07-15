@@ -48,7 +48,7 @@ class OrchestratorConfig:
     max_parallel_tools: int
     rate_limit_rpm: int
     daily_budget_usd: str      # Decimal as str
-    a2a_exposed: bool
+    delegatable: bool
     memory_enabled: bool
     summarize_every_n_calls: int
     memory_raw_fallback_n: int
@@ -77,7 +77,7 @@ class AgentConfig:
     input_schema: Optional[dict]
     skills: Optional[list]
     max_retries: int = 2
-    is_sub_orchestrator: bool = False  # True when this AgentConfig represents an a2a_exposed orchestrator
+    is_sub_orchestrator: bool = False  # True when this AgentConfig represents a delegatable orchestrator
 
 
 @dataclass

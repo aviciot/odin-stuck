@@ -117,7 +117,7 @@ def _make_proxy(data: dict):
         max_parallel_tools=data.get("max_parallel_tools", 4),
         rate_limit_rpm=data.get("rate_limit_rpm", 60),
         daily_budget_usd=Decimal(str(data.get("daily_budget_usd", "0"))),
-        delegatable=data.get("delegatable", data.get("a2a_exposed", False)),
+        delegatable=data.get("delegatable", False),
         is_app_orchestrator=data.get("is_app_orchestrator", False),
         memory_enabled=data.get("memory_enabled", False),
         summarize_every_n_calls=data.get("summarize_every_n_calls", 3),
@@ -131,11 +131,6 @@ def _make_proxy(data: dict):
 
 
 def _orchestrator_to_cache_dict(row) -> dict:
-    # delegatable: AppOrchestrator uses `delegatable`; legacy Orchestrator uses `a2a_exposed`
-    delegatable = getattr(row, "delegatable", None)
-    if delegatable is None:
-        # Legacy Orchestrator row — treat a2a_exposed as delegatable
-        delegatable = getattr(row, "a2a_exposed", False)
     return {
         "id": str(row.id),
         "name": row.name,
@@ -150,7 +145,7 @@ def _orchestrator_to_cache_dict(row) -> dict:
         "max_parallel_tools": row.max_parallel_tools,
         "rate_limit_rpm": row.rate_limit_rpm or 60,
         "daily_budget_usd": str(row.daily_budget_usd or "0"),
-        "delegatable": delegatable,
+        "delegatable": getattr(row, "delegatable", False),
         "is_app_orchestrator": isinstance(row, AppOrchestrator),
         "memory_enabled": getattr(row, "memory_enabled", False),
         "summarize_every_n_calls": getattr(row, "summarize_every_n_calls", 3),
@@ -174,10 +169,8 @@ async def load_agents(orch, db: AsyncSession) -> list:
         q = q.where(Agent.id.in_(ids))
     agents = list((await db.execute(q.order_by(Agent.slug))).scalars().all())
 
-    # Also include any delegatable AppOrchestrators whose ID is in allowed_agent_ids.
-    # Falls back to legacy Orchestrator.a2a_exposed for pre-migration rows.
+    # Also include delegatable AppOrchestrators whose ID is in allowed_agent_ids.
     if ids:
-        # Primary: AppOrchestrator with delegatable=True
         app_orch_q = select(AppOrchestrator).where(
             AppOrchestrator.enabled == True,
             AppOrchestrator.delegatable == True,
@@ -185,15 +178,6 @@ async def load_agents(orch, db: AsyncSession) -> list:
             AppOrchestrator.id != orch.id,
         )
         agents.extend(list((await db.execute(app_orch_q)).scalars().all()))
-
-        # Fallback: legacy Orchestrator.a2a_exposed (pre-migration rows)
-        legacy_orch_q = select(Orchestrator).where(
-            Orchestrator.enabled == True,
-            Orchestrator.a2a_exposed == True,
-            Orchestrator.id.in_(ids),
-            Orchestrator.id != orch.id,
-        )
-        agents.extend(list((await db.execute(legacy_orch_q)).scalars().all()))
 
     return agents
 
@@ -385,10 +369,6 @@ def agent_to_config(agent) -> AgentConfig:
 
 
 def orch_to_config(orch, price_in: str, price_out: str) -> OrchestratorConfig:
-    # delegatable: AppOrchestrator uses `delegatable`; legacy Orchestrator uses `a2a_exposed`
-    delegatable = getattr(orch, "delegatable", None)
-    if delegatable is None:
-        delegatable = getattr(orch, "a2a_exposed", False)
     return OrchestratorConfig(
         id=str(orch.id),
         name=orch.name,
@@ -402,7 +382,7 @@ def orch_to_config(orch, price_in: str, price_out: str) -> OrchestratorConfig:
         max_parallel_tools=orch.max_parallel_tools,
         rate_limit_rpm=orch.rate_limit_rpm or 60,
         daily_budget_usd=str(getattr(orch, "daily_budget_usd", "0") or "0"),
-        a2a_exposed=delegatable,
+        delegatable=getattr(orch, "delegatable", False),
         memory_enabled=getattr(orch, "memory_enabled", False),
         summarize_every_n_calls=getattr(orch, "summarize_every_n_calls", 3),
         memory_raw_fallback_n=getattr(orch, "memory_raw_fallback_n", 5),

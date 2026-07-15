@@ -1,7 +1,7 @@
 """
 Admin — Applications
 CRUD for them.applications + them.entry_points + them.app_orchestrators.
-One app = parent row (name, orchestrator, presentation).
+One app = parent row (name, presentation).
 N entry points = child rows (slug, type, access_policy, token_limit, enabled).
 Each entry point owns one AppOrchestrator instance (canvas node).
 PATCH sends full desired entry_points array; server diffs atomically.
@@ -24,6 +24,7 @@ from sqlalchemy.orm import selectinload
 import app.database as db_module
 from app.database import get_db
 from app.models import Application, EntryPoint, Orchestrator, MiddlewareWiring, AppOrchestrator
+# Note: Orchestrator is imported for _load_all_orch_names shared-namespace uniqueness check only.
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/admin/applications", tags=["admin-applications"])
@@ -127,7 +128,6 @@ class EntryPointOut(BaseModel):
 
 class ApplicationCreate(BaseModel):
     name: str
-    orchestrator_id: uuid.UUID
     presentation: Dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
     entry_points: List[EntryPointIn] = Field(..., min_length=1)
@@ -135,7 +135,6 @@ class ApplicationCreate(BaseModel):
 
 class ApplicationUpdate(BaseModel):
     name: Optional[str] = None
-    orchestrator_id: Optional[uuid.UUID] = None
     presentation: Optional[Dict[str, Any]] = None
     enabled: Optional[bool] = None
     entry_points: Optional[List[EntryPointIn]] = None  # None = don't touch; [] = rejected
@@ -144,8 +143,7 @@ class ApplicationUpdate(BaseModel):
 class ApplicationOut(BaseModel):
     id: uuid.UUID
     name: str
-    orchestrator_id: uuid.UUID
-    orchestrator_name: Optional[str]
+    orchestrator_name: Optional[str] = None  # kept for backward compat; always None after Phase 12
     presentation: Dict[str, Any]
     enabled: bool
     entry_points: List[EntryPointOut]
@@ -224,15 +222,6 @@ async def _get_or_404(db: AsyncSession, app_id: uuid.UUID) -> Application:
     return row
 
 
-async def _batch_orch_names(
-    db: AsyncSession, orch_ids: set[uuid.UUID]
-) -> Dict[uuid.UUID, str]:
-    if not orch_ids:
-        return {}
-    result = await db.execute(select(Orchestrator).where(Orchestrator.id.in_(orch_ids)))
-    return {o.id: o.name for o in result.scalars()}
-
-
 async def _load_all_orch_names(db: AsyncSession) -> set[str]:
     """Load all orchestrator names from both tables (shared namespace)."""
     q1 = select(Orchestrator.name)
@@ -288,7 +277,7 @@ def _app_orch_out(ao: AppOrchestrator) -> AppOrchestratorOut:
     )
 
 
-def _to_out(app: Application, orch_name: Optional[str]) -> ApplicationOut:
+def _to_out(app: Application) -> ApplicationOut:
     ep_outs: List[EntryPointOut] = []
     for ep in app.entry_points:
         ao_out: Optional[AppOrchestratorOut] = None
@@ -309,8 +298,7 @@ def _to_out(app: Application, orch_name: Optional[str]) -> ApplicationOut:
     return ApplicationOut(
         id=app.id,
         name=app.name,
-        orchestrator_id=app.orchestrator_id,
-        orchestrator_name=orch_name,
+        orchestrator_name=None,
         presentation=app.presentation or {},
         enabled=app.enabled,
         entry_points=ep_outs,
@@ -520,26 +508,16 @@ async def list_applications(
     if enabled_only:
         q = q.where(Application.enabled == True)  # noqa: E712
     rows = (await db.execute(q)).scalars().all()
-    orch_names = await _batch_orch_names(db, {r.orchestrator_id for r in rows})
-    return [_to_out(r, orch_names.get(r.orchestrator_id)) for r in rows]
+    return [_to_out(r) for r in rows]
 
 
 @router.post("", response_model=ApplicationOut, status_code=status.HTTP_201_CREATED)
 async def create_application(body: ApplicationCreate, db: AsyncSession = Depends(get_db)):
     _validate_entry_points(body.entry_points)
-
-    orch = await db.get(Orchestrator, body.orchestrator_id)
-    if orch is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Orchestrator '{body.orchestrator_id}' not found",
-        )
-
     await _check_slug_conflicts(db, [ep.slug for ep in body.entry_points])
 
     app = Application(
         name=body.name,
-        orchestrator_id=body.orchestrator_id,
         presentation=body.presentation,
         enabled=body.enabled,
     )
@@ -570,14 +548,13 @@ async def create_application(body: ApplicationCreate, db: AsyncSession = Depends
     await _flush_orch_caches([ao.name for ao in app.app_orchestrators])
     logger.info("application created", app_id=str(app.id), name=body.name,
                 slugs=[ep.slug for ep in app.entry_points])
-    return _to_out(app, orch.name)
+    return _to_out(app)
 
 
 @router.get("/{app_id}", response_model=ApplicationOut)
 async def get_application(app_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     app = await _get_or_404(db, app_id)
-    orch_names = await _batch_orch_names(db, {app.orchestrator_id})
-    return _to_out(app, orch_names.get(app.orchestrator_id))
+    return _to_out(app)
 
 
 @router.patch("/{app_id}", response_model=ApplicationOut)
@@ -594,14 +571,6 @@ async def update_application(
         app.presentation = body.presentation
     if body.enabled is not None:
         app.enabled = body.enabled
-    if body.orchestrator_id is not None:
-        orch = await db.get(Orchestrator, body.orchestrator_id)
-        if orch is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Orchestrator '{body.orchestrator_id}' not found",
-            )
-        app.orchestrator_id = body.orchestrator_id
 
     if body.entry_points is not None:
         if len(body.entry_points) == 0:
@@ -617,10 +586,9 @@ async def update_application(
     await db.commit()
     app = await _get_or_404(db, app_id)
     await _flush_orch_caches([ao.name for ao in app.app_orchestrators])
-    orch_names = await _batch_orch_names(db, {app.orchestrator_id})
     logger.info("application updated", app_id=str(app_id), name=app.name,
                 slugs=[ep.slug for ep in app.entry_points])
-    return _to_out(app, orch_names.get(app.orchestrator_id))
+    return _to_out(app)
 
 
 @router.delete("/{app_id}", status_code=status.HTTP_204_NO_CONTENT)

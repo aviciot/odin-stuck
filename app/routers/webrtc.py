@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.database as db_module
 from app.config import settings
-from app.models import Application, Orchestrator
+from app.models import Application, EntryPoint, AppOrchestrator
 from app.services.auth_client import validate_jwt
 from app.services.token_cache import validate_bearer_token
 
@@ -65,14 +65,26 @@ def _is_valid_uuid(value: str) -> bool:
 # Application loader
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _load_app(db: AsyncSession, slug: str) -> Application:
+async def _load_app(db: AsyncSession, slug: str) -> EntryPoint:
+    """Load an enabled webrtc EntryPoint (joined to its Application) by slug."""
+    from sqlalchemy.orm import selectinload
     result = await db.execute(
-        select(Application).where(Application.slug == slug, Application.enabled == True)
+        select(EntryPoint)
+        .join(Application, EntryPoint.application_id == Application.id)
+        .where(
+            EntryPoint.slug == slug,
+            EntryPoint.enabled == True,
+            Application.enabled == True,
+        )
+        .options(
+            selectinload(EntryPoint.application),
+            selectinload(EntryPoint.app_orchestrator),
+        )
     )
-    app_row = result.scalar_one_or_none()
-    if app_row is None:
+    ep = result.scalar_one_or_none()
+    if ep is None:
         raise HTTPException(status_code=404, detail=f"Application '{slug}' not found")
-    return app_row
+    return ep
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +126,7 @@ async def webrtc_token(
         else:
             token_payload = {"user_id": 0, "orchestrator_id": None, "expires_at": None}
 
-        orch = await db.get(Orchestrator, app_row.orchestrator_id)
+        orch = app_row.app_orchestrator
         if orch is None or not orch.enabled:
             raise HTTPException(status_code=503, detail="Bound orchestrator unavailable")
 

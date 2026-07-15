@@ -146,6 +146,8 @@ docker cp db/004_phase9.sql them-postgres:/tmp/them_004_phase9.sql
 docker cp db/005_phase10.sql them-postgres:/tmp/them_005_phase10.sql
 docker cp db/006_phase11.sql them-postgres:/tmp/them_006_phase11.sql
 docker cp db/009_security_scan.sql them-postgres:/tmp/them_009_security_scan.sql
+docker cp db/014_app_orchestrators.sql them-postgres:/tmp/them_014_app_orchestrators.sql
+docker cp db/015_phase12_drop_deprecated.sql them-postgres:/tmp/them_015_phase12.sql
 docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
 docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
@@ -155,6 +157,8 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_004_phase9.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_005_phase10.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_006_phase11.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_009_security_scan.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_014_app_orchestrators.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_015_phase12.sql
 
 # DB access
 docker exec -it them-postgres psql -U them -d them
