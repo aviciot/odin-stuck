@@ -144,11 +144,32 @@ def test_01_db():
     check("them schema exists", r.strip() == "1")
 
     for tbl in ("llm_providers","config","agents","orchestrators",
-                "access_tokens","runs","run_steps","run_usage","audit_logs"):
+                "access_tokens","runs","run_steps","run_usage","audit_logs",
+                "applications","entry_points","app_orchestrators"):
         r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
                   f"SELECT count(*) FROM information_schema.tables "
                   f"WHERE table_schema='them' AND table_name='{tbl}'")
         check(f"table them.{tbl} exists", r.strip() == "1")
+
+    # app_orchestrators columns
+    for col in ("application_id","name","kind","delegatable","display_name",
+                "system_prompt","allowed_agent_ids","enabled"):
+        r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
+                  f"SELECT count(*) FROM information_schema.columns "
+                  f"WHERE table_schema='them' AND table_name='app_orchestrators' AND column_name='{col}'")
+        check(f"app_orchestrators.{col} column exists", r.strip() == "1")
+
+    # entry_points.app_orchestrator_id FK column
+    r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
+              "SELECT count(*) FROM information_schema.columns "
+              "WHERE table_schema='them' AND table_name='entry_points' AND column_name='app_orchestrator_id'")
+    check("entry_points.app_orchestrator_id column exists", r.strip() == "1")
+
+    # orchestrators.delegatable column
+    r = dexec(PG, "psql", "-U", "them", "-d", "them", "-tAc",
+              "SELECT count(*) FROM information_schema.columns "
+              "WHERE table_schema='them' AND table_name='orchestrators' AND column_name='delegatable'")
+    check("orchestrators.delegatable column exists", r.strip() == "1")
 
 # ─── test 02: Redis ───────────────────────────────────────────────────────────
 
@@ -1182,6 +1203,11 @@ def test_18_orch_as_agent():
         s = src("app/models.py")
         check("Orchestrator.a2a_exposed column", "a2a_exposed" in s)
         check("Orchestrator.budget_tokens column", "budget_tokens" in s)
+        check("Orchestrator.delegatable column", "delegatable" in s)
+        check("AppOrchestrator model defined", "class AppOrchestrator(Base)" in s)
+        check("AppOrchestrator.delegatable field", "delegatable" in s)
+        check("AppOrchestrator.application_id FK", "application_id" in s)
+        check("EntryPoint.app_orchestrator_id FK", "app_orchestrator_id" in s)
     except Exception as exc:
         check("models.py", False, str(exc))
 
@@ -1537,6 +1563,9 @@ def test_21_a2a_hardening():
         check("Application.entry_point_type defined", "entry_point_type" in s)
         check("Application.orchestrator_id FK", "orchestrator_id" in s and "them.orchestrators.id" in s)
         check("Application.access_policy JSONB", "access_policy" in s)
+        check("AppOrchestrator model defined", "class AppOrchestrator(Base)" in s)
+        check("AppOrchestrator.name field", "app_orchestrators" in s)
+        check("EntryPoint.app_orchestrator_id FK", "app_orchestrator_id" in s)
     except Exception as exc:
         check("models.py Phase 9", False, str(exc))
 
@@ -1583,8 +1612,11 @@ def test_22_applications():
         check("prefix /admin/applications", "/admin/applications" in s)
         check("slug regex validation", "_SLUG_RE" in s)
         check("entry_point_type validation", "VALID_ENTRY_POINT_TYPES" in s)
-        check("entry_point_type allows websocket/sse/webrtc", '"websocket"' in s and '"sse"' in s)
+        check("entry_point_type allows websocket/sse/webrtc/a2a", '"websocket"' in s and '"sse"' in s and '"a2a"' in s)
         check("entry_point_type rejects legacy rest/voice", "websocket_chat" not in s and '"rest"' not in s)
+        check("_flush_orch_caches defined", "_flush_orch_caches" in s)
+        check("them:orchestrators: key flushed", "them:orchestrators:" in s)
+        check("them:agents:registry key flushed", "them:agents:registry" in s)
         check("409 on duplicate slug", "409" in s or "HTTP_409_CONFLICT" in s)
         check("orchestrator FK verified on create", "Orchestrator" in s)
         check("orchestrator_name join in list", "orch_map" in s or "_batch_orch_names" in s)
@@ -1656,8 +1688,18 @@ def test_22_applications():
         check("URL copy panel", "urlModalApp" in s2 or "CopyBox" in s2)
         check("websocket entry_point_type present", "'websocket'" in s2 or '"websocket"' in s2)
         check("sse entry_point_type present", "'sse'" in s2 or '"sse"' in s2)
+        check("a2a entry_point_type present", "'a2a'" in s2 or '"a2a"' in s2)
         check("no legacy websocket_chat type", "websocket_chat" not in s2)
         check("SSE URL uses /sse suffix", "/sse" in s2)
+        check("CANVAS_RULES engine defined", "CANVAS_RULES" in s2)
+        check("runRules function defined", "runRules" in s2)
+        check("AT_LEAST_ONE_EP rule present", "AT_LEAST_ONE_EP" in s2)
+        check("EP_HAS_ORCH rule present", "EP_HAS_ORCH" in s2)
+        check("buildNodesFromApp defined", "buildNodesFromApp" in s2)
+        check("AppOrchestratorOut in api.ts", "AppOrchestratorOut" in s)
+        check("AppOrchestratorIn in api.ts", "AppOrchestratorIn" in s)
+        check("app_orchestrators field on Application", "app_orchestrators" in s)
+        check("app_orchestrator_id on EntryPoint", "app_orchestrator_id" in s)
     except FileNotFoundError as exc:
         check("frontend applications page", False, str(exc))
     except Exception as exc:
@@ -2140,6 +2182,133 @@ def test_26_security_scan():
         check("frontend page", False, str(exc))
 
 
+def test_27_canvas_rules():
+    section("test_27_canvas_rules: Canvas Rule Engine + Inline Save")
+
+    # ── frontend/src/app/admin/applications/page.tsx ──────────────────────────
+    try:
+        s = src("frontend/src/app/admin/applications/page.tsx")
+
+        # CANVAS_RULES array
+        check("CANVAS_RULES array defined", "CANVAS_RULES" in s and "CanvasRule" in s)
+        check("AT_LEAST_ONE_EP block rule", "AT_LEAST_ONE_EP" in s and "block" in s)
+        check("EP_SLUG_NONEMPTY block rule", "EP_SLUG_NONEMPTY" in s)
+        check("EP_SLUG_UNIQUE block rule", "EP_SLUG_UNIQUE" in s)
+        check("EP_SLUG_FORMAT block rule", "EP_SLUG_FORMAT" in s)
+        check("EP_HAS_ORCH block rule", "EP_HAS_ORCH" in s)
+        check("ORCH_HAS_AGENT warn rule", "ORCH_HAS_AGENT" in s and "warn" in s)
+
+        # runRules function — save vs deploy modes
+        check("runRules accepts save/deploy modes", "runRules" in s and ("'save'" in s or "'deploy'" in s))
+        check("deploy mode promotes warn to block", "deploy" in s and "warn" in s)
+
+        # handleSave sends inline orchestrator: per EP
+        check("handleSave sends orchestrator: block", '"orchestrator"' in s or "'orchestrator'" in s)
+        # handleSave function body does not call updateOrchestrator
+        hs_start = s.find("async function handleSave")
+        hs_end = s.find("\n  async function ", hs_start + 1)
+        hs_body = s[hs_start:hs_end] if hs_start >= 0 and hs_end > hs_start else ""
+        check("handleSave body: no updateOrchestrator call", "updateOrchestrator" not in hs_body)
+
+        # styledEdges walks all EP→Orch paths
+        check("styledEdges defined", "styledEdges" in s)
+
+        # buildNodesFromApp — 2-arg form (no global orch arg)
+        check("buildNodesFromApp defined", "buildNodesFromApp" in s)
+        check("buildNodesFromApp: app.app_orchestrators used", "app.app_orchestrators" in s or "app_orchestrators" in s)
+
+        # Per-orch agent scoping (not flat agent list)
+        check("orchestrator inspector: allowedAgentIds", "allowedAgentIds" in s)
+
+        # Orchestrator inspector: editable fields
+        check("orchestrator inspector: delegatable", "delegatable" in s)
+        check("orchestrator inspector: systemPrompt", "systemPrompt" in s)
+
+    except FileNotFoundError as exc:
+        check("applications page.tsx", False, str(exc))
+    except Exception as exc:
+        check("canvas rules engine", False, str(exc))
+
+
+def test_28_loaders_resolution():
+    section("test_28_loaders_resolution: app_orchestrators Resolution in loaders.py")
+    sys.path.insert(0, str(ROOT))
+
+    try:
+        s = src("app/temporal/loaders.py")
+
+        # _OrchestratorProxy dataclass with is_app_orchestrator
+        check("_OrchestratorProxy dataclass defined", "_OrchestratorProxy" in s)
+        check("is_app_orchestrator field on proxy", "is_app_orchestrator" in s)
+        check("is_app_orchestrator default False", "is_app_orchestrator: bool = False" in s)
+
+        # load_orchestrator_row resolution order
+        check("load_orchestrator_row defined", "load_orchestrator_row" in s)
+        check("queries app_orchestrators first", "AppOrchestrator" in s)
+        check("falls back to orchestrators", "Orchestrator" in s)
+
+        # Cache dict carries is_app_orchestrator flag
+        check("is_app_orchestrator written to cache dict", '"is_app_orchestrator"' in s)
+        check("isinstance(row, AppOrchestrator) evaluated on DB-miss path", "isinstance(row, AppOrchestrator)" in s)
+
+        # load_agents uses delegatable (primary) and a2a_exposed (fallback)
+        check("load_agents checks delegatable", "delegatable" in s)
+        check("load_agents falls back to a2a_exposed for legacy orchs", "a2a_exposed" in s)
+
+    except Exception as exc:
+        check("loaders.py structure", False, str(exc))
+
+
+def test_29_app_orchestrators_migration():
+    section("test_29_app_orchestrators_migration: db/014_app_orchestrators.sql + AppOrchestrator model")
+    sys.path.insert(0, str(ROOT))
+
+    # ── Migration file exists and is well-formed ──────────────────────────────
+    try:
+        s = src("db/014_app_orchestrators.sql")
+        check("014_app_orchestrators.sql exists", True)
+        check("migration creates them.app_orchestrators", "CREATE TABLE IF NOT EXISTS them.app_orchestrators" in s)
+        check("name UNIQUE in migration", "UNIQUE" in s and "name" in s)
+        check("delegatable column in migration", "delegatable" in s)
+        check("application_id FK in migration", "REFERENCES them.applications" in s)
+        check("entry_points.app_orchestrator_id added", "entry_points" in s and "app_orchestrator_id" in s and "ADD COLUMN IF NOT EXISTS" in s)
+        check("orchestrators.delegatable added", "them.orchestrators" in s and "delegatable" in s and "ADD COLUMN IF NOT EXISTS" in s)
+        check("entry_point_type widened to include a2a", "a2a" in s)
+        check("migration is idempotent", "IF NOT EXISTS" in s)
+        check("migration wrapped in transaction", "BEGIN;" in s and "COMMIT;" in s)
+    except FileNotFoundError:
+        check("014_app_orchestrators.sql exists", False, "file not found")
+    except Exception as exc:
+        check("014_app_orchestrators.sql", False, str(exc))
+
+    # ── AppOrchestrator ORM model ─────────────────────────────────────────────
+    try:
+        s = src("app/models.py")
+        check("AppOrchestrator class defined", "class AppOrchestrator(Base)" in s)
+        check("AppOrchestrator.__tablename__ = app_orchestrators", '"app_orchestrators"' in s)
+        check("AppOrchestrator.name field (unique slug)", "app_orchestrators" in s and "name" in s)
+        check("AppOrchestrator.application_id FK", "application_id" in s)
+        check("AppOrchestrator.kind field", "kind" in s)
+        check("AppOrchestrator.delegatable field", "delegatable" in s)
+        check("AppOrchestrator.allowed_agent_ids ARRAY", "allowed_agent_ids" in s)
+        check("AppOrchestrator.enabled field", "enabled" in s)
+        check("EntryPoint.app_orchestrator_id FK nullable", "app_orchestrator_id" in s)
+        check("Orchestrator.delegatable field", "delegatable" in s)
+    except Exception as exc:
+        check("AppOrchestrator model", False, str(exc))
+
+    # ── admin_applications.py: Phase 7 cache flush ───────────────────────────
+    try:
+        s = src("app/routers/admin_applications.py")
+        check("_flush_orch_caches defined", "_flush_orch_caches" in s)
+        check("flush called in create_application", s.count("_flush_orch_caches") >= 3)
+        check("them:orchestrators: key prefix used", "them:orchestrators:" in s)
+        check("them:agents:registry key flushed", "them:agents:registry" in s)
+        check("names collected before delete", "orch_names_to_flush" in s or "_flush_orch_caches" in s)
+    except Exception as exc:
+        check("admin_applications.py cache flush", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -2169,6 +2338,9 @@ ALL_TESTS = [
     ("24", test_24_code_agent_live),
     ("25", test_25_true_a2a),
     ("26", test_26_security_scan),
+    ("27", test_27_canvas_rules),
+    ("28", test_28_loaders_resolution),
+    ("29", test_29_app_orchestrators_migration),
 ]
 
 if __name__ == "__main__":

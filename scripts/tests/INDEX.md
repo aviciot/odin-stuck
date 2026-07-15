@@ -9,7 +9,7 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 
 | ID | File | Type | Needs stack? | What it tests |
 |---|---|---|---|---|
-| 01 | `run_tests.py::test_01_db` | live | yes | DB connectivity + all 9 `them.*` tables exist |
+| 01 | `run_tests.py::test_01_db` | live | yes | DB connectivity + all 12 `them.*` tables exist (including `app_orchestrators`, `entry_points`); `app_orchestrators` columns; `entry_points.app_orchestrator_id`; `orchestrators.delegatable` |
 | 02 | `run_tests.py::test_02_redis` | live | yes | Redis PING + read/write on DB 0 |
 | 03 | `run_tests.py::test_03_auth_service` | live | yes | Auth service `/health`, `/health/live`, `/health/ready` |
 | 04 | `run_tests.py::test_04_bridge_health` | live | yes | Bridge `/health`, `/health/live`, `/health/ready` |
@@ -26,17 +26,20 @@ Requires: `docker` in PATH, stack running via `docker compose up`.
 | 15 | `run_tests.py::test_15_compose_health` | live | yes | All core containers running + healthy, HTTP endpoints, inter-container TCP connectivity |
 | 16 | `run_tests.py::test_16_a2a_agents` | structural | no | A2A test agents exist (echo/slow/stream), docker-compose test-agents profile, seed SQL, A2aAsyncAdapter importable |
 | 17 | `run_tests.py::test_17_memory` | structural | no | Phase 8.4 context summarization memory: memory_service.py functions, Redis key prefix, models.py memory columns, task_runner integration, REDIS.md docs, 003_phase8.sql migration, api.ts types |
-| 18 | `run_tests.py::test_18_orch_as_agent` | structural | no | Phase 8.5 durable inbound A2A: a2a_server.py rewired to them.tasks (_tasks dict removed), SendMessage/GetTask/CancelTask handlers, returnImmediately, push webhook, a2a_exposed + budget_tokens columns |
+| 18 | `run_tests.py::test_18_orch_as_agent` | structural | no | Phase 8.5 durable inbound A2A: a2a_server.py rewired to them.tasks (_tasks dict removed), SendMessage/GetTask/CancelTask handlers, returnImmediately, push webhook, a2a_exposed + budget_tokens + delegatable columns; AppOrchestrator model; EntryPoint.app_orchestrator_id FK |
 | 19 | `run_tests.py::test_19_edges` | structural | no | Phase 8.6 pluggable edge adapters: app/edges/ files (base, websocket, voice stub, rest stub, registry), EdgeAdapter ABC, WebsocketEdge wired in ws_orchestrator, VALID_EDGES set, edges column in migration |
 | 20 | `run_tests.py::test_20_traefik` | live + structural | yes | Traefik routing (bridge + frontend), sticky session cookie, docker-compose label correctness, multi-replica LB + shared Postgres (skips replica checks if bridge-2 not running) |
-| 21 | `run_tests.py::test_21_a2a_hardening` | structural | no | Phase 9 A2A hardening: rate limit, body+batch limits, token expiry, ownership isolation, agent card system_prompt strip, default deadline, TOCTOU scope fix, task_store helpers, Application model, 004_phase9.sql migration |
-| 22 | `run_tests.py::test_22_applications` | structural | no | Phase 9 Phase 2+3: admin_applications.py CRUD, apps.py entry points (REST + WS + poll), main.py wiring, api.ts Application type + methods, frontend applications page, Sidebar nav |
+| 21 | `run_tests.py::test_21_a2a_hardening` | structural | no | Phase 9 A2A hardening: rate limit, body+batch limits, token expiry, ownership isolation, agent card system_prompt strip, default deadline, TOCTOU scope fix, task_store helpers, Application + AppOrchestrator model, EntryPoint.app_orchestrator_id, 004_phase9.sql migration |
+| 22 | `run_tests.py::test_22_applications` | structural | no | Phase 9 Phase 2+3 + app-orch: admin_applications.py CRUD + _flush_orch_caches (them:orchestrators:/them:agents:registry), apps.py entry points (REST + WS + SSE + poll), `a2a` EP type present, CANVAS_RULES + runRules engine, AppOrchestratorOut/In in api.ts, app_orchestrators/app_orchestrator_id on Application/EntryPoint, main.py wiring, frontend page, Sidebar nav |
 
 | 23 | `run_tests.py::test_23_a2a_skill_discovery` | structural | no | A2A agent card auto-discovery: `_ensure_agent_skills` helper, TTL constant, httpx fetch, A2A-Version header, Bearer auth, write-back to DB (skills/agent_card/card_fetched_at), failure handling, call order before tool list, docu_writer agent files, 007_docu_stack.sql seed |
 | 24 | `run_tests.py::test_24_code_agent_live` | live | yes | code_agent A2A live call: agent card reachable, list_repos + query_graph skills present, SendMessage returns real repo data, no TextContent serialization error |
 | 25 | `run_tests.py::test_25_true_a2a` | structural | no | True A2A typed input: docu_writer data parts + no regex, adapter input_modes + _build_parts, factory wiring, task_runner _OrchestratorProxy dataclass + typed _run_one branch, seed SQL prompt cleanup |
 | 26 | `run_tests.py::test_26_security_scan` | structural + unit | no | Agent Security Scanner: agent files (main.py/scanner.py/Dockerfile/requirements.txt), A2A structure, docker-compose service (profile: security, port 9500), db/009 migration columns + seed, ws_dashboard agent: channel, dashboard_broadcaster scan helpers, admin_agents scan endpoint + background task, score formula unit tests (no-TLS+no-auth=45, all-pass=100, LLM cap), frontend api.ts types + scanAgent, page scan state + WS handling |
 
+| 27 | `run_tests.py::test_27_canvas_rules` | structural | no | Canvas rule engine: CANVAS_RULES array (6 rules — 5 block + 1 warn), runRules save/deploy modes, deploy promotes warn to block, handleSave body sends inline `orchestrator:` block (not updateOrchestrator), styledEdges, buildNodesFromApp uses app.app_orchestrators, orchestrator inspector fields (delegatable/systemPrompt/allowedAgentIds) |
+| 28 | `run_tests.py::test_28_loaders_resolution` | structural | no | `app/temporal/loaders.py`: `_OrchestratorProxy` dataclass with `is_app_orchestrator: bool = False`; `load_orchestrator_row` queries `app_orchestrators` first then `orchestrators` fallback; `is_app_orchestrator` flag carried in Redis cache dict via `isinstance(row, AppOrchestrator)` on DB-miss path; `load_agents` uses `delegatable` (primary) + `a2a_exposed` (legacy fallback) |
+| 29 | `run_tests.py::test_29_app_orchestrators_migration` | structural | no | `db/014_app_orchestrators.sql`: creates `them.app_orchestrators`, adds `entry_points.app_orchestrator_id`, adds `orchestrators.delegatable`, widens EP type to include `a2a`, idempotent + transactional; `AppOrchestrator` ORM model all fields; `_flush_orch_caches` called in all 3 mutating paths of `admin_applications.py` |
 | MT | `scripts/test_multiturn.py` | e2e | yes + JWT (auto-fetched) | Multi-turn conversation history: recall across fresh WS connections, `history_window` behavioral proof (window=1 forgets old turns) |
 
 **Types:**
@@ -81,7 +84,9 @@ python scripts/tests/run_tests.py
 | `app/edges/` | 19 |
 | `docker-compose.yml` (bridge/frontend labels), `traefik/traefik.yml`, `docker-compose.local.yml` | 20 |
 | `app/routers/a2a_server.py`, `app/services/task_store.py`, `app/services/token_cache.py`, `db/004_phase9.sql` | 21 |
-| `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 |
+| `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts`, `frontend/src/components/Sidebar.tsx` | 22 27 |
+| `app/temporal/loaders.py` | 28 |
+| `db/014_app_orchestrators.sql`, `app/models.py` (AppOrchestrator), `app/routers/admin_applications.py` (_flush_orch_caches) | 01 29 |
 | `app/services/task_runner.py` (history), `app/models.py` (history_window), `app/routers/admin_orchestrators.py` | 10 + MT |
 | `agents/security_scanner/`, `app/routers/admin_agents.py` (security-scan), `app/routers/ws_dashboard.py` (agent: channel), `app/services/dashboard_broadcaster.py`, `db/009_security_scan.sql`, `frontend/src/app/admin/agents/page.tsx` | 26 |
 | Before release / PR merge | all + 14 (with JWT) + MT |

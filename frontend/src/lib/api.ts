@@ -177,7 +177,7 @@ export interface EntryPoint {
   id: string;
   application_id: string;
   slug: string;
-  entry_point_type: 'websocket' | 'sse' | 'webrtc';
+  entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a';
   access_policy: Record<string, unknown>;
   conversation_token_limit: number | null;
   enabled: boolean;
