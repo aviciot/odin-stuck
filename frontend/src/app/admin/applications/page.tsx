@@ -1208,11 +1208,11 @@ function PropertiesPanel({
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div style={fieldWrap}>
                     <label style={labelStyle}>Max Iterations</label>
-                    <input type="number" min={1} max={100} style={inputStyle} value={d.maxIterations} onChange={e => onUpdateNode(selectedNode.id, { maxIterations: parseInt(e.target.value, 10) || 10 })} />
+                    <input type="number" min={1} max={100} style={inputStyle} value={d.maxIterations ?? ''} onChange={e => onUpdateNode(selectedNode.id, { maxIterations: parseInt(e.target.value, 10) || 10 })} placeholder="10" />
                   </div>
                   <div style={fieldWrap}>
                     <label style={labelStyle}>History Window</label>
-                    <input type="number" min={0} max={200} style={inputStyle} value={d.historyWindow} onChange={e => onUpdateNode(selectedNode.id, { historyWindow: parseInt(e.target.value, 10) || 20 })} />
+                    <input type="number" min={0} max={200} style={inputStyle} value={d.historyWindow ?? ''} onChange={e => onUpdateNode(selectedNode.id, { historyWindow: parseInt(e.target.value, 10) || 20 })} placeholder="20" />
                   </div>
                 </div>
                 <div style={fieldWrap}>
