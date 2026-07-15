@@ -777,16 +777,16 @@ function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
           <SectionHeader label="Entry Points" open={openEP} onToggle={() => setOpenEP(v => !v)} />
           {openEP && (
             <div className="nl-section-list">
-              {(['websocket', 'sse', 'webrtc'] as const).map(ep => {
+              {(['websocket', 'sse', 'webrtc', 'a2a'] as const).map(ep => {
                 const meta = EP_META[ep];
                 return (
                   <div key={ep} className="nl-tooltip" style={{ position: 'relative', marginBottom: 4 }}>
                     <div
                       draggable
                       onDragStart={e => dragItem(e, 'entryPoint', { epType: ep, label: meta.title, accessMode: 'token', slug: '' })}
-                      style={{ ...itemStyle, background: C.cyanBg, borderColor: C.cyanBorder, marginBottom: 0 }}
-                      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,240,255,0.1)')}
-                      onMouseLeave={e => (e.currentTarget.style.background = C.cyanBg)}
+                      style={{ ...itemStyle, background: ep === 'a2a' ? C.amberBg : C.cyanBg, borderColor: ep === 'a2a' ? C.amberBorder : C.cyanBorder, marginBottom: 0 }}
+                      onMouseEnter={e => (e.currentTarget.style.background = ep === 'a2a' ? 'rgba(245,158,11,0.1)' : 'rgba(0,240,255,0.1)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = ep === 'a2a' ? C.amberBg : C.cyanBg)}
                     >
                       <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>{meta.emoji}</span>
                       <div style={{ minWidth: 0 }}>
