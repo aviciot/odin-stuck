@@ -145,7 +145,14 @@ SELECT
     gen_random_uuid(),
     a.id,
     o.id,
-    o.name,
+    -- Slugify name; append row-number suffix if the same orch is shared by multiple apps
+    -- so each instance gets a globally unique name (the runtime key).
+    CASE
+        WHEN ROW_NUMBER() OVER (PARTITION BY o.id ORDER BY a.id) = 1
+        THEN LOWER(REGEXP_REPLACE(REGEXP_REPLACE(o.name, '[^a-zA-Z0-9_-]', '-', 'g'), '^-+|-+$', '', 'g'))
+        ELSE LOWER(REGEXP_REPLACE(REGEXP_REPLACE(o.name, '[^a-zA-Z0-9_-]', '-', 'g'), '^-+|-+$', '', 'g'))
+             || '-' || ROW_NUMBER() OVER (PARTITION BY o.id ORDER BY a.id)::text
+    END,
     'orch-node-1',
     'standard',
     COALESCE(o.a2a_exposed, FALSE),
