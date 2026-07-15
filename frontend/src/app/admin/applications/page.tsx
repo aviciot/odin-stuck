@@ -2763,7 +2763,6 @@ function BuilderView({
       showToast(err?.message ?? 'Save failed', false);
     } finally {
       setSaving(false);
-      setLogoState('idle');
     }
   }
 
