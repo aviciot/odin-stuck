@@ -199,6 +199,7 @@ CREATE TABLE IF NOT EXISTS them.task_messages (
 CREATE INDEX IF NOT EXISTS idx_task_messages ON them.task_messages(task_id, seq);
 
 -- A2A server support
+-- DEPRECATED: a2a_exposed pending drop in Phase 12 (015_contract_orchestrator_split.sql)
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS a2a_exposed BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- A2A agent card cache + capability flags
@@ -236,3 +237,136 @@ ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS summarizer_model TEXT;
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS summarizer_api_key_encrypted TEXT;
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS edges TEXT[] NOT NULL DEFAULT ARRAY['websocket'];
 ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS budget_tokens INTEGER;
+
+-- Phase 11: history_window
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS history_window INTEGER NOT NULL DEFAULT 20;
+
+-- Phase 14: delegatable replaces a2a_exposed for internal sub-orch delegation
+ALTER TABLE them.orchestrators ADD COLUMN IF NOT EXISTS delegatable BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ── Phase 9: Applications ─────────────────────────────────────────────────────
+-- DEPRECATED column: orchestrator_id pending drop in Phase 12 (015_contract_orchestrator_split.sql)
+
+CREATE TABLE IF NOT EXISTS them.applications (
+    id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    name             TEXT        NOT NULL,
+    orchestrator_id  UUID        NOT NULL REFERENCES them.orchestrators(id) ON DELETE CASCADE, -- DEPRECATED: pending drop in Phase 12 (015_contract_orchestrator_split.sql)
+    presentation     JSONB       NOT NULL DEFAULT '{}',
+    enabled          BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE them.applications ADD COLUMN IF NOT EXISTS conversation_token_limit INTEGER;
+
+-- ── Phase 10: Entry Points ────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS them.entry_points (
+    id                       UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id           UUID        NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
+    slug                     TEXT        NOT NULL UNIQUE CHECK (slug ~ '^[a-z0-9_-]{1,64}$'),
+    entry_point_type         TEXT        NOT NULL CHECK (entry_point_type IN ('websocket', 'sse', 'webrtc', 'a2a')),
+    access_policy            JSONB       NOT NULL DEFAULT '{"mode":"token"}',
+    conversation_token_limit INTEGER,
+    enabled                  BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_entry_points_application_id ON them.entry_points(application_id);
+CREATE INDEX IF NOT EXISTS idx_entry_points_slug           ON them.entry_points(slug);
+
+ALTER TABLE them.runs ADD COLUMN IF NOT EXISTS entry_point_slug TEXT;
+CREATE INDEX IF NOT EXISTS idx_runs_entry_point_slug ON them.runs(entry_point_slug);
+
+ALTER TABLE them.runs ADD COLUMN IF NOT EXISTS parent_run_id UUID NULL
+    REFERENCES them.runs(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_runs_parent_run_id ON them.runs(parent_run_id);
+
+-- ── Phase 14: app_orchestrators ──────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS them.app_orchestrators (
+    id                              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id                  UUID        NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
+    orchestrator_id                 UUID        REFERENCES them.orchestrators(id) ON DELETE SET NULL,
+    name                            TEXT        NOT NULL,
+    node_id                         TEXT,
+    kind                            TEXT        NOT NULL DEFAULT 'standard',
+    delegatable                     BOOLEAN     NOT NULL DEFAULT FALSE,
+    -- ── Config columns (cloned from them.orchestrators) ──────────────────────
+    display_name                    TEXT,
+    system_prompt                   TEXT,
+    allowed_agent_ids               UUID[]      NOT NULL DEFAULT '{}',
+    llm_provider                    TEXT,
+    llm_model                       TEXT,
+    llm_api_key_encrypted           TEXT,
+    llm_base_url                    TEXT,
+    max_iterations                  INTEGER     NOT NULL DEFAULT 10,
+    max_parallel_tools              INTEGER     NOT NULL DEFAULT 3,
+    rate_limit_rpm                  INTEGER,
+    daily_budget_usd                NUMERIC(10,4),
+    voice_enabled                   BOOLEAN     NOT NULL DEFAULT FALSE,
+    transcription_provider          VARCHAR(32),
+    transcription_model             VARCHAR(64),
+    transcription_api_key_encrypted TEXT,
+    tts_enabled                     BOOLEAN     NOT NULL DEFAULT FALSE,
+    tts_provider                    TEXT,
+    tts_voice                       TEXT,
+    tts_api_key_encrypted           TEXT,
+    memory_enabled                  BOOLEAN     NOT NULL DEFAULT FALSE,
+    summarize_every_n_calls         INTEGER     NOT NULL DEFAULT 3,
+    memory_raw_fallback_n           INTEGER     NOT NULL DEFAULT 5,
+    summarizer_provider             TEXT,
+    summarizer_model                TEXT,
+    summarizer_api_key_encrypted    TEXT,
+    edges                           TEXT[]      NOT NULL DEFAULT '{websocket}',
+    history_window                  INTEGER     NOT NULL DEFAULT 20,
+    budget_tokens                   INTEGER,
+    enabled                         BOOLEAN     NOT NULL DEFAULT TRUE,
+    -- ── Timestamps ───────────────────────────────────────────────────────────
+    created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- ── Constraints ──────────────────────────────────────────────────────────
+    CONSTRAINT uq_app_orchestrators_name        UNIQUE (name),
+    CONSTRAINT ck_app_orchestrators_name_slug   CHECK  (name ~ '^[a-z0-9_-]{1,64}$'),
+    CONSTRAINT ck_app_orchestrators_kind        CHECK  (kind IN ('standard', 'router', 'voice'))
+);
+CREATE INDEX IF NOT EXISTS idx_app_orchestrators_application_id ON them.app_orchestrators(application_id);
+CREATE INDEX IF NOT EXISTS idx_app_orchestrators_name           ON them.app_orchestrators(name);
+
+-- Phase 14: FK from entry_points to app_orchestrators
+ALTER TABLE them.entry_points
+    ADD COLUMN IF NOT EXISTS app_orchestrator_id UUID
+        REFERENCES them.app_orchestrators(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_entry_points_app_orchestrator_id ON them.entry_points(app_orchestrator_id);
+
+-- ── Phase 13: Agentic Middleware ──────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS them.middleware_defs (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug          TEXT        NOT NULL UNIQUE,
+    kind          TEXT        NOT NULL,
+    display_name  TEXT        NOT NULL,
+    description   TEXT        NOT NULL DEFAULT '',
+    config        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    is_builtin    BOOLEAN     NOT NULL DEFAULT false,
+    enabled       BOOLEAN     NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_mw_defs_kind CHECK (kind IN ('guard', 'cache'))
+);
+CREATE INDEX IF NOT EXISTS idx_mw_defs_kind ON them.middleware_defs(kind);
+
+CREATE TABLE IF NOT EXISTS them.middleware_wirings (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id  UUID        NOT NULL REFERENCES them.applications(id) ON DELETE CASCADE,
+    agent_id        UUID        NOT NULL REFERENCES them.agents(id) ON DELETE CASCADE,
+    def_id          UUID        NOT NULL REFERENCES them.middleware_defs(id) ON DELETE RESTRICT,
+    position        INTEGER     NOT NULL DEFAULT 0,
+    config_override JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    enabled         BOOLEAN     NOT NULL DEFAULT true,
+    node_id         TEXT        NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_mw_wiring_app_agent_pos UNIQUE (application_id, agent_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_mw_wirings_app_agent ON them.middleware_wirings(application_id, agent_id);
