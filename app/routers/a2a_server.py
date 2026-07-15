@@ -96,7 +96,8 @@ async def _resolve_bearer(request: Request) -> dict | None:
 async def agent_card():
     """
     Serve the-M's A2A Agent Card.
-    Each a2a_exposed orchestrator is listed as one skill.
+    Each enabled a2a EntryPoint (Phase 5) is listed as one skill.
+    Falls back to a default skill when no a2a entry points are configured.
     Skills loaded dynamically from DB; url from config.BRIDGE_URL.
     """
     skills = []
@@ -104,28 +105,44 @@ async def agent_card():
     if db_module.AsyncSessionLocal is not None:
         try:
             from sqlalchemy import select
-            from app.models import Orchestrator
+            from sqlalchemy.orm import selectinload
+            from app.models import EntryPoint, Application, AppOrchestrator
             async with db_module.AsyncSessionLocal() as db:
                 result = await db.execute(
-                    select(Orchestrator).where(
-                        Orchestrator.enabled == True,
-                        Orchestrator.a2a_exposed == True,
+                    select(EntryPoint)
+                    .join(Application, EntryPoint.application_id == Application.id)
+                    .join(AppOrchestrator, EntryPoint.app_orchestrator_id == AppOrchestrator.id)
+                    .where(
+                        EntryPoint.entry_point_type == "a2a",
+                        EntryPoint.enabled == True,
+                        Application.enabled == True,
+                        AppOrchestrator.enabled == True,
+                    )
+                    .options(
+                        selectinload(EntryPoint.application),
+                        selectinload(EntryPoint.app_orchestrator),
                     )
                 )
-                orchestrators = result.scalars().all()
-                for orch in orchestrators:
-                    # Use display_name + public description only — never expose system_prompt
-                    safe_desc = f"Orchestrator: {orch.display_name}"
+                a2a_eps = result.scalars().all()
+                for ep in a2a_eps:
+                    # Use display_name from app_orchestrator, fall back to app name or slug
+                    # Never expose system_prompt
+                    skill_name = (
+                        ep.app_orchestrator.display_name
+                        or ep.application.name
+                        or ep.slug
+                    )
+                    safe_desc = f"Application: {ep.application.name}"
                     skills.append({
-                        "id": orch.name,
-                        "name": orch.display_name,
+                        "id": ep.slug,
+                        "name": skill_name,
                         "description": safe_desc,
                         "tags": ["orchestration"],
                         "inputModes": ["text/plain"],
                         "outputModes": ["text/plain"],
                     })
         except Exception as exc:
-            logger.warning("agent_card: failed to load orchestrators", error=str(exc))
+            logger.warning("agent_card: failed to load a2a entry points", error=str(exc))
 
     if not skills:
         skills.append({
@@ -296,7 +313,56 @@ async def _handle_send_message(rpc_id: Any, params: dict, token_payload: dict) -
 
     # Determine orchestrator from skill metadata or use default
     metadata = params.get("metadata", {})
-    orchestrator_name = metadata.get("skill") or metadata.get("orchestrator") or "default"
+    skill_id = metadata.get("skill") or metadata.get("orchestrator") or "default"
+
+    # Look up EntryPoint by slug first; fall back to treating skill_id as a literal
+    # orchestrator name for backward compat with legacy a2a_exposed orchestrators.
+    #
+    # Resolution: Application.orchestrator_id → Orchestrator.name. load_orchestrator_row
+    # (Phase 6) resolves app_orchestrators first, then falls back to orchestrators — so
+    # using the legacy Orchestrator.name here hits the fallback path cleanly.
+    orchestrator_name = skill_id
+    if skill_id and skill_id != "default" and db_module.AsyncSessionLocal is not None:
+        try:
+            from sqlalchemy import select as _ep_select
+            from sqlalchemy.orm import selectinload as _ep_selectinload
+            from app.models import (
+                EntryPoint as _EntryPoint,
+                AppOrchestrator as _AppOrchestrator,
+                Orchestrator as _OrchestratorModel,
+            )
+            async with db_module.AsyncSessionLocal() as _ep_db:
+                ep_result = await _ep_db.execute(
+                    _ep_select(_EntryPoint)
+                    .join(_AppOrchestrator, _EntryPoint.app_orchestrator_id == _AppOrchestrator.id)
+                    .where(
+                        _EntryPoint.slug == skill_id,
+                        _EntryPoint.entry_point_type == "a2a",
+                        _EntryPoint.enabled == True,
+                    )
+                    .options(
+                        _ep_selectinload(_EntryPoint.app_orchestrator),
+                        _ep_selectinload(_EntryPoint.application),
+                    )
+                )
+                ep = ep_result.scalar_one_or_none()
+                if ep is not None:
+                    # Resolve Application.orchestrator_id → them.orchestrators.name
+                    # because task_runner._load_orchestrator_row resolves against
+                    # them.orchestrators (not them.app_orchestrators).
+                    app = ep.application
+                    if app and app.orchestrator_id:
+                        orch_row = await _ep_db.get(_OrchestratorModel, app.orchestrator_id)
+                        if orch_row and orch_row.enabled:
+                            orchestrator_name = orch_row.name
+                        else:
+                            orchestrator_name = skill_id  # fallback: orch disabled or missing
+                    else:
+                        orchestrator_name = skill_id  # fallback: no orchestrator_id on app
+                # else: keep orchestrator_name = skill_id (backward compat — legacy a2a_exposed)
+        except Exception as _ep_exc:
+            logger.warning("a2a: EP slug lookup failed, using skill_id as orchestrator name",
+                           skill_id=skill_id, error=str(_ep_exc))
 
     context_id = (
         uuid.UUID(context_id_hint)

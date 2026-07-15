@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_redis
-from app.models import Agent, Orchestrator
+from app.models import Agent, AppOrchestrator, Orchestrator
 from app.utils.logger import logger
 
 _REGISTRY_KEY = "them:agents:registry"
@@ -46,8 +46,8 @@ def _agent_to_dict(agent: Agent) -> dict:
     }
 
 
-def _orch_to_pseudo_agent_dict(orch: Orchestrator) -> dict:
-    """Map an a2a_exposed Orchestrator to the same dict shape as _agent_to_dict."""
+def _orch_to_pseudo_agent_dict(orch) -> dict:
+    """Map a delegatable AppOrchestrator (or legacy a2a_exposed Orchestrator) to the same dict shape as _agent_to_dict."""
     return {
         "id": str(orch.id),
         "slug": f"orch__{orch.name}",
@@ -73,7 +73,14 @@ async def _load_from_db(db: AsyncSession) -> list[dict]:
     )
     agents = [_agent_to_dict(a) for a in result.scalars().all()]
 
-    # Also expose a2a_exposed orchestrators as sub_orchestrator pseudo-agents
+    # Expose delegatable AppOrchestrators as sub_orchestrator pseudo-agents (primary)
+    app_orch_result = await db.execute(
+        select(AppOrchestrator).where(AppOrchestrator.enabled == True, AppOrchestrator.delegatable == True)
+    )
+    for orch in app_orch_result.scalars().all():
+        agents.append(_orch_to_pseudo_agent_dict(orch))
+
+    # Also expose legacy a2a_exposed Orchestrators as sub_orchestrator pseudo-agents (fallback)
     orch_result = await db.execute(
         select(Orchestrator).where(Orchestrator.enabled == True, Orchestrator.a2a_exposed == True)
     )

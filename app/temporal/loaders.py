@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.database as db_module
-from app.models import Agent, LLMProvider, Orchestrator
+from app.models import Agent, AppOrchestrator, LLMProvider, Orchestrator
 from app.temporal.shared import AgentConfig, LoadContextResult, OrchestratorConfig
 from app.utils.logger import logger
 
@@ -28,7 +28,14 @@ _CARD_TTL_SECONDS = 3600
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def load_orchestrator_row(name: str, db: AsyncSession):
-    """Load orchestrator config from Redis cache or DB. Returns an ORM row or proxy."""
+    """Load orchestrator config from Redis cache or DB. Returns an ORM row or proxy.
+
+    Resolution order:
+      1. Redis cache (them:orchestrators:{name}) → proxy object
+      2. them.app_orchestrators WHERE name = name AND enabled = true
+      3. Fallback: them.orchestrators WHERE name = name AND enabled = true
+         (for seeded/pre-migration orchestrators not yet converted to app_orchestrators)
+    """
     if db_module.redis_client is not None:
         try:
             cached = await db_module.redis_client.get(f"{_ORCH_PREFIX}{name}")
@@ -38,10 +45,19 @@ async def load_orchestrator_row(name: str, db: AsyncSession):
         except Exception as exc:
             logger.warning("loaders: orchestrator cache miss", name=name, error=str(exc))
 
+    # Primary: resolve against AppOrchestrator (app-scoped instances)
     result = await db.execute(
-        select(Orchestrator).where(Orchestrator.name == name, Orchestrator.enabled == True)
+        select(AppOrchestrator).where(AppOrchestrator.name == name, AppOrchestrator.enabled == True)
     )
     row = result.scalar_one_or_none()
+
+    if row is None:
+        # Fallback for seeded/pre-migration orchestrators not yet converted to app_orchestrators
+        result2 = await db.execute(
+            select(Orchestrator).where(Orchestrator.name == name, Orchestrator.enabled == True)
+        )
+        row = result2.scalar_one_or_none()
+
     if row is None:
         return None
 
@@ -76,7 +92,8 @@ def _make_proxy(data: dict):
         max_parallel_tools: int
         rate_limit_rpm: int
         daily_budget_usd: Decimal
-        a2a_exposed: bool = False
+        delegatable: bool = False
+        is_app_orchestrator: bool = False
         memory_enabled: bool = False
         summarize_every_n_calls: int = 3
         memory_raw_fallback_n: int = 5
@@ -100,7 +117,8 @@ def _make_proxy(data: dict):
         max_parallel_tools=data.get("max_parallel_tools", 4),
         rate_limit_rpm=data.get("rate_limit_rpm", 60),
         daily_budget_usd=Decimal(str(data.get("daily_budget_usd", "0"))),
-        a2a_exposed=data.get("a2a_exposed", False),
+        delegatable=data.get("delegatable", data.get("a2a_exposed", False)),
+        is_app_orchestrator=data.get("is_app_orchestrator", False),
         memory_enabled=data.get("memory_enabled", False),
         summarize_every_n_calls=data.get("summarize_every_n_calls", 3),
         memory_raw_fallback_n=data.get("memory_raw_fallback_n", 5),
@@ -113,21 +131,27 @@ def _make_proxy(data: dict):
 
 
 def _orchestrator_to_cache_dict(row) -> dict:
+    # delegatable: AppOrchestrator uses `delegatable`; legacy Orchestrator uses `a2a_exposed`
+    delegatable = getattr(row, "delegatable", None)
+    if delegatable is None:
+        # Legacy Orchestrator row — treat a2a_exposed as delegatable
+        delegatable = getattr(row, "a2a_exposed", False)
     return {
         "id": str(row.id),
         "name": row.name,
-        "display_name": row.display_name,
+        "display_name": row.display_name or "",
         "system_prompt": row.system_prompt or "",
         "allowed_agent_ids": [str(x) for x in (row.allowed_agent_ids or [])],
         "llm_provider": row.llm_provider or "anthropic",
-        "llm_model": row.llm_model,
+        "llm_model": row.llm_model or "",
         "llm_api_key_encrypted": row.llm_api_key_encrypted,
         "llm_base_url": row.llm_base_url,
         "max_iterations": row.max_iterations,
         "max_parallel_tools": row.max_parallel_tools,
-        "rate_limit_rpm": row.rate_limit_rpm,
-        "daily_budget_usd": str(row.daily_budget_usd),
-        "a2a_exposed": getattr(row, "a2a_exposed", False),
+        "rate_limit_rpm": row.rate_limit_rpm or 60,
+        "daily_budget_usd": str(row.daily_budget_usd or "0"),
+        "delegatable": delegatable,
+        "is_app_orchestrator": isinstance(row, AppOrchestrator),
         "memory_enabled": getattr(row, "memory_enabled", False),
         "summarize_every_n_calls": getattr(row, "summarize_every_n_calls", 3),
         "memory_raw_fallback_n": getattr(row, "memory_raw_fallback_n", 5),
@@ -150,22 +174,33 @@ async def load_agents(orch, db: AsyncSession) -> list:
         q = q.where(Agent.id.in_(ids))
     agents = list((await db.execute(q.order_by(Agent.slug))).scalars().all())
 
-    # Also include any a2a_exposed orchestrators whose ID is in allowed_agent_ids
+    # Also include any delegatable AppOrchestrators whose ID is in allowed_agent_ids.
+    # Falls back to legacy Orchestrator.a2a_exposed for pre-migration rows.
     if ids:
-        oq = select(Orchestrator).where(
+        # Primary: AppOrchestrator with delegatable=True
+        app_orch_q = select(AppOrchestrator).where(
+            AppOrchestrator.enabled == True,
+            AppOrchestrator.delegatable == True,
+            AppOrchestrator.id.in_(ids),
+            AppOrchestrator.id != orch.id,
+        )
+        agents.extend(list((await db.execute(app_orch_q)).scalars().all()))
+
+        # Fallback: legacy Orchestrator.a2a_exposed (pre-migration rows)
+        legacy_orch_q = select(Orchestrator).where(
             Orchestrator.enabled == True,
             Orchestrator.a2a_exposed == True,
             Orchestrator.id.in_(ids),
             Orchestrator.id != orch.id,
         )
-        agents.extend(list((await db.execute(oq)).scalars().all()))
+        agents.extend(list((await db.execute(legacy_orch_q)).scalars().all()))
 
     return agents
 
 
 async def ensure_agent_skills(agent, db: AsyncSession) -> None:
     """Lazily fetch A2A agent card and populate agent.skills. Never raises."""
-    # Sub-orchestrator pseudo-agents (Orchestrator rows) have no transport attr — skip
+    # Sub-orchestrator pseudo-agents (Orchestrator/AppOrchestrator rows) have no transport attr — skip
     if not hasattr(agent, "transport"):
         return
     from datetime import datetime, timezone
@@ -350,10 +385,14 @@ def agent_to_config(agent) -> AgentConfig:
 
 
 def orch_to_config(orch, price_in: str, price_out: str) -> OrchestratorConfig:
+    # delegatable: AppOrchestrator uses `delegatable`; legacy Orchestrator uses `a2a_exposed`
+    delegatable = getattr(orch, "delegatable", None)
+    if delegatable is None:
+        delegatable = getattr(orch, "a2a_exposed", False)
     return OrchestratorConfig(
         id=str(orch.id),
         name=orch.name,
-        display_name=getattr(orch, "display_name", ""),
+        display_name=getattr(orch, "display_name", "") or "",
         system_prompt=getattr(orch, "system_prompt", "") or "",
         llm_provider=getattr(orch, "llm_provider", "anthropic") or "anthropic",
         llm_model=orch.llm_model or "",
@@ -361,9 +400,9 @@ def orch_to_config(orch, price_in: str, price_out: str) -> OrchestratorConfig:
         llm_base_url=orch.llm_base_url,
         max_iterations=orch.max_iterations,
         max_parallel_tools=orch.max_parallel_tools,
-        rate_limit_rpm=orch.rate_limit_rpm,
-        daily_budget_usd=str(getattr(orch, "daily_budget_usd", "0")),
-        a2a_exposed=getattr(orch, "a2a_exposed", False),
+        rate_limit_rpm=orch.rate_limit_rpm or 60,
+        daily_budget_usd=str(getattr(orch, "daily_budget_usd", "0") or "0"),
+        a2a_exposed=delegatable,
         memory_enabled=getattr(orch, "memory_enabled", False),
         summarize_every_n_calls=getattr(orch, "summarize_every_n_calls", 3),
         memory_raw_fallback_n=getattr(orch, "memory_raw_fallback_n", 5),

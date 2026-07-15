@@ -89,7 +89,11 @@ async def load_orchestration_context_activity(
         if orch is None:
             raise ValueError(f"Orchestrator '{orchestrator_name}' not found or disabled")
 
-        # Token scope check
+        # Token scope check — mirrors apps.py:264.
+        # token.orchestrator_id is a them.orchestrators.id FK (Phase 12 will migrate to
+        # app_orchestrators.id). Until then, scoped tokens are incompatible with app
+        # orchestrators (their UUIDs differ). Unscoped tokens (orchestrator_id=None) pass.
+        # The proxy carries the real orch.id so this works on both ORM rows and cache-hit proxies.
         scoped_orch_id = token_payload.get("orchestrator_id")
         if scoped_orch_id and str(orch.id) != scoped_orch_id:
             raise PermissionError("Token is not authorized for this orchestrator")
