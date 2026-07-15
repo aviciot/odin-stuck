@@ -178,3 +178,19 @@ docker logs them-worker --tail 5   # confirm "temporal_worker: polling"
 **What the migration does:**
 - Drops `them.applications.orchestrator_id` (superseded by `app_orchestrators` per-EP config)
 - Drops `them.orchestrators.a2a_exposed` (superseded by `delegatable` on both tables)
+
+## Graph-Centric Canvas Save (2026-07-15) — COMPLETE
+
+Three canvas UI bugs fixed:
+
+| Bug | Fix |
+|---|---|
+| 3 EPs → 1 orch reloads as 3 orchs | `db/018_graph_compiler.sql`: unique index `(application_id, node_id)` + `app/services/app_compiler.py` upserts by `node_id` |
+| Fresh dragged orch comes pre-filled | Frontend `onDragStart` now passes blank defaults for all orch fields |
+| Validation highlighting missing | `CanvasRule.errorNodeIds()`, `getErrorNodeMap()`, reactive `useEffect`, `_error`/`_shake`/`_errorMsg` flags, `node-error-ring`/`node-shake` CSS |
+
+**New save flow:** `handleSave` sends `graph: {nodes, edges}` directly from React Flow state. `app_compiler.py` validates structure, upserts `app_orchestrators` keyed by node `id`, upserts `entry_points` by slug, replaces `middleware_wirings`. Canvas positions saved as plain node-id keys (backward compat: `buildNodesFromApp` also checks legacy `ep:`/`orch:`/`agent:` prefix keys).
+
+**Export/import/restore:** `GET /{app_id}/export` → portable JSON; `POST /import` → new app; `PUT /{app_id}/restore` → overwrite existing. Round-trip proven.
+
+**Migration 018:** `db/018_graph_compiler.sql` — backfills `node_id`, adds NOT NULL, creates `uq_app_orch_app_node` unique index. Apply after 015.

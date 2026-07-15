@@ -221,6 +221,7 @@ export interface AppOrchestratorOut {
   kind: string;
   budget_tokens: number | null;
   allowed_agent_ids: string[];
+  node_id: string | null;
 }
 
 export interface AppOrchestratorIn {

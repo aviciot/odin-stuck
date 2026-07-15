@@ -363,6 +363,11 @@ class Application(Base):
         cascade="all, delete-orphan",
         foreign_keys="[AppOrchestrator.application_id]",
     )
+    middleware_wirings: Mapped[List["MiddlewareWiring"]] = relationship(
+        "MiddlewareWiring", back_populates="application",
+        cascade="all, delete-orphan",
+        foreign_keys="[MiddlewareWiring.application_id]",
+    )
 
 
 class EntryPoint(Base):
@@ -439,5 +444,9 @@ class MiddlewareWiring(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     definition: Mapped["MiddlewareDef"] = relationship("MiddlewareDef", back_populates="wirings")
+    application: Mapped["Application"] = relationship(
+        "Application", back_populates="middleware_wirings",
+        foreign_keys=[application_id],
+    )
 
 

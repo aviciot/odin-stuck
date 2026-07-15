@@ -1,10 +1,16 @@
 """
 Admin — Applications
 CRUD for them.applications + them.entry_points + them.app_orchestrators.
-One app = parent row (name, presentation).
-N entry points = child rows (slug, type, access_policy, token_limit, enabled).
-Each entry point owns one AppOrchestrator instance (canvas node).
-PATCH sends full desired entry_points array; server diffs atomically.
+
+Two save paths (both compile into the same relational tables):
+  graph  — POST/PATCH with {graph: {nodes, edges}} — preferred, supports shared orchs
+  legacy — POST/PATCH with {entry_points: [...]}   — kept for backward compat
+
+Export/import:
+  GET  /{id}/export          — returns portable {name, graph, canvas} JSON
+  POST /import               — restore from exported JSON (creates new app)
+  PUT  /{id}/restore         — overwrite existing app from exported JSON
+
 Writes flush them:orchestrators:{name} + them:agents:registry on create/update/delete.
 """
 
@@ -24,6 +30,10 @@ from sqlalchemy.orm import selectinload
 import app.database as db_module
 from app.database import get_db
 from app.models import Application, EntryPoint, Orchestrator, MiddlewareWiring, AppOrchestrator
+from app.services.app_compiler import (
+    AppGraph, GraphNode, GraphEdge,
+    validate_graph, compile_graph, export_graph,
+)
 # Note: Orchestrator is imported for _load_all_orch_names shared-namespace uniqueness check only.
 from app.utils.logger import logger
 
@@ -131,16 +141,22 @@ class ApplicationCreate(BaseModel):
     name: str
     presentation: Dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
-    entry_points: List[EntryPointIn] = Field(..., min_length=1)
-    canvas: Optional[Dict[str, Any]] = None  # {layout: {"ep:<slug>": {x,y}, ...}, viewport: {x,y,zoom}}
+    # Preferred: graph-centric save (nodes + edges from React Flow)
+    graph: Optional[AppGraph] = None
+    # Legacy: EP-centric save (kept for backward compat; graph takes priority)
+    entry_points: Optional[List[EntryPointIn]] = None
+    canvas: Optional[Dict[str, Any]] = None
 
 
 class ApplicationUpdate(BaseModel):
     name: Optional[str] = None
     presentation: Optional[Dict[str, Any]] = None
     enabled: Optional[bool] = None
-    entry_points: Optional[List[EntryPointIn]] = None  # None = don't touch; [] = rejected
-    canvas: Optional[Dict[str, Any]] = None  # None = don't touch; partial updates OK
+    # Preferred: graph-centric save
+    graph: Optional[AppGraph] = None
+    # Legacy: EP-centric save
+    entry_points: Optional[List[EntryPointIn]] = None
+    canvas: Optional[Dict[str, Any]] = None
 
 
 class ApplicationOut(BaseModel):
@@ -152,6 +168,7 @@ class ApplicationOut(BaseModel):
     entry_points: List[EntryPointOut]
     app_orchestrators: List[AppOrchestratorOut] = Field(default_factory=list)
     canvas: Optional[Dict[str, Any]] = None
+    graph: Optional[Dict[str, Any]] = None   # nodes+edges representation (export-friendly)
     created_at: datetime
     updated_at: datetime
 
@@ -218,6 +235,7 @@ async def _get_or_404(db: AsyncSession, app_id: uuid.UUID) -> Application:
         .options(
             selectinload(Application.entry_points).selectinload(EntryPoint.app_orchestrator),
             selectinload(Application.app_orchestrators),
+            selectinload(Application.middleware_wirings),
         )
     )
     row = result.scalar_one_or_none()
@@ -299,6 +317,13 @@ def _to_out(app: Application) -> ApplicationOut:
             app_orchestrator=ao_out,
         ))
     ao_list = [_app_orch_out(ao) for ao in (app.app_orchestrators or [])]
+    # Include graph representation for export/reload
+    graph_out = export_graph(
+        entry_points=list(app.entry_points),
+        ao_list=list(app.app_orchestrators or []),
+        mw_wirings=list(app.middleware_wirings if hasattr(app, 'middleware_wirings') else []),
+        canvas=app.canvas,
+    )
     return ApplicationOut(
         id=app.id,
         name=app.name,
@@ -308,6 +333,7 @@ def _to_out(app: Application) -> ApplicationOut:
         entry_points=ep_outs,
         app_orchestrators=ao_list,
         canvas=app.canvas,
+        graph=graph_out,
         created_at=app.created_at,
         updated_at=app.updated_at,
     )
@@ -463,6 +489,10 @@ async def _apply_entry_point_diff(
                         await db.delete(ao)
             await db.delete(ep)
 
+    # node_id → AppOrchestrator: tracks AOs created in this transaction so multiple
+    # new EPs pointing to the same canvas orch node share one DB row
+    node_id_to_ao: dict[str, AppOrchestrator] = {}
+
     # Update existing (by slug) or create new
     for ep_in in desired:
         ep = existing.get(ep_in.slug)
@@ -481,9 +511,60 @@ async def _apply_entry_point_diff(
                 await db.flush()
                 ep.app_orchestrator_id = ao.id
         else:
-            # Create AppOrchestrator first, then EP
+            # New EP — two ways to reuse an existing AppOrchestrator:
+            # 1. appOrchestratorId is set (update: EP is new but orch already exists in DB)
+            # 2. node_id matches a canvas node we already created an AO for (create: multiple EPs share one canvas orch node)
+
+            # Path 1: explicit AO id — orch row already exists in DB
+            shared_ao_id: Optional[uuid.UUID] = None
+            if ep_in.orchestrator and ep_in.orchestrator.id:
+                try:
+                    shared_ao_id = uuid.UUID(str(ep_in.orchestrator.id))
+                except (ValueError, AttributeError):
+                    pass
+
+            if shared_ao_id is not None:
+                result = await db.execute(
+                    select(AppOrchestrator).where(
+                        AppOrchestrator.id == shared_ao_id,
+                        AppOrchestrator.application_id == app.id,
+                    )
+                )
+                existing_ao = result.scalar_one_or_none()
+                if existing_ao is not None:
+                    _update_app_orchestrator(existing_ao, ep_in.orchestrator)
+                    db.add(EntryPoint(
+                        application_id=app.id,
+                        slug=ep_in.slug,
+                        entry_point_type=ep_in.entry_point_type,
+                        access_policy=ep_in.access_policy,
+                        conversation_token_limit=ep_in.conversation_token_limit,
+                        enabled=ep_in.enabled,
+                        app_orchestrator_id=existing_ao.id,
+                    ))
+                    continue
+
+            # Path 2: node_id deduplication — multiple new EPs share the same canvas orch node
+            # node_id_to_ao accumulates AOs created in this transaction keyed by canvas node id
+            node_id = ep_in.orchestrator.node_id if ep_in.orchestrator else None
+            if node_id and node_id in node_id_to_ao:
+                ao = node_id_to_ao[node_id]
+                db.add(EntryPoint(
+                    application_id=app.id,
+                    slug=ep_in.slug,
+                    entry_point_type=ep_in.entry_point_type,
+                    access_policy=ep_in.access_policy,
+                    conversation_token_limit=ep_in.conversation_token_limit,
+                    enabled=ep_in.enabled,
+                    app_orchestrator_id=ao.id,
+                ))
+                continue
+
+            # No existing AO to reuse — create a fresh one
             ao = await _create_app_orchestrator(db, app.id, ep_in, ep_in.slug, all_names)
             await db.flush()  # get ao.id
+            if node_id:
+                node_id_to_ao[node_id] = ao
             db.add(EntryPoint(
                 application_id=app.id,
                 slug=ep_in.slug,
@@ -520,9 +601,6 @@ async def list_applications(
 
 @router.post("", response_model=ApplicationOut, status_code=status.HTTP_201_CREATED)
 async def create_application(body: ApplicationCreate, db: AsyncSession = Depends(get_db)):
-    _validate_entry_points(body.entry_points)
-    await _check_slug_conflicts(db, [ep.slug for ep in body.entry_points])
-
     app = Application(
         name=body.name,
         presentation=body.presentation,
@@ -532,28 +610,33 @@ async def create_application(body: ApplicationCreate, db: AsyncSession = Depends
     db.add(app)
     await db.flush()  # get app.id before inserting children
 
-    # Load existing orchestrator names for uniqueness checks (shared namespace)
     all_names = await _load_all_orch_names(db)
 
-    for ep_in in body.entry_points:
-        # Create AppOrchestrator instance for this entry point
-        ao = await _create_app_orchestrator(db, app.id, ep_in, ep_in.slug, all_names)
-        await db.flush()  # get ao.id
-        db.add(EntryPoint(
-            application_id=app.id,
-            slug=ep_in.slug,
-            entry_point_type=ep_in.entry_point_type,
-            access_policy=ep_in.access_policy,
-            conversation_token_limit=ep_in.conversation_token_limit,
-            enabled=ep_in.enabled,
-            app_orchestrator_id=ao.id,
-        ))
+    if body.graph is not None:
+        # ── Graph path (preferred) ────────────────────────────────────────────
+        validate_graph(body.graph)
+        touched = await compile_graph(
+            db=db,
+            app_id=app.id,
+            graph=body.graph,
+            all_orch_names=all_names,
+            existing_entry_points=[],
+            existing_ao_list=[],
+        )
+    elif body.entry_points is not None:
+        # ── Legacy EP-centric path ────────────────────────────────────────────
+        if len(body.entry_points) == 0:
+            raise HTTPException(422, "entry_points must not be empty")
+        _validate_entry_points(body.entry_points)
+        await _check_slug_conflicts(db, [ep.slug for ep in body.entry_points])
+        await _apply_entry_point_diff(db, app, body.entry_points, all_names)
+        touched = []
+    else:
+        raise HTTPException(422, "Provide either 'graph' or 'entry_points'")
 
     await db.commit()
-    await db.refresh(app)
-    # reload with children (eager load AppOrchestrators + EP.app_orchestrator)
     app = await _get_or_404(db, app.id)
-    await _flush_orch_caches([ao.name for ao in app.app_orchestrators])
+    await _flush_orch_caches(touched or [ao.name for ao in app.app_orchestrators])
     logger.info("application created", app_id=str(app.id), name=body.name,
                 slugs=[ep.slug for ep in app.entry_points])
     return _to_out(app)
@@ -579,24 +662,36 @@ async def update_application(
         app.presentation = body.presentation
     if body.enabled is not None:
         app.enabled = body.enabled
+    if body.canvas is not None:
+        app.canvas = body.canvas
 
-    if body.entry_points is not None:
+    touched: list[str] = []
+
+    if body.graph is not None:
+        # ── Graph path (preferred) ────────────────────────────────────────────
+        validate_graph(body.graph)
+        all_names = await _load_all_orch_names(db)
+        touched = await compile_graph(
+            db=db,
+            app_id=app.id,
+            graph=body.graph,
+            all_orch_names=all_names,
+            existing_entry_points=list(app.entry_points),
+            existing_ao_list=list(app.app_orchestrators),
+            exclude_app_id=app_id,
+        )
+    elif body.entry_points is not None:
+        # ── Legacy EP-centric path ────────────────────────────────────────────
         if len(body.entry_points) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="entry_points must not be empty — an app requires at least one entry point",
-            )
+            raise HTTPException(422, "entry_points must not be empty")
         _validate_entry_points(body.entry_points)
         await _check_slug_conflicts(db, [ep.slug for ep in body.entry_points], exclude_app_id=app_id)
         all_names = await _load_all_orch_names(db)
         await _apply_entry_point_diff(db, app, body.entry_points, all_names)
 
-    if body.canvas is not None:
-        app.canvas = body.canvas
-
     await db.commit()
     app = await _get_or_404(db, app_id)
-    await _flush_orch_caches([ao.name for ao in app.app_orchestrators])
+    await _flush_orch_caches(touched or [ao.name for ao in app.app_orchestrators])
     logger.info("application updated", app_id=str(app_id), name=app.name,
                 slugs=[ep.slug for ep in app.entry_points])
     return _to_out(app)
@@ -611,6 +706,122 @@ async def delete_application(app_id: uuid.UUID, db: AsyncSession = Depends(get_d
     await db.commit()
     await _flush_orch_caches(orch_names_to_flush)
     logger.info("application deleted", app_id=str(app_id), name=name)
+
+
+# ------------------------------------------------------------------ #
+# Export / Import / Restore                                           #
+# ------------------------------------------------------------------ #
+
+class ApplicationExport(BaseModel):
+    """Portable application snapshot. Can be used to restore or clone an app."""
+    name: str
+    presentation: Dict[str, Any] = Field(default_factory=dict)
+    graph: Dict[str, Any]   # {nodes, edges, canvas}
+    canvas: Optional[Dict[str, Any]] = None
+
+
+@router.get("/{app_id}/export", response_model=ApplicationExport)
+async def export_application(app_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    Export application as a portable JSON snapshot.
+    The returned JSON can be POSTed to /import or PUT to /{id}/restore.
+    """
+    app = await _get_or_404(db, app_id)
+    graph_out = export_graph(
+        entry_points=list(app.entry_points),
+        ao_list=list(app.app_orchestrators or []),
+        mw_wirings=list(app.middleware_wirings if hasattr(app, 'middleware_wirings') else []),
+        canvas=app.canvas,
+    )
+    return ApplicationExport(
+        name=app.name,
+        presentation=app.presentation or {},
+        graph=graph_out,
+        canvas=app.canvas,
+    )
+
+
+@router.post("/import", response_model=ApplicationOut, status_code=status.HTTP_201_CREATED)
+async def import_application(body: ApplicationExport, db: AsyncSession = Depends(get_db)):
+    """
+    Create a new application from an exported JSON snapshot.
+    This proves the graph round-trip: export → delete → import → app works identically.
+    """
+    graph_data = body.graph
+    graph = AppGraph(
+        nodes=[GraphNode(**n) for n in graph_data.get("nodes", [])],
+        edges=[GraphEdge(**e) for e in graph_data.get("edges", [])],
+    )
+    validate_graph(graph)
+
+    app = Application(
+        name=body.name,
+        presentation=body.presentation,
+        enabled=True,
+        canvas=body.canvas or graph_data.get("canvas"),
+    )
+    db.add(app)
+    await db.flush()
+
+    all_names = await _load_all_orch_names(db)
+    touched = await compile_graph(
+        db=db,
+        app_id=app.id,
+        graph=graph,
+        all_orch_names=all_names,
+        existing_entry_points=[],
+        existing_ao_list=[],
+    )
+
+    await db.commit()
+    app = await _get_or_404(db, app.id)
+    await _flush_orch_caches(touched)
+    logger.info("application imported", app_id=str(app.id), name=body.name)
+    return _to_out(app)
+
+
+@router.put("/{app_id}/restore", response_model=ApplicationOut)
+async def restore_application(
+    app_id: uuid.UUID,
+    body: ApplicationExport,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Overwrite an existing application from an exported JSON snapshot.
+    Completely replaces all orchestrators, entry points, and middleware.
+    """
+    app = await _get_or_404(db, app_id)
+
+    graph_data = body.graph
+    graph = AppGraph(
+        nodes=[GraphNode(**n) for n in graph_data.get("nodes", [])],
+        edges=[GraphEdge(**e) for e in graph_data.get("edges", [])],
+    )
+    validate_graph(graph)
+
+    if body.name:
+        app.name = body.name
+    if body.presentation:
+        app.presentation = body.presentation
+    if body.canvas or graph_data.get("canvas"):
+        app.canvas = body.canvas or graph_data.get("canvas")
+
+    all_names = await _load_all_orch_names(db)
+    touched = await compile_graph(
+        db=db,
+        app_id=app.id,
+        graph=graph,
+        all_orch_names=all_names,
+        existing_entry_points=list(app.entry_points),
+        existing_ao_list=list(app.app_orchestrators),
+        exclude_app_id=app_id,
+    )
+
+    await db.commit()
+    app = await _get_or_404(db, app_id)
+    await _flush_orch_caches(touched)
+    logger.info("application restored", app_id=str(app_id), name=app.name)
+    return _to_out(app)
 
 
 # ------------------------------------------------------------------ #

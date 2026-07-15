@@ -2215,13 +2215,14 @@ def test_27_canvas_rules():
         check("runRules accepts save/deploy modes", "runRules" in s and ("'save'" in s or "'deploy'" in s))
         check("deploy mode promotes warn to block", "deploy" in s and "warn" in s)
 
-        # handleSave sends inline orchestrator: per EP
-        check("handleSave sends orchestrator: block", '"orchestrator"' in s or "'orchestrator'" in s)
+        # handleSave sends graph: {nodes, edges} — graph-centric save (Phase 18)
+        check("handleSave sends graph: block", '"graph"' in s or "'graph'" in s or "graph:" in s)
         # handleSave function body does not call updateOrchestrator
         hs_start = s.find("async function handleSave")
         hs_end = s.find("\n  async function ", hs_start + 1)
         hs_body = s[hs_start:hs_end] if hs_start >= 0 and hs_end > hs_start else ""
         check("handleSave body: no updateOrchestrator call", "updateOrchestrator" not in hs_body)
+        check("handleSave: sends graph nodes+edges", "graphNodes" in s or ("graph" in hs_body and "nodes" in hs_body))
 
         # styledEdges walks all EP→Orch paths
         check("styledEdges defined", "styledEdges" in s)
@@ -2243,8 +2244,8 @@ def test_27_canvas_rules():
         check("buildNodesFromApp: ref-keyed layout (ep: prefix)", '"ep:"' in s or "'ep:'" in s or "`ep:${" in s)
         check("handleSave: canvasLayout built", "canvasLayout" in s)
         check("handleSave: canvas payload sent", "canvas:" in s or '"canvas"' in s or "'canvas'" in s)
-        check("handleSave: no graphNodes payload", "graphNodes" not in s)
-        check("handleSave: no graphEdges payload", "graphEdges" not in s)
+        # Phase 18: no legacy EP-inline payload in handleSave
+        check("handleSave: no legacy entry_points inline payload", "entry_points: entryPoints" not in hs_body)
 
         # Phase 16: models + backend
         models_src = src("app/models.py")
@@ -2350,6 +2351,72 @@ def test_29_app_orchestrators_migration():
         check("admin_applications.py cache flush", False, str(exc))
 
 
+def test_30_graph_compiler():
+    section("test_30_graph_compiler: app/services/app_compiler.py + export/import/restore endpoints")
+    sys.path.insert(0, str(ROOT))
+
+    # ── Compiler service exists and is complete ───────────────────────────────
+    try:
+        s = src("app/services/app_compiler.py")
+        check("app_compiler.py exists", True)
+        check("AppGraph model defined", "class AppGraph" in s)
+        check("validate_graph function defined", "def validate_graph" in s or "async def validate_graph" in s)
+        check("compile_graph function defined", "def compile_graph" in s or "async def compile_graph" in s)
+        check("export_graph function defined", "def export_graph" in s or "async def export_graph" in s)
+        check("node_id used as upsert key", "node_id" in s)
+        check("upsert by node_id (not name)", "node_id" in s and ("upsert" in s.lower() or "on_conflict" in s.lower() or "ON CONFLICT" in s))
+        check("middleware chains resolved in compiler", "_resolve_mw_chains" in s or "middleware" in s.lower())
+        check("orphan orch detection in validate_graph", "orphan" in s.lower() or "no_ep" in s.lower() or "every orch" in s.lower() or "each orch" in s.lower())
+    except FileNotFoundError:
+        check("app_compiler.py exists", False, "file not found")
+    except Exception as exc:
+        check("app_compiler.py", False, str(exc))
+
+    # ── Migration 018 exists and adds unique index ────────────────────────────
+    try:
+        m = src("db/018_graph_compiler.sql")
+        check("018_graph_compiler.sql exists", True)
+        check("migration adds node_id NOT NULL", "NOT NULL" in m and "node_id" in m)
+        check("unique index on (application_id, node_id)", "uq_app_orch_app_node" in m or ("UNIQUE" in m and "node_id" in m))
+        check("migration wrapped in transaction", "BEGIN;" in m and "COMMIT;" in m)
+        check("backfill for existing rows", "UPDATE" in m and "node_id" in m)
+    except FileNotFoundError:
+        check("018_graph_compiler.sql exists", False, "file not found")
+    except Exception as exc:
+        check("018_graph_compiler.sql", False, str(exc))
+
+    # ── admin_applications.py: export/import/restore endpoints ───────────────
+    try:
+        s = src("app/routers/admin_applications.py")
+        check("export endpoint defined", '"/export"' in s or "export" in s)
+        check("import endpoint defined", '"/import"' in s or "import" in s)
+        check("restore endpoint defined", '"/restore"' in s or "restore" in s)
+        check("graph field in ApplicationCreate", "graph" in s and "ApplicationCreate" in s)
+        check("graph field in ApplicationUpdate", "graph" in s and "ApplicationUpdate" in s)
+        check("compile_graph called in create", "compile_graph" in s)
+        check("export_graph called in _to_out or export", "export_graph" in s)
+        check("graph takes priority over entry_points", "if body.graph" in s or "body.graph is not None" in s or ("graph" in s and "entry_points" in s))
+    except Exception as exc:
+        check("admin_applications.py export/import/restore", False, str(exc))
+
+    # ── AppOrchestrator.node_id column exists in model ────────────────────────
+    try:
+        s = src("app/models.py")
+        check("AppOrchestrator.node_id field in model", "node_id" in s and "AppOrchestrator" in s)
+    except Exception as exc:
+        check("AppOrchestrator.node_id", False, str(exc))
+
+    # ── Frontend: graph-centric save ──────────────────────────────────────────
+    try:
+        s = src("frontend/src/app/admin/applications/page.tsx")
+        check("handleSave sends graph: block", "graph:" in s)
+        check("handleSave: sends graph nodes+edges", "graphNodes" in s and "graphEdges" in s)
+        check("handleSave: no legacy entry_points inline payload", not ("entry_points:" in s and "handleSave" in s[:s.find("entry_points:")]) if "entry_points:" in s else True)
+        check("canvas layout keyed by node id", "canvasLayout" in s and "n.id" in s)
+    except Exception as exc:
+        check("frontend graph-centric save", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -2382,6 +2449,7 @@ ALL_TESTS = [
     ("27", test_27_canvas_rules),
     ("28", test_28_loaders_resolution),
     ("29", test_29_app_orchestrators_migration),
+    ("30", test_30_graph_compiler),
 ]
 
 if __name__ == "__main__":

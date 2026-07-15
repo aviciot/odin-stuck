@@ -202,6 +202,24 @@ const CANVAS_STYLES = `
     0%, 100% { box-shadow: 0 0 0 0 rgba(0,240,255,0.4); }
     50% { box-shadow: 0 0 0 5px rgba(0,240,255,0); }
   }
+  @keyframes nodeShake {
+    0%, 100% { transform: translateX(0); }
+    15% { transform: translateX(-6px); }
+    30% { transform: translateX(6px); }
+    45% { transform: translateX(-4px); }
+    60% { transform: translateX(4px); }
+    75% { transform: translateX(-2px); }
+    90% { transform: translateX(2px); }
+  }
+  .node-error-ring {
+    outline: 2px solid rgba(248,113,113,0.85) !important;
+    outline-offset: 3px;
+    border-radius: 50% !important;
+    box-shadow: 0 0 14px rgba(248,113,113,0.45) !important;
+  }
+  .node-shake {
+    animation: nodeShake 0.6s ease-in-out;
+  }
   .react-flow__node.selected .react-flow__handle {
     animation: handlePulse 1.2s ease-in-out infinite;
   }
@@ -306,13 +324,15 @@ function InternalMBadge() {
 }
 
 // EntryPointNode — icon-only, transparent, name below
-function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean }; selected?: boolean }) {
+function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
   const slugMissing = !data.slug;
-  const accent = slugMissing ? '#f59e0b' : C.cyan;
+  const hasError = data._error || data._shake;
+  const accent = hasError ? '#f87171' : slugMissing ? '#f59e0b' : C.cyan;
   const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2' };
   const msIcon = EP_MS_ICON[data.epType] ?? 'bolt';
   return (
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
       {selected && (
         <button
           className="nodrag"
@@ -328,14 +348,16 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
           title="Delete node (or press Delete key)"
         >✕</button>
       )}
-      <div style={{
-        width: 56, height: 56, borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: selected ? `rgba(0,240,255,0.10)` : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
-        border: selected ? `2px solid ${accent}` : '2px solid transparent',
-        boxShadow: selected ? `0 0 14px rgba(0,240,255,0.35), inset 0 0 8px rgba(0,240,255,0.08)` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
-        transition: 'all 0.18s ease',
-      }}>
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? `rgba(0,240,255,0.10)` : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: selected ? `0 0 14px rgba(0,240,255,0.35), inset 0 0 8px rgba(0,240,255,0.08)` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+          transition: 'all 0.18s ease',
+        }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{msIcon}</span>
       </div>
       <div style={{ marginTop: 6, textAlign: 'center' }}>
@@ -356,13 +378,15 @@ function EntryPointNode({ id, data, selected }: { id: string; data: EntryPointDa
 const INTERNAL_ORCHESTRATOR_NAMES = new Set(['workflow_advisor']);
 
 // OrchestratorNode — icon-only, transparent, name below
-function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData & { _scanning?: boolean }; selected?: boolean }) {
+function OrchestratorNode({ id, data, selected }: { id: string; data: OrchestratorData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
   const isInternal = INTERNAL_ORCHESTRATOR_NAMES.has(data.name);
-  const accent = isInternal ? '#a0f0d0' : C.purple;
+  const hasError = data._error || data._shake;
+  const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.purple;
   const selGlow = isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(208,188,255,0.35)';
   const selBg   = isInternal ? 'rgba(160,240,208,0.10)' : 'rgba(208,188,255,0.10)';
   return (
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
       {selected && (
         <button
           className="nodrag"
@@ -379,14 +403,16 @@ function OrchestratorNode({ id, data, selected }: { id: string; data: Orchestrat
         >✕</button>
       )}
       <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
-      <div style={{
-        width: 56, height: 56, borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
-        border: selected ? `2px solid ${accent}` : '2px solid transparent',
-        boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
-        transition: 'all 0.18s ease',
-      }}>
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+          transition: 'all 0.18s ease',
+        }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>hub</span>
       </div>
       <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 120 }}>
@@ -400,14 +426,16 @@ function OrchestratorNode({ id, data, selected }: { id: string; data: Orchestrat
 }
 
 // AgentNode — icon-only, transparent, name below; uses actual agent icon field first
-function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean }; selected?: boolean }) {
+function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
   const isInternal = data.tags?.includes('internal') ?? false;
-  const accent = isInternal ? '#a0f0d0' : C.green;
+  const hasError = data._error || data._shake;
+  const accent = hasError ? '#f87171' : isInternal ? '#a0f0d0' : C.green;
   const selGlow = isInternal ? 'rgba(160,240,208,0.35)' : 'rgba(74,222,128,0.35)';
   const selBg   = isInternal ? 'rgba(160,240,208,0.10)' : 'rgba(74,222,128,0.10)';
   const icon = data.icon || agentIconForLibrary({ slug: data.name, icon: data.icon } as any);
   return (
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
       {selected && (
         <button
           className="nodrag"
@@ -424,14 +452,16 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
         >✕</button>
       )}
       <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
-      <div style={{
-        width: 56, height: 56, borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
-        border: selected ? `2px solid ${accent}` : '2px solid transparent',
-        boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
-        transition: 'all 0.18s ease',
-      }}>
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? selBg : data._scanning ? 'rgba(0,240,255,0.08)' : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? '0 0 20px rgba(0,240,255,0.5)' : 'none',
+          transition: 'all 0.18s ease',
+        }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
       </div>
       <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
@@ -444,13 +474,15 @@ function AgentNode({ id, data, selected }: { id: string; data: AgentData & { _sc
 }
 
 // MiddlewareNode — amber-colored, shield for guard / bolt for cache
-function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareData & { _scanning?: boolean }; selected?: boolean }) {
-  const accent = C.amber;
+function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareData & { _scanning?: boolean; _error?: boolean; _shake?: boolean; _errorMsg?: string }; selected?: boolean }) {
+  const hasError = data._error || data._shake;
+  const accent = hasError ? '#f87171' : C.amber;
   const selGlow = 'rgba(245,158,11,0.35)';
   const selBg   = 'rgba(245,158,11,0.10)';
   const icon = data.kind === 'guard' ? 'shield' : 'bolt';
   return (
-    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}
+      title={data._errorMsg || undefined}>
       {selected && (
         <button
           className="nodrag"
@@ -467,14 +499,16 @@ function MiddlewareNode({ id, data, selected }: { id: string; data: MiddlewareDa
         >✕</button>
       )}
       <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
-      <div style={{
-        width: 56, height: 56, borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: selected ? selBg : data._scanning ? 'rgba(245,158,11,0.08)' : 'transparent',
-        border: selected ? `2px solid ${accent}` : '2px solid transparent',
-        boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
-        transition: 'all 0.18s ease',
-      }}>
+      <div
+        className={`${hasError ? 'node-error-ring' : ''} ${data._shake ? 'node-shake' : ''}`}
+        style={{
+          width: 56, height: 56, borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: selected ? selBg : data._scanning ? 'rgba(245,158,11,0.08)' : 'transparent',
+          border: selected ? `2px solid ${accent}` : hasError ? '2px solid #f87171' : '2px solid transparent',
+          boxShadow: selected ? `0 0 14px ${selGlow}, inset 0 0 8px ${selGlow}` : data._scanning ? C.amberGlow : 'none',
+          transition: 'all 0.18s ease',
+        }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent, transition: 'all 0.18s' }}>{icon}</span>
       </div>
       <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 110 }}>
@@ -551,15 +585,17 @@ function buildNodesFromApp(
   // Track which agent node ids have been emitted (agent_{agentId}_{aoId})
   const emittedAgentNodeIds = new Set<string>();
 
-  // Helper: get saved position or null (dagre will fill in missing ones)
-  const pos = (key: string) => layout[key] ?? null;
+  // Helper: get saved position or null (dagre will fill in missing ones).
+  // Checks plain node-id key first (new format), then legacy prefixed key.
+  const pos = (nodeId: string, legacyKey?: string) =>
+    layout[nodeId] ?? (legacyKey ? layout[legacyKey] : null) ?? null;
 
   // One EP node per entry-point row
   app.entry_points.forEach((ep, idx) => {
     const epId = `ep_${ep.slug}`;
     nodes.push({
       id: epId, type: 'entryPoint',
-      position: pos(`ep:${ep.slug}`) ?? { x: 150 + idx * 240, y: 60 },
+      position: pos(epId, `ep:${ep.slug}`) ?? { x: 150 + idx * 240, y: 60 },
       data: {
         label: app.name,
         epType: (ep.entry_point_type as EntryPointType) ?? 'websocket',
@@ -582,7 +618,7 @@ function buildNodesFromApp(
         if (ao) {
           nodes.push({
             id: orchNodeId, type: 'orchestrator',
-            position: pos(`orch:${aoId}`) ?? { x: 250, y: 220 },
+            position: pos(orchNodeId, `orch:${aoId}`) ?? (ao.node_id ? pos(ao.node_id, `orch:${ao.node_id}`) : null) ?? { x: 250, y: 220 },
             data: {
               appOrchestratorId: ao.id,
               orchestratorId: ao.id,
@@ -612,7 +648,7 @@ function buildNodesFromApp(
               emittedAgentNodeIds.add(agentNodeId);
               nodes.push({
                 id: agentNodeId, type: 'agent',
-                position: pos(`agent:${agent.id}`) ?? { x: startX + i * 190, y: 420 },
+                position: pos(agentNodeId, `agent:${agent.id}`) ?? { x: startX + i * 190, y: 420 },
                 data: {
                   agentId: agent.id,
                   name: agent.slug,
@@ -780,11 +816,11 @@ function NodeLibrary({ agents, middlewareDefs, width, onWidthChange }: {
                   draggable
                   onDragStart={e => dragItem(e, 'orchestrator', {
                     orchestratorId: null, appOrchestratorId: null,
-                    name: '', displayName: 'New Orchestrator',
-                    model: 'claude-sonnet-4-6', maxParallelTools: 3,
+                    name: '', displayName: '',
                     systemPrompt: '', allowedAgentIds: [],
-                    llmProvider: 'anthropic', llmModel: 'claude-sonnet-4-6',
-                    maxIterations: 10, historyWindow: 20,
+                    llmProvider: '', llmModel: '',
+                    maxIterations: null, historyWindow: null,
+                    maxParallelTools: null,
                     delegatable: false, kind: 'standard', budgetTokens: null,
                   })}
                   style={{ ...itemStyle, background: C.purpleBg, borderColor: 'rgba(208,188,255,0.2)', marginBottom: 0 }}
@@ -2012,6 +2048,8 @@ interface CanvasRule {
   id: string;
   severity: RuleSeverity;
   message: (ctx: { nodes: Node[]; edges: Edge[] }) => string | null; // null = rule passes
+  // Returns the IDs of nodes that violate this rule (for red-ring highlighting)
+  errorNodeIds?: (ctx: { nodes: Node[]; edges: Edge[] }) => string[];
 }
 
 const CANVAS_RULES: CanvasRule[] = [
@@ -2028,6 +2066,8 @@ const CANVAS_RULES: CanvasRule[] = [
       const bad = nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug);
       return bad.length > 0 ? 'Every entry point needs a slug' : null;
     },
+    errorNodeIds: ({ nodes }) =>
+      nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug).map(n => n.id),
   },
   {
     id: 'EP_SLUG_UNIQUE',
@@ -2035,6 +2075,14 @@ const CANVAS_RULES: CanvasRule[] = [
     message: ({ nodes }) => {
       const slugs = nodes.filter(n => n.type === 'entryPoint').map(n => (n.data as EntryPointData).slug ?? '').filter(s => s !== '');
       return new Set(slugs).size !== slugs.length ? 'Duplicate entry point slug — each slug must be unique' : null;
+    },
+    errorNodeIds: ({ nodes }) => {
+      const seen = new Set<string>(); const dupes = new Set<string>();
+      nodes.filter(n => n.type === 'entryPoint').forEach(n => {
+        const s = (n.data as EntryPointData).slug ?? '';
+        if (s) { if (seen.has(s)) dupes.add(s); else seen.add(s); }
+      });
+      return nodes.filter(n => n.type === 'entryPoint' && dupes.has((n.data as EntryPointData).slug ?? '')).map(n => n.id);
     },
   },
   {
@@ -2044,6 +2092,8 @@ const CANVAS_RULES: CanvasRule[] = [
       const bad = nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug?.match(/^[a-z0-9_-]{1,64}$/));
       return bad.length > 0 ? `Slug "${(bad[0].data as EntryPointData).slug}": lowercase letters, numbers, _ or - only` : null;
     },
+    errorNodeIds: ({ nodes }) =>
+      nodes.filter(n => n.type === 'entryPoint' && !(n.data as EntryPointData).slug?.match(/^[a-z0-9_-]{1,64}$/)).map(n => n.id),
   },
   {
     id: 'EP_HAS_ORCH',
@@ -2053,6 +2103,8 @@ const CANVAS_RULES: CanvasRule[] = [
       const unconnected = epNodes.filter(ep => !edges.some(e => e.source === ep.id && nodes.find(n => n.id === e.target && n.type === 'orchestrator')));
       return unconnected.length > 0 ? 'Every entry point must connect to an orchestrator' : null;
     },
+    errorNodeIds: ({ nodes, edges }) =>
+      nodes.filter(n => n.type === 'entryPoint' && !edges.some(e => e.source === n.id && nodes.find(m => m.id === e.target && m.type === 'orchestrator'))).map(n => n.id),
   },
   {
     id: 'ORCH_HAS_AGENT',
@@ -2062,8 +2114,26 @@ const CANVAS_RULES: CanvasRule[] = [
       const empty = orchNodes.filter(o => !edges.some(e => e.source === o.id && nodes.find(n => n.id === e.target && n.type === 'agent')));
       return empty.length > 0 ? `${empty.length} orchestrator${empty.length > 1 ? 's have' : ' has'} no agents` : null;
     },
+    errorNodeIds: ({ nodes, edges }) =>
+      nodes.filter(n => n.type === 'orchestrator' && !edges.some(e => e.source === n.id && nodes.find(m => m.id === e.target && m.type === 'agent'))).map(n => n.id),
   },
 ];
+
+// Returns a map of nodeId → error message for all currently violated rules
+function getErrorNodeMap(nodes: Node[], edges: Edge[]): Map<string, string> {
+  const ctx = { nodes, edges };
+  const result = new Map<string, string>();
+  for (const rule of CANVAS_RULES) {
+    const msg = rule.message(ctx);
+    if (msg && rule.errorNodeIds) {
+      const ids = rule.errorNodeIds(ctx);
+      for (const id of ids) {
+        if (!result.has(id)) result.set(id, msg); // first rule wins for tooltip
+      }
+    }
+  }
+  return result;
+}
 
 function runRules(nodes: Node[], edges: Edge[], mode: 'save' | 'deploy'): { ok: boolean; message: string | null; warnings: string[] } {
   const ctx = { nodes, edges };
@@ -2277,6 +2347,24 @@ function BuilderView({
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [isDirty]);
+
+  // Reactive validation: inject _error/_errorMsg on problem nodes whenever the
+  // canvas structure changes. We derive a stable key from fields that affect rules
+  // (slugs, node types, edges) so we don't re-run on every minor data change.
+  const validationKey = JSON.stringify([
+    edges.map(e => `${e.source}->${e.target}`).sort(),
+    nodes.map(n => `${n.id}:${n.type}:${(n.data as Record<string, unknown>).slug ?? ''}`).sort(),
+  ]);
+  useEffect(() => {
+    const errorMap = getErrorNodeMap(nodesRef.current, edgesRef.current);
+    setNodes(nds => nds.map(n => {
+      const msg = errorMap.get(n.id);
+      const hasError = msg !== undefined;
+      if (hasError === Boolean(n.data._error) && (n.data._errorMsg ?? '') === (msg ?? '')) return n;
+      return { ...n, data: { ...n.data, _error: hasError || undefined, _errorMsg: msg ?? undefined } };
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validationKey]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -2621,83 +2709,45 @@ function BuilderView({
 
   async function handleSave(deploy = false) {
     const validation = runRules(nodes, edges, deploy ? 'deploy' : 'save');
-    if (!validation.ok) { showToast(validation.message!, false); triggerLogo('error', 1800); return; }
+    if (!validation.ok) {
+      showToast(validation.message!, false);
+      triggerLogo('error', 1800);
+      // Shake problem nodes and show per-node error tooltip
+      const errorMap = getErrorNodeMap(nodes, edges);
+      if (errorMap.size > 0) {
+        setNodes(nds => nds.map(n => {
+          const msg = errorMap.get(n.id);
+          if (!msg) return n;
+          return { ...n, data: { ...n.data, _error: true, _shake: true, _errorMsg: msg } };
+        }));
+        setTimeout(() => {
+          setNodes(nds => nds.map(n => n.data._shake ? { ...n, data: { ...n.data, _shake: undefined } } : n));
+        }, 650);
+      }
+      return;
+    }
 
-    // Collect all EP nodes + their connected orch nodes
-    const epPairs = nodes
-      .filter((n: Node) => n.type === 'entryPoint')
-      .map((epNode: Node) => {
-        const orchEdge = edges.find((e: Edge) => e.source === epNode.id && nodes.some(n => n.id === e.target && n.type === 'orchestrator'));
-        const orchNode = orchEdge ? nodes.find((n: Node) => n.id === orchEdge.target) : undefined;
-        return orchNode ? { epNode, orchNode } : null;
-      })
-      .filter(Boolean) as { epNode: Node; orchNode: Node }[];
-
-    if (epPairs.length === 0) { showToast('Connect entry points to orchestrators', false); return; }
+    // Collect EP nodes — need at least one connected to an orch for name resolution
+    const epNodes = nodes.filter((n: Node) => n.type === 'entryPoint');
+    if (epNodes.length === 0) { showToast('Drop an Entry Point to start', false); return; }
+    const firstSlug = (epNodes[0].data as EntryPointData).slug || '';
+    const resolvedName = appName.trim() || firstSlug;
 
     setSaving(true);
     setLogoState('thinking');
     try {
-      // Build entry_points array with inline orchestrator config per EP
-      const entryPoints = epPairs.map(({ epNode, orchNode }) => {
-        const d = epNode.data as EntryPointData;
-        const od = orchNode.data as OrchestratorData;
-        const limit = d.convTokenLimit !== undefined && d.convTokenLimit !== '' ? parseInt(d.convTokenLimit, 10) : null;
-
-        // Collect agent ids from outgoing Orch→Agent edges
-        const agentIds = edges
-          .filter((e: Edge) => e.source === orchNode.id)
-          .map((e: Edge) => nodes.find((n: Node) => n.id === e.target && n.type === 'agent'))
-          .filter((n: Node | undefined): n is Node => Boolean(n))
-          .map((n: Node) => (n.data as AgentData).agentId);
-
-        return {
-          ...(d._epId ? { id: d._epId } : {}),
-          slug: d.slug,
-          entry_point_type: d.epType,
-          access_policy: { mode: d.accessMode },
-          conversation_token_limit: limit,
-          enabled: true,
-          orchestrator: {
-            ...(od.appOrchestratorId ? { id: od.appOrchestratorId } : {}),
-            allowed_agent_ids: agentIds,
-            display_name: od.displayName,
-            system_prompt: od.systemPrompt,
-            llm_provider: od.llmProvider,
-            llm_model: od.llmModel,
-            max_iterations: od.maxIterations,
-            history_window: od.historyWindow,
-            delegatable: od.delegatable,
-          },
-        };
-      });
-
-      const resolvedName = appName.trim() || epPairs[0].epNode.data.appName || epPairs[0].epNode.data.slug;
-
-      // Build canvas layout: ref-keyed position map for each node.
-      // Key format: "ep:<slug>", "orch:<ao_id>", "agent:<agent_id>", "mw:<node_id>"
-      // No structural data — only positions + viewport. Runtime never reads this.
+      // Build canvas layout keyed by node id (simple, stable)
       const canvasLayout: Record<string, { x: number; y: number }> = {};
-      nodes.forEach((n: Node) => {
-        if (n.type === 'entryPoint') {
-          const slug = (n.data as EntryPointData).slug;
-          if (slug) canvasLayout[`ep:${slug}`] = { x: n.position.x, y: n.position.y };
-        } else if (n.type === 'orchestrator') {
-          const aoId = (n.data as OrchestratorData).appOrchestratorId;
-          if (aoId) canvasLayout[`orch:${aoId}`] = { x: n.position.x, y: n.position.y };
-        } else if (n.type === 'agent') {
-          const agentId = (n.data as AgentData).agentId;
-          if (agentId) canvasLayout[`agent:${agentId}`] = { x: n.position.x, y: n.position.y };
-        } else if (n.type === 'middleware') {
-          const nodeId = (n.data as MiddlewareData).nodeId;
-          if (nodeId) canvasLayout[`mw:${nodeId}`] = { x: n.position.x, y: n.position.y };
-        }
-      });
+      nodes.forEach((n: Node) => { canvasLayout[n.id] = { x: n.position.x, y: n.position.y }; });
+
+      // Send the graph exactly as React Flow has it — backend compiler handles everything
+      const graphNodes = nodes.map((n: Node) => ({ id: n.id, type: n.type!, data: n.data as Record<string, unknown> }));
+      const graphEdges = edges.map((e: Edge) => ({ id: e.id, source: e.source, target: e.target }));
 
       const body: Record<string, unknown> = {
         name: resolvedName,
         enabled: deploy ? true : (currentApp?.enabled ?? false),
-        entry_points: entryPoints,
+        graph: { nodes: graphNodes, edges: graphEdges },
         canvas: { layout: canvasLayout, viewport: getViewport() },
       };
 
@@ -2708,41 +2758,12 @@ function BuilderView({
         saved = await themApi.createApplication(body);
       }
       setCurrentApp(saved);
-      // Rehydrate canvas from the saved application so EP ids, AO ids, and positions are correct.
-      // buildNodesFromApp reads saved.canvas.layout for positions; writes back correct DB ids.
+      // Rehydrate canvas from the saved application so AO ids are correct.
       {
         const rebuilt = buildNodesFromApp(saved, agents);
         setNodes(rebuilt.nodes);
         setEdges(rebuilt.edges);
       }
-
-      // Sync middleware wirings — iterate all orch nodes
-      try {
-        const wirings: Array<{ def_id: string; agent_id: string; position: number; config_override: Record<string, unknown>; node_id: string; enabled: boolean }> = [];
-        const orchNodes = [...new Set(epPairs.map(p => p.orchNode))];
-        for (const orchNodeForMW of orchNodes) {
-          for (const orchEdge of edges.filter((e: Edge) => e.source === orchNodeForMW.id)) {
-            const firstTarget = nodes.find((n: Node) => n.id === orchEdge.target);
-            if (!firstTarget || firstTarget.type !== 'middleware') continue;
-            const mwChain: Node[] = [];
-            let current: Node | undefined = firstTarget;
-            while (current && current.type === 'middleware') {
-              mwChain.push(current);
-              const nextEdge = edges.find((e: Edge) => e.source === current!.id);
-              current = nextEdge ? nodes.find((n: Node) => n.id === nextEdge.target) : undefined;
-            }
-            const agentNode = current && current.type === 'agent' ? current : undefined;
-            if (agentNode) {
-              const agentId = (agentNode.data as AgentData).agentId;
-              mwChain.forEach((mwNode, idx) => {
-                const md = mwNode.data as MiddlewareData;
-                wirings.push({ def_id: md.defId, agent_id: agentId, position: idx, config_override: md.configOverride ?? {}, node_id: mwNode.id, enabled: true });
-              });
-            }
-          }
-        }
-        await themApi.putMiddlewareWirings(saved.id, wirings);
-      } catch { /* non-fatal */ }
 
       setIsDirty(false);
       triggerLogo('success', deploy ? 2500 : 1800);

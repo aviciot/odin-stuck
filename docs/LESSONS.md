@@ -486,3 +486,15 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml --profile repli
 **Watch for:** When you see `if row.old_column: ...` as a fallback in an expand/contract migration, treat it as a time bomb. It must be removed in the same PR that drops the column. Also: any loader that queries by a model attribute (e.g. `Application.slug`) is a lie until you've confirmed that attribute exists in `models.py`. grep for it before assuming.
 
 Corollary: **always restart the bridge after a column drop**, even if the code change looks complete. The running Python process has the old ORM module in memory. Until restarted it generates queries for the dropped column and returns HTTP 500 on every affected endpoint.
+
+---
+
+## Canvas save: graph-centric model prevents "3 EPs → 3 orchs" duplication (2026-07-15)
+
+**What burned us:** When 3 entry points all wired to the same orchestrator node were saved, the old EP-centric save code created a separate `app_orchestrators` row per EP. On reload it looked like 3 independent orchestrators. Root cause: upsert keyed by orchestrator *name* alone — multiple rows with the same name could coexist when the loop ran per-EP.
+
+**Fix:** DB unique index `(application_id, node_id)` on `app_orchestrators`. Frontend sends the full `graph: {nodes, edges}` from React Flow state — the compiler walks edges once and upserts one AO row per orch node, regardless of how many EPs point to it.
+
+**Corollary:** Canvas positions must be keyed by the React Flow **node id** that was actually used when saving. The load function (`buildNodesFromApp`) generates its own node ids (`ep_<slug>`, `orch_<ao_id>`, `agent_<agent_id>`). After a save, positions are stored under those ids — the load function must look them up by the same id it just generated, with legacy-prefix fallback for old saves.
+
+**Watch for:** If you add a new node type to the canvas, make sure `handleSave` includes its id in `canvasLayout` and `buildNodesFromApp` uses `pos(nodeId, legacyKey)` to restore its position.

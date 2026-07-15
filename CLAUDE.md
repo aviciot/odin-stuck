@@ -1,6 +1,6 @@
 # the-M — Claude Session Guide
 # multi-agent orchestration platform
-# Last updated: 2026-07-14
+# Last updated: 2026-07-15
 
 ---
 
@@ -148,6 +148,7 @@ docker cp db/006_phase11.sql them-postgres:/tmp/them_006_phase11.sql
 docker cp db/009_security_scan.sql them-postgres:/tmp/them_009_security_scan.sql
 docker cp db/014_app_orchestrators.sql them-postgres:/tmp/them_014_app_orchestrators.sql
 docker cp db/015_phase12_drop_deprecated.sql them-postgres:/tmp/them_015_phase12.sql
+docker cp db/018_graph_compiler.sql them-postgres:/tmp/them_018_graph_compiler.sql
 docker exec them-postgres psql -U them -d them -c "CREATE SCHEMA IF NOT EXISTS auth_service;"
 docker exec them-postgres psql -U them -d them -f /tmp/them_001_schema.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_auth_schema.sql
@@ -159,6 +160,7 @@ docker exec them-postgres psql -U them -d them -f /tmp/them_006_phase11.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_009_security_scan.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_014_app_orchestrators.sql
 docker exec them-postgres psql -U them -d them -f /tmp/them_015_phase12.sql
+docker exec them-postgres psql -U them -d them -f /tmp/them_018_graph_compiler.sql
 
 # DB access
 docker exec -it them-postgres psql -U them -d them
@@ -259,6 +261,7 @@ Full suite, ~30s. Zero failures required before committing.
 | `app/routers/admin_applications.py`, `app/routers/apps.py`, `app/main.py`, `app/models.py` (EntryPoint), `frontend/src/app/admin/applications/`, `frontend/src/lib/api.ts` | 22 27 + `scripts/test_multi_ep.py` (inside them-bridge) |
 | `app/temporal/loaders.py` | 28 (loaders resolution) |
 | `db/014_app_orchestrators.sql`, `app/models.py` (AppOrchestrator), `app/routers/admin_applications.py` (_flush_orch_caches) | 01 29 (app_orchestrators migration + model) |
+| `app/services/app_compiler.py`, `db/018_graph_compiler.sql`, `app/routers/admin_applications.py` (graph/export/import/restore), `frontend/src/app/admin/applications/page.tsx` (handleSave graph payload) | 27 30 (canvas rules + graph compiler) |
 | `app/services/task_runner.py` (`_ensure_agent_skills`, `_CARD_TTL_SECONDS`), `agents/docu_writer/`, `db/007_docu_stack.sql` | 23 (A2A skill auto-discovery) |
 | `db/007_docu_stack.sql` code_agent endpoint/token | 24 (code_agent live) |
 | `agents/docu_writer/main.py`, `app/adapters/a2a_async_adapter.py`, `app/adapters/factory.py`, `app/services/task_runner.py` (typed A2A), `db/007_docu_stack.sql` | 25 (true A2A typed input) |
