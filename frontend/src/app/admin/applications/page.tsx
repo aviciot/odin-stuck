@@ -961,22 +961,23 @@ function PropertiesPanel({
             </div>
           </div>
 
+          {/* App name — always visible */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>Application Name</label>
+            <input
+              style={{
+                width: '100%', padding: '7px 10px', borderRadius: 6,
+                border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
+                color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
+              }}
+              value={appName}
+              onChange={e => onAppNameChange(e.target.value)}
+              placeholder="My Application"
+            />
+          </div>
+
           {epCount <= 1 ? (
             <>
-              {/* Name field — single EP only; multi-EP uses per-node appName */}
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>Application Name</label>
-                <input
-                  style={{
-                    width: '100%', padding: '7px 10px', borderRadius: 6,
-                    border: `1px solid ${C.outlineVariant}`, background: C.surfaceLow,
-                    color: 'var(--tm-card-text)', fontSize: 13, boxSizing: 'border-box', outline: 'none',
-                  }}
-                  value={appName}
-                  onChange={e => onAppNameChange(e.target.value)}
-                  placeholder="My Application"
-                />
-              </div>
               <div style={{ marginBottom: 14 }}>
                 <label style={{ fontSize: 12, color: 'var(--tm-card-text-subtle)', marginBottom: 4, display: 'block' }}>
                   Conversation Token Limit
@@ -2020,7 +2021,7 @@ const CANVAS_RULES: CanvasRule[] = [
     id: 'EP_SLUG_UNIQUE',
     severity: 'block',
     message: ({ nodes }) => {
-      const slugs = nodes.filter(n => n.type === 'entryPoint').map(n => (n.data as EntryPointData).slug ?? '');
+      const slugs = nodes.filter(n => n.type === 'entryPoint').map(n => (n.data as EntryPointData).slug ?? '').filter(s => s !== '');
       return new Set(slugs).size !== slugs.length ? 'Duplicate entry point slug — each slug must be unique' : null;
     },
   },
