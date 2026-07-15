@@ -85,9 +85,33 @@ async def publish_scan_failed(agent_id: str, error: str) -> None:
     await publish(f"agent:{agent_id}", {"type": "scan_failed", "agent_id": agent_id, "error": error})
 
 
+_APP_STATUS_CACHE_KEY = "them:dash:app_status_cache"
+
+
 async def publish_app_status(statuses: dict[str, dict]) -> None:
     """Publish liveness probe results for all apps to them:dash:apps.
 
     statuses: {slug: {"reachable": bool, "latency_ms": int | None}}
+    Also caches the latest statuses in Redis so new WS subscribers get them immediately.
     """
+    import json as _json
+    import app.database as _db
+    if _db.redis_client is not None:
+        try:
+            await _db.redis_client.set(_APP_STATUS_CACHE_KEY, _json.dumps(statuses), ex=120)
+        except Exception:
+            pass
     await publish("apps", {"type": "app_status", "statuses": statuses})
+
+
+async def get_cached_app_status() -> dict | None:
+    """Return last known app statuses from Redis cache, or None if not yet available."""
+    import json as _json
+    import app.database as _db
+    if _db.redis_client is None:
+        return None
+    try:
+        raw = await _db.redis_client.get(_APP_STATUS_CACHE_KEY)
+        return _json.loads(raw) if raw else None
+    except Exception:
+        return None

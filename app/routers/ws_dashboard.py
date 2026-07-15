@@ -26,6 +26,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import app.database as db_module
 from app.services.auth_client import validate_jwt
+from app.services.dashboard_broadcaster import get_cached_app_status
 from app.utils.logger import logger
 
 router = APIRouter()
@@ -153,6 +154,15 @@ async def ws_dashboard(websocket: WebSocket):
 
     await websocket.send_json({"type": "subscribed", "channels": channels})
     logger.info("ws_dashboard subscribed", user_id=user.get("user_id"), channels=channels)
+
+    # ── Send cached app statuses immediately so client doesn't wait up to 30s ──
+    if "apps" in channels:
+        cached = await get_cached_app_status()
+        if cached:
+            try:
+                await websocket.send_json({"channel": "apps", "event": {"type": "app_status", "statuses": cached}})
+            except Exception:
+                pass
 
     # ── Relay loop ────────────────────────────────────────────────────
     try:
