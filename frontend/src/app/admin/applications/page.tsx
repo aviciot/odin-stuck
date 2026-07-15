@@ -3437,17 +3437,31 @@ function ListView({
           </div>
         )}
 
-        {!loading && list.map((app) => (
+        {!loading && list.map((app) => {
+          // Aggregate liveness across all EPs: live if ANY is reachable, best latency wins.
+          const epStatuses = (app.entry_points ?? [])
+            .map(ep => appStatuses[ep.slug])
+            .filter(Boolean) as AppLiveness[];
+          const anyReachable = epStatuses.some(s => s.reachable);
+          const allChecked = epStatuses.length > 0;
+          const bestLatency = epStatuses
+            .filter(s => s.reachable && s.latency_ms != null)
+            .reduce((min, s) => (s.latency_ms! < min ? s.latency_ms! : min), Infinity);
+          const aggLiveness: AppLiveness | null = allChecked
+            ? { reachable: anyReachable, latency_ms: isFinite(bestLatency) ? bestLatency : null }
+            : null;
+          return (
           <AppCard
             key={app.id}
             app={app}
-            liveness={appStatuses[app.entry_points?.[0]?.slug ?? ''] ?? null}
+            liveness={aggLiveness}
             onEdit={onEdit}
             onToggle={onToggle}
             onDelete={onDelete}
             onUrls={setUrlModalApp}
           />
-        ))}
+          );
+        })}
 
         {/* Deploy / New card — always last */}
         {!loading && list.length > 0 && (
