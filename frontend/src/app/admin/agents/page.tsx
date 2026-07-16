@@ -1761,9 +1761,6 @@ export default function AdminAgentsPage() {
             }
 
             // No filter: show folder structure
-            const folderedAgentIds = new Set(folderState.folders.flatMap(f => f.agentIds));
-            const ungroupedAgents = agents.filter(a => !folderedAgentIds.has(a.id));
-
             return (
               <div style={{ padding: '0 32px 48px' }}>
                 {loading && (
@@ -1778,114 +1775,130 @@ export default function AdminAgentsPage() {
                   </div>
                 )}
 
-                {/* Folders */}
-                {!loading && folderState.folders.map(folder => {
-                  const folderAgents = folder.agentIds.map(id => agents.find(a => a.id === id)).filter(Boolean) as Agent[];
+                {/* Single unified grid — collapsed folders occupy one cell, expanded span all 3 */}
+                {!loading && agents.length > 0 && (() => {
+                  const folderedAgentIds2 = new Set(folderState.folders.flatMap(f => f.agentIds));
+                  const ungroupedAgents2 = agents.filter(a => !folderedAgentIds2.has(a.id));
+
                   return (
-                    <div key={folder.id} style={{ marginBottom: '24px' }}>
-                      {/* Folder header */}
-                      <FolderHeader
-                        folder={folder}
-                        folderAgents={folderAgents}
-                        count={folderAgents.length}
-                        isDragOver={dragOverId === `folder:${folder.id}`}
-                        onToggleCollapse={() => toggleFolderCollapse(folder.id)}
-                        onRename={(name) => renameFolderInline(folder.id, name)}
-                        onDragOver={(e) => { e.preventDefault(); setDragOverId(`folder:${folder.id}`); }}
-                        onDragLeave={() => setDragOverId(null)}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          setDragOverId(null);
-                          const draggedId = e.dataTransfer.getData('agentId');
-                          if (draggedId) handleDropOntoFolder(draggedId, folder.id);
-                        }}
-                      />
-                      {/* Folder cards */}
-                      {!folder.collapsed && (
-                        <div style={{
-                          display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px',
-                          padding: '16px',
-                          background: 'rgba(255,255,255,0.02)',
-                          border: '1px solid rgba(255,255,255,0.06)',
-                          borderTop: 'none',
-                          borderRadius: '0 0 12px 12px',
-                        }}>
-                          {folderAgents.map(agent => (
-                            <AgentCard
-                              key={agent.id}
-                              agent={agent}
-                              scanResult={scanResults[agent.id]}
-                              testResult={testResults[agent.id]}
-                              isDiscovering={!!rowDiscoverState[agent.id]}
-                              onTest={() => handleTest(agent)}
-                              onScan={() => handleScan(agent)}
-                              onDiscover={() => handleRowDiscover(agent)}
-                              onEdit={() => openEdit(agent)}
-                              onDelete={() => setDeleteTarget(agent)}
-                              onOpenScanModal={() => {
-                                const sr = scanResults[agent.id];
-                                if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
-                              }}
-                              isDragOver={dragOverId === agent.id}
-                              onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); }}
-                              onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
+                      {folderState.folders.map(folder => {
+                        const folderAgents = folder.agentIds.map(id => agents.find(a => a.id === id)).filter(Boolean) as Agent[];
+
+                        if (folder.collapsed) {
+                          return (
+                            <FolderHeader
+                              key={folder.id}
+                              folder={folder}
+                              folderAgents={folderAgents}
+                              count={folderAgents.length}
+                              isDragOver={dragOverId === `folder:${folder.id}`}
+                              onToggleCollapse={() => toggleFolderCollapse(folder.id)}
+                              onRename={(name) => renameFolderInline(folder.id, name)}
+                              onDragOver={(e) => { e.preventDefault(); setDragOverId(`folder:${folder.id}`); }}
+                              onDragLeave={() => setDragOverId(null)}
                               onDrop={(e) => {
                                 e.preventDefault();
                                 setDragOverId(null);
                                 const draggedId = e.dataTransfer.getData('agentId');
-                                if (draggedId) handleAgentDrop(draggedId, agent.id);
+                                if (draggedId) handleDropOntoFolder(draggedId, folder.id);
                               }}
-                              onRemoveFromFolder={() => removeAgentFromFolder(agent.id)}
                             />
-                          ))}
-                        </div>
-                      )}
+                          );
+                        }
+
+                        // Expanded — spans all 3 columns
+                        return (
+                          <div key={folder.id} style={{ gridColumn: '1 / -1' }}>
+                            <FolderHeader
+                              folder={folder}
+                              folderAgents={folderAgents}
+                              count={folderAgents.length}
+                              isDragOver={dragOverId === `folder:${folder.id}`}
+                              onToggleCollapse={() => toggleFolderCollapse(folder.id)}
+                              onRename={(name) => renameFolderInline(folder.id, name)}
+                              onDragOver={(e) => { e.preventDefault(); setDragOverId(`folder:${folder.id}`); }}
+                              onDragLeave={() => setDragOverId(null)}
+                              onDrop={(e) => {
+                                e.preventDefault();
+                                setDragOverId(null);
+                                const draggedId = e.dataTransfer.getData('agentId');
+                                if (draggedId) handleDropOntoFolder(draggedId, folder.id);
+                              }}
+                            />
+                            <div style={{
+                              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px',
+                              padding: '16px',
+                              background: 'rgba(255,255,255,0.02)',
+                              border: '1px solid rgba(255,255,255,0.06)',
+                              borderTop: 'none',
+                              borderRadius: '0 0 12px 12px',
+                            }}>
+                              {folderAgents.map(agent => (
+                                <AgentCard
+                                  key={agent.id}
+                                  agent={agent}
+                                  scanResult={scanResults[agent.id]}
+                                  testResult={testResults[agent.id]}
+                                  isDiscovering={!!rowDiscoverState[agent.id]}
+                                  onTest={() => handleTest(agent)}
+                                  onScan={() => handleScan(agent)}
+                                  onDiscover={() => handleRowDiscover(agent)}
+                                  onEdit={() => openEdit(agent)}
+                                  onDelete={() => setDeleteTarget(agent)}
+                                  onOpenScanModal={() => {
+                                    const sr = scanResults[agent.id];
+                                    if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
+                                  }}
+                                  isDragOver={dragOverId === agent.id}
+                                  onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); }}
+                                  onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    setDragOverId(null);
+                                    const draggedId = e.dataTransfer.getData('agentId');
+                                    if (draggedId) handleAgentDrop(draggedId, agent.id);
+                                  }}
+                                  onRemoveFromFolder={() => removeAgentFromFolder(agent.id)}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {ungroupedAgents2.map(agent => (
+                        <AgentCard
+                          key={agent.id}
+                          agent={agent}
+                          scanResult={scanResults[agent.id]}
+                          testResult={testResults[agent.id]}
+                          isDiscovering={!!rowDiscoverState[agent.id]}
+                          onTest={() => handleTest(agent)}
+                          onScan={() => handleScan(agent)}
+                          onDiscover={() => handleRowDiscover(agent)}
+                          onEdit={() => openEdit(agent)}
+                          onDelete={() => setDeleteTarget(agent)}
+                          onOpenScanModal={() => {
+                            const sr = scanResults[agent.id];
+                            if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
+                          }}
+                          isDragOver={dragOverId === agent.id}
+                          onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); }}
+                          onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            setDragOverId(null);
+                            const draggedId = e.dataTransfer.getData('agentId');
+                            if (draggedId) handleAgentDrop(draggedId, agent.id);
+                          }}
+                        />
+                      ))}
+
+                      <DeployCard onClick={openCreate} />
                     </div>
                   );
-                })}
-
-                {/* Ungrouped agents */}
-                {!loading && ungroupedAgents.length > 0 && (
-                  <div style={{
-                    display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px',
-                  }}>
-                    {ungroupedAgents.map(agent => (
-                      <AgentCard
-                        key={agent.id}
-                        agent={agent}
-                        scanResult={scanResults[agent.id]}
-                        testResult={testResults[agent.id]}
-                        isDiscovering={!!rowDiscoverState[agent.id]}
-                        onTest={() => handleTest(agent)}
-                        onScan={() => handleScan(agent)}
-                        onDiscover={() => handleRowDiscover(agent)}
-                        onEdit={() => openEdit(agent)}
-                        onDelete={() => setDeleteTarget(agent)}
-                        onOpenScanModal={() => {
-                          const sr = scanResults[agent.id];
-                          if (sr && sr !== 'scanning') setScanModal({ agent, result: sr });
-                        }}
-                        isDragOver={dragOverId === agent.id}
-                        onDragStart={(e) => { e.dataTransfer.setData('agentId', agent.id); setDragOverId(null); }}
-                        onDragOver={(e) => { e.preventDefault(); setDragOverId(agent.id); }}
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          setDragOverId(null);
-                          const draggedId = e.dataTransfer.getData('agentId');
-                          if (draggedId) handleAgentDrop(draggedId, agent.id);
-                        }}
-                      />
-                    ))}
-                    <DeployCard onClick={openCreate} />
-                  </div>
-                )}
-
-                {/* No ungrouped agents but there are folders — still show DeployCard */}
-                {!loading && agents.length > 0 && ungroupedAgents.length === 0 && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', marginTop: '8px' }}>
-                    <DeployCard onClick={openCreate} />
-                  </div>
-                )}
+                })()}
               </div>
             );
           })()}
