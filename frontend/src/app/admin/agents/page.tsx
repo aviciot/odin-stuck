@@ -696,6 +696,7 @@ function AgentCard({
 
 function FolderHeader({
   folder,
+  folderAgents,
   count,
   isDragOver,
   onToggleCollapse,
@@ -705,6 +706,7 @@ function FolderHeader({
   onDrop,
 }: {
   folder: AgentFolder;
+  folderAgents: Agent[];
   count: number;
   isDragOver: boolean;
   onToggleCollapse: () => void;
@@ -728,6 +730,132 @@ function FolderHeader({
     setEditing(false);
   }
 
+  const previewAgents = folderAgents.slice(0, 4);
+
+  if (folder.collapsed) {
+    // ── Collapsed: glass folder card ─────────────────────────────────────────
+    return (
+      <div
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        onClick={onToggleCollapse}
+        style={{
+          position: 'relative',
+          borderRadius: '20px',
+          padding: '18px 20px 16px',
+          background: isDragOver
+            ? 'linear-gradient(160deg, rgba(0,209,255,0.10) 0%, rgba(0,209,255,0.04) 100%)'
+            : 'linear-gradient(160deg, rgba(255,255,255,0.055) 0%, rgba(255,255,255,0.012) 50%, rgba(0,0,0,0.06) 100%)',
+          border: `1px solid ${isDragOver ? 'rgba(0,209,255,0.45)' : 'rgba(255,255,255,0.13)'}`,
+          backdropFilter: 'blur(14px)',
+          boxShadow: isDragOver
+            ? '0 0 0 2px rgba(0,209,255,0.18), 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.07)'
+            : '0 8px 32px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.06)',
+          cursor: 'pointer',
+          transition: 'background 180ms ease, border-color 180ms ease, box-shadow 180ms ease',
+          userSelect: 'none',
+          minHeight: '120px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+        }}
+      >
+        {/* Subtle top shine */}
+        <div style={{
+          position: 'absolute', top: 0, left: '20px', right: '20px', height: '1px',
+          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent)',
+          borderRadius: '1px', pointerEvents: 'none',
+        }} />
+
+        {/* Folder tab nub (top-left, like macOS) */}
+        <div style={{
+          position: 'absolute', top: '-9px', left: '20px',
+          width: '52px', height: '10px',
+          background: isDragOver
+            ? 'linear-gradient(180deg, rgba(0,209,255,0.22), rgba(0,209,255,0.10))'
+            : 'linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.045))',
+          border: `1px solid ${isDragOver ? 'rgba(0,209,255,0.35)' : 'rgba(255,255,255,0.12)'}`,
+          borderBottom: 'none',
+          borderRadius: '5px 5px 0 0',
+          pointerEvents: 'none',
+        }} />
+
+        {/* Agent icon previews grid */}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: previewAgents.length > 2 ? '1fr 1fr' : `repeat(${Math.max(previewAgents.length, 1)}, 1fr)`,
+          gap: '7px',
+          flex: 1,
+        }}>
+          {previewAgents.map(a => {
+            const cat = agentCategory(a);
+            const acc = categoryAccent(cat);
+            const ico = agentIcon(a, cat);
+            return (
+              <div key={a.id} style={{
+                borderRadius: '10px',
+                background: `radial-gradient(circle at 30% 25%, ${acc.glow}, transparent 65%),
+                             linear-gradient(145deg, rgba(20,32,52,0.90), rgba(8,16,30,0.90))`,
+                border: `1px solid ${acc.border}`,
+                boxShadow: `0 0 10px ${acc.glow}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                aspectRatio: '1',
+              }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '18px', color: acc.color }}>{ico}</span>
+              </div>
+            );
+          })}
+          {/* Overflow count bubble */}
+          {count > 4 && (
+            <div style={{
+              borderRadius: '10px',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              aspectRatio: '1',
+              fontSize: '11px', fontWeight: 700, color: 'var(--tm-card-text-muted)',
+            }}>+{count - 4}</div>
+          )}
+        </div>
+
+        {/* Footer: name + count + expand caret */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={editVal}
+              onChange={(e) => setEditVal(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setEditVal(folder.name); setEditing(false); } }}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                flex: 1, background: 'transparent', border: 'none',
+                borderBottom: '1px solid rgba(0,209,255,0.5)',
+                color: 'var(--tm-card-text)', fontSize: '13px', fontWeight: 600,
+                outline: 'none', padding: '0 2px',
+              }}
+            />
+          ) : (
+            <span
+              onDoubleClick={(e) => { e.stopPropagation(); setEditVal(folder.name); setEditing(true); }}
+              style={{ flex: 1, fontSize: '13px', fontWeight: 600, color: 'var(--tm-card-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {folder.name}
+            </span>
+          )}
+          <span style={{ fontSize: '10px', color: 'var(--tm-card-text-muted)', fontWeight: 600, flexShrink: 0 }}>
+            {count}
+          </span>
+          <span className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-card-text-muted)', flexShrink: 0 }}>
+            expand_more
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Expanded: slim header bar ───────────────────────────────────────────────
   return (
     <div
       onDragOver={onDragOver}
@@ -738,14 +866,14 @@ function FolderHeader({
         padding: '10px 16px',
         background: isDragOver ? 'rgba(0,209,255,0.06)' : 'rgba(255,255,255,0.04)',
         border: `1px solid ${isDragOver ? 'rgba(0,209,255,0.4)' : 'rgba(255,255,255,0.10)'}`,
-        borderRadius: folder.collapsed ? '8px' : '8px 8px 0 0',
+        borderRadius: '8px 8px 0 0',
         cursor: 'pointer',
         transition: 'background 150ms ease, border-color 150ms ease',
         userSelect: 'none',
       }}
     >
       <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#94a3b8', flexShrink: 0 }}>
-        {folder.collapsed ? 'folder' : 'folder_open'}
+        folder_open
       </span>
 
       {editing ? (
@@ -786,7 +914,7 @@ function FolderHeader({
         }}
       >
         <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
-          {folder.collapsed ? 'expand_more' : 'expand_less'}
+          expand_less
         </span>
       </button>
     </div>
@@ -1658,6 +1786,7 @@ export default function AdminAgentsPage() {
                       {/* Folder header */}
                       <FolderHeader
                         folder={folder}
+                        folderAgents={folderAgents}
                         count={folderAgents.length}
                         isDragOver={dragOverId === `folder:${folder.id}`}
                         onToggleCollapse={() => toggleFolderCollapse(folder.id)}
