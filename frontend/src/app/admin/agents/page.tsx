@@ -718,13 +718,9 @@ function FolderHeader({
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(folder.name);
   const inputRef = useRef<HTMLInputElement>(null);
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   useEffect(() => {
     if (editing && inputRef.current) inputRef.current.focus();
   }, [editing]);
-
-  useEffect(() => () => { if (clickTimer.current) clearTimeout(clickTimer.current); }, []);
 
   function commitRename() {
     const v = editVal.trim();
@@ -733,14 +729,8 @@ function FolderHeader({
     setEditing(false);
   }
 
-  function handlePillClick() {
-    // defer toggle so a double-click can cancel it
-    clickTimer.current = setTimeout(() => onToggleCollapse(), 220);
-  }
-
-  function handlePillDoubleClick(e: React.MouseEvent) {
+  function startRename(e: React.MouseEvent) {
     e.stopPropagation();
-    if (clickTimer.current) { clearTimeout(clickTimer.current); clickTimer.current = null; }
     setEditVal(folder.name);
     setEditing(true);
   }
@@ -754,8 +744,6 @@ function FolderHeader({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        onClick={handlePillClick}
-        onDoubleClick={handlePillDoubleClick}
         style={{
           position: 'relative',
           display: 'flex', alignItems: 'center', gap: '12px',
@@ -782,8 +770,8 @@ function FolderHeader({
           pointerEvents: 'none',
         }} />
 
-        {/* Mini icon strip — up to 4, overlapping slightly */}
-        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+        {/* Mini icon strip — up to 4, overlapping slightly — click to expand */}
+        <div onClick={onToggleCollapse} style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}>
           {previewAgents.map((a, i) => {
             const cat = agentCategory(a);
             const acc = categoryAccent(cat);
@@ -820,7 +808,7 @@ function FolderHeader({
         </div>
 
         {/* Divider */}
-        <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.10)', flexShrink: 0 }} />
+        <div onClick={onToggleCollapse} style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.10)', flexShrink: 0, cursor: 'pointer' }} />
 
         {/* Name */}
         {editing ? (
@@ -839,20 +827,23 @@ function FolderHeader({
             }}
           />
         ) : (
-          <span style={{ flex: 1, minWidth: 0, fontSize: '13px', fontWeight: 600, color: 'var(--tm-card-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span
+            onClick={startRename}
+            title="Click to rename"
+            style={{ flex: 1, minWidth: 0, fontSize: '13px', fontWeight: 600, color: 'var(--tm-card-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
+          >
             {folder.name}
           </span>
         )}
 
-        {/* Count badge */}
-        <span style={{
+        {/* Count badge + caret — click to expand */}
+        <span onClick={onToggleCollapse} style={{
           fontSize: '10px', fontWeight: 700, color: 'var(--tm-card-text-muted)',
           background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.10)',
-          borderRadius: '9999px', padding: '2px 7px', flexShrink: 0,
+          borderRadius: '9999px', padding: '2px 7px', flexShrink: 0, cursor: 'pointer',
         }}>{count}</span>
 
-        {/* Expand caret */}
-        <span className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-card-text-muted)', flexShrink: 0 }}>
+        <span onClick={onToggleCollapse} className="material-symbols-outlined" style={{ fontSize: '16px', color: 'var(--tm-card-text-muted)', flexShrink: 0, cursor: 'pointer' }}>
           expand_more
         </span>
       </div>
