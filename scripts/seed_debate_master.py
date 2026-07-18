@@ -156,8 +156,8 @@ async def main():
             redis = db_module2.redis_client
             if redis:
                 await redis.delete("them:agents:registry")
-                await redis.delete(f"them:orchestrators:{MASTER_NAME}")
-                await redis.delete(f"them:orchestrators:{DEBATE_FLOW_NAME}")
+                await redis.delete(f"them:orch:tmpl:{MASTER_NAME}", f"them:orch:loc:{MASTER_NAME}")
+                await redis.delete(f"them:orch:tmpl:{DEBATE_FLOW_NAME}", f"them:orch:loc:{DEBATE_FLOW_NAME}")
                 await redis.publish("them:agents:changed", "changed")
                 print("✓ Redis cache busted")
         except Exception as e:

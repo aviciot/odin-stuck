@@ -9,7 +9,9 @@
 | `them:session:token:{sha256(token)}` | 300s | token_cache.py | Yes | L2 token cache (user context) |
 | `them:session:user:{user_id}` | 300s | token_cache.py | Yes | Reverse index for per-user invalidation |
 | `them:agents:registry` | 600s | agent_registry.py | Yes | Serialized enabled agents list |
-| `them:orchestrators:{name}` | 600s | task_runner.py | Yes | Serialized orchestrator config |
+| `them:orch:tmpl:{name}` | 600s | loaders.py / task_runner.py | Yes | Serialized shared orchestrator template (them.orchestrators) |
+| `them:app:{app_id}:orch:{name}` | 600s | loaders.py / task_runner.py | Yes | Serialized app-owned orchestrator instance (them.app_orchestrators) |
+| `them:orch:loc:{name}` | 600s | loaders.py / task_runner.py | Yes | Locator pointer: `"tmpl"` or `"app:{app_id}"` — tells readers which namespace holds the config |
 | `rl:them:{user_id}:{hour_slot}` | 7200s | rate_limiter.py | Yes | Rate limit counter (INCR) |
 | `them:bridge:{instance_id}:heartbeat` | 30s | heartbeat bg task | Yes | Per-replica liveness |
 | `them:ctx:{context_id}:heads` | 300s | context_service.py | Yes | Hot cache of recent artifacts for a context (Phase 5) |
@@ -20,7 +22,7 @@
 | Channel | Publisher | Subscribers | Purpose |
 |---|---|---|---|
 | `them:agents:changed` | admin_agents.py on write | agent_registry.py | Invalidate agent cache on all replicas |
-| `them:orchestrators:changed` | admin_orchestrators.py on write | task_runner.py / orchestrator_service | Invalidate orchestrator config cache |
+| `them:orchestrators:changed` | admin_orchestrators.py on write | (no subscriber — reserved for future in-process L1 cache) | Invalidate orchestrator template cache signal |
 | `them:dash:runs` | task_runner.py per run event | ws_dashboard.py (channel: runs) | Lightweight summary of every run event (no tool inputs) |
 | `them:dash:agents` | (reserved) | ws_dashboard.py (channel: agents) | Agent registry change events |
 | `them:dash:metrics` | (reserved) | ws_dashboard.py (channel: metrics) | System metrics |
