@@ -5,18 +5,11 @@
 --   docker exec them-postgres psql -U them -d them -f /tmp/them_005_phase10.sql
 BEGIN;
 
--- Drop old check constraint and replace with updated allowed values.
--- Old: ('websocket_chat','rest','voice','webrtc')
--- New: ('websocket','sse','webrtc')
+-- Originally updated entry_point_type constraint on them.applications.
+-- That column was moved to them.entry_points by 010_app_entrypoints.sql.
+-- This migration is now a safe no-op on a clean schema (the constraint no
+-- longer exists on them.applications so the DROP IF EXISTS is harmless).
 ALTER TABLE them.applications
     DROP CONSTRAINT IF EXISTS applications_entry_point_type_check;
-
-ALTER TABLE them.applications
-    ADD CONSTRAINT applications_entry_point_type_check
-    CHECK (entry_point_type IN ('websocket','sse','webrtc'));
-
--- Migrate any existing rows from old type names to new ones
-UPDATE them.applications SET entry_point_type = 'websocket' WHERE entry_point_type = 'websocket_chat';
-UPDATE them.applications SET entry_point_type = 'sse'       WHERE entry_point_type IN ('voice','rest');
 
 COMMIT;
