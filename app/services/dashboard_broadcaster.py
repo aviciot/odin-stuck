@@ -143,6 +143,44 @@ async def publish_scan_failed(agent_id: str, error: str) -> None:
             pass
 
 
+_SESSION_STATE_PREFIX = "them:dash:sessions:state:"
+_SESSION_STATE_TTL = 120  # 2 minutes
+
+
+async def publish_session_event(
+    app_id: str,
+    ep_slug: str,
+    event_type: str,
+    session_id: str,
+    session_info: dict,
+) -> None:
+    """Publish a session_start / session_end event to them:dash:sessions:{app_id}.
+
+    Also maintains a Redis Hash them:dash:sessions:state:{app_id} (TTL 120s) mapping
+    session_id → json(session_info) for snapshot delivery to new WS subscribers.
+    """
+    if db_module.redis_client is None:
+        return
+    try:
+        state_key = f"{_SESSION_STATE_PREFIX}{app_id}"
+        if event_type == "session_start":
+            await db_module.redis_client.hset(state_key, session_id, json.dumps(session_info))
+            await db_module.redis_client.expire(state_key, _SESSION_STATE_TTL)
+        elif event_type == "session_end":
+            await db_module.redis_client.hdel(state_key, session_id)
+    except Exception as exc:
+        logger.warning("session state write failed", app_id=app_id,
+                       session_id=session_id, error=str(exc))
+
+    await publish(f"sessions:{app_id}", {
+        "type": event_type,
+        "app_id": app_id,
+        "ep_slug": ep_slug,
+        "session_id": session_id,
+        "session_info": session_info,
+    })
+
+
 _APP_STATUS_CACHE_KEY = "them:dash:app_status_cache"
 
 

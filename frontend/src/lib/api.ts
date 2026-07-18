@@ -364,6 +364,17 @@ export interface BridgeHealth {
   redis: string;
 }
 
+export interface SessionInfo {
+  session_id: string;
+  instance_id: string;
+  user_id: number;
+  orchestrator_name: string;
+  ep_slug: string | null;
+  app_id: string | null;
+  context_id: string;
+  started_at: string; // ISO8601
+}
+
 export const themApi = {
   health: () => fetch(`${HEALTH_BASE}/health`)
     .then((r) => r.json())
@@ -441,6 +452,7 @@ export const themApi = {
   deleteRun: (runId: string) => api.delete<void>(`/runs/${runId}`),
   bulkDeleteRuns: (runIds: string[]) => api.post<{ deleted: number }>('/runs/bulk-delete', { run_ids: runIds }),
   bulkDeleteApplications: (appIds: string[]) => api.post<{ deleted: number }>('/admin/applications/bulk-delete', { app_ids: appIds }),
+  listSessions: (appId: string) => api.get<{ sessions: SessionInfo[]; count: number }>(`/admin/sessions?app_id=${appId}`),
   // Live reachability check for a deployed application slug
   pingApp: async (slug: string): Promise<boolean> => {
     try {

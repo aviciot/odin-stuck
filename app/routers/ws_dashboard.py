@@ -26,7 +26,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 import app.database as db_module
 from app.services.auth_client import validate_jwt
-from app.services.dashboard_broadcaster import get_cached_app_status, get_scan_state
+from app.services.dashboard_broadcaster import get_cached_app_status, get_scan_state, _SESSION_STATE_PREFIX
 from app.utils.logger import logger
 
 router = APIRouter()
@@ -44,6 +44,9 @@ def _is_valid_channel(ch: str) -> bool:
         return True
     # allow "agent:<id>" dynamic per-agent channels (scan events, test results, etc.)
     if ch.startswith("agent:") and len(ch) > 6:
+        return True
+    # allow "sessions:<app_id>" dynamic per-application session channels
+    if ch.startswith("sessions:") and len(ch) > 9:
         return True
     return False
 
@@ -81,6 +84,33 @@ async def _listen_channels(
             if state:
                 try:
                     await websocket.send_json({"channel": ch, "event": state})
+                except Exception:
+                    pass
+
+    # Send session snapshot for any sessions:<app_id> channels.
+    for ch in channels:
+        if ch.startswith("sessions:"):
+            app_id = ch[len("sessions:"):]
+            if db_module.redis_client is not None:
+                try:
+                    raw = await db_module.redis_client.hgetall(
+                        f"{_SESSION_STATE_PREFIX}{app_id}"
+                    )
+                    if raw:
+                        sessions_list = []
+                        for _sid, _val in raw.items():
+                            try:
+                                sessions_list.append(json.loads(_val))
+                            except Exception:
+                                pass
+                        await websocket.send_json({
+                            "channel": ch,
+                            "event": {
+                                "type": "session_snapshot",
+                                "app_id": app_id,
+                                "sessions": sessions_list,
+                            },
+                        })
                 except Exception:
                     pass
 
@@ -164,7 +194,7 @@ async def ws_dashboard(websocket: WebSocket):
     requested = set(msg.get("channels", []))
     channels = [ch for ch in requested if _is_valid_channel(ch)]
     if not channels:
-        await websocket.send_json({"type": "error", "message": "No valid channels. Use: runs, agents, metrics, run:<uuid>, agent:<id>"})
+        await websocket.send_json({"type": "error", "message": "No valid channels. Use: runs, agents, metrics, run:<uuid>, agent:<id>, sessions:<app_id>"})
         await websocket.close(code=4000)
         return
 

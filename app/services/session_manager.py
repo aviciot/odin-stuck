@@ -88,6 +88,12 @@ async def register(
 
         logger.info("session registered", session_id=str(session_id),
                     ep_slug=ep_slug, app_id=app_id, user_id=user_id)
+
+        if app_id:
+            from app.services.dashboard_broadcaster import publish_session_event
+            await publish_session_event(
+                app_id, ep_slug or "", "session_start", str(session_id), asdict(info)
+            )
     except Exception as exc:
         logger.warning("session_manager.register failed", session_id=str(session_id), error=str(exc))
 
@@ -109,6 +115,12 @@ async def end(
             await redis.srem(f"{_APP_PREFIX}{app_id}:sessions", str(session_id))
 
         logger.info("session ended", session_id=str(session_id))
+
+        if app_id:
+            from app.services.dashboard_broadcaster import publish_session_event
+            await publish_session_event(
+                app_id, ep_slug or "", "session_end", str(session_id), {}
+            )
     except Exception as exc:
         logger.warning("session_manager.end failed", session_id=str(session_id), error=str(exc))
 
