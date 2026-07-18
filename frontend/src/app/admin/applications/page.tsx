@@ -3870,12 +3870,27 @@ const SESSIONS_STYLES = `
   0%,100% { opacity:1; transform:scale(1); }
   50%      { opacity:0.7; transform:scale(1.08); }
 }
-@keyframes edge-flow-glow {
-  0%,100% { filter: drop-shadow(0 0 3px rgba(0,240,255,0.5)) drop-shadow(0 0 6px rgba(0,240,255,0.25)); }
-  50%     { filter: drop-shadow(0 0 6px rgba(0,240,255,0.9)) drop-shadow(0 0 14px rgba(0,240,255,0.5)); }
+@keyframes edge-dash-cyan {
+  to { stroke-dashoffset: -24; }
 }
-.react-flow__edge.active-flow path {
-  animation: edge-flow-glow 1.6s ease-in-out infinite;
+@keyframes edge-dash-purple {
+  to { stroke-dashoffset: -20; }
+}
+@keyframes edge-glow-cyan {
+  0%,100% { filter: drop-shadow(0 0 3px rgba(0,240,255,0.55)) drop-shadow(0 0 7px rgba(0,240,255,0.28)); }
+  50%     { filter: drop-shadow(0 0 7px rgba(0,240,255,1.0)) drop-shadow(0 0 16px rgba(0,240,255,0.55)); }
+}
+@keyframes edge-glow-purple {
+  0%,100% { filter: drop-shadow(0 0 3px rgba(208,188,255,0.5)) drop-shadow(0 0 7px rgba(208,188,255,0.25)); }
+  50%     { filter: drop-shadow(0 0 7px rgba(208,188,255,0.95)) drop-shadow(0 0 16px rgba(208,188,255,0.5)); }
+}
+.react-flow__edge.active-ep-orch path.react-flow__edge-path {
+  stroke-dasharray: 8 4;
+  animation: edge-dash-cyan 0.5s linear infinite, edge-glow-cyan 1.8s ease-in-out infinite;
+}
+.react-flow__edge.active-orch-agent path.react-flow__edge-path {
+  stroke-dasharray: 6 4;
+  animation: edge-dash-purple 0.65s linear infinite, edge-glow-purple 1.8s ease-in-out infinite;
 }
 .sess-badge {
   position:absolute; top:-8px; right:-8px;
@@ -4038,32 +4053,34 @@ function SessionsView({
     return n;
   });
 
-  // Style edges: active (EP→orch both hot) get bright animated glow; others dimmed
+  // Style edges by type and activity:
+  //   EP → orch  (active): cyan flowing dash + glow
+  //   orch → agent (active): purple flowing dash + glow
+  //   inactive: faint dashed grey
   const edges = baseEdges.map(e => {
-    const sourceActive = activeEpNodeIds.has(e.source) || activeOrchNodeIds.has(e.source);
-    const targetActive = activeOrchNodeIds.has(e.target) || activeEpNodeIds.has(e.target);
-    const isActive = sourceActive && targetActive;
-    if (isActive) {
+    const isEpOrch    = activeEpNodeIds.has(e.source)   && activeOrchNodeIds.has(e.target);
+    const isOrchAgent = activeOrchNodeIds.has(e.source); // orch→agent: source orch active = agents downstream active
+
+    if (isEpOrch) {
       return {
         ...e,
-        animated: true,
-        className: 'active-flow',
-        style: {
-          stroke: '#00f0ff',
-          strokeWidth: 2.5,
-          filter: 'drop-shadow(0 0 4px rgba(0,240,255,0.7)) drop-shadow(0 0 8px rgba(0,240,255,0.35))',
-        },
+        animated: false, // CSS handles the dash animation
+        className: 'active-ep-orch',
+        style: { stroke: '#00f0ff', strokeWidth: 2.5 },
       };
     }
-    // Dim inactive edges
+    if (isOrchAgent) {
+      return {
+        ...e,
+        animated: false,
+        className: 'active-orch-agent',
+        style: { stroke: C.purple, strokeWidth: 2 },
+      };
+    }
     return {
       ...e,
       animated: false,
-      style: {
-        stroke: 'rgba(148,163,184,0.2)',
-        strokeWidth: 1,
-        strokeDasharray: '4,4',
-      },
+      style: { stroke: 'rgba(148,163,184,0.18)', strokeWidth: 1, strokeDasharray: '4,4' },
     };
   });
 
