@@ -5,7 +5,7 @@ const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import ChromaGrid from '@/components/ChromaGrid';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type Agent, type MiddlewareDef, type AppOrchestratorOut, type SessionInfo } from '@/lib/api';
+import { themApi, type Application, type Agent, type MiddlewareDef, type AppOrchestratorOut, type SessionInfo, type MonitoringConfig } from '@/lib/api';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -3912,22 +3912,21 @@ const SESSIONS_STYLES = `
 `;
 
 // Read-only canvas node wrappers — same visuals as builder, but with session count badge
-function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: string; _sessCount?: number } }) {
+function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: string; _sessCount?: number; _heatStyle?: React.CSSProperties } }) {
   const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
   const msIcon = EP_MS_ICON[data.epType ?? 'websocket'] ?? 'bolt';
   const count = data._sessCount ?? 0;
   const accent = C.cyan;
+  const baseStyle: React.CSSProperties = {
+    width: 56, height: 56, borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: `2px solid ${count > 0 ? accent : 'rgba(0,240,255,0.25)'}`,
+    transition: 'all 0.3s ease',
+  };
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
       {count > 0 && <div className={`sess-badge${count > 0 ? ' active' : ''}`}>{count}</div>}
-      <div style={{
-        width: 56, height: 56, borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: count > 0 ? 'rgba(0,240,255,0.10)' : 'transparent',
-        border: `2px solid ${count > 0 ? accent : 'rgba(0,240,255,0.25)'}`,
-        boxShadow: count > 0 ? '0 0 14px rgba(0,240,255,0.35)' : 'none',
-        transition: 'all 0.3s ease',
-      }}>
+      <div style={{ ...baseStyle, ...(count > 0 && data._heatStyle ? data._heatStyle : {}) }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent }}>{msIcon}</span>
       </div>
       <div style={{ marginTop: 6, textAlign: 'center' }}>
@@ -3941,21 +3940,20 @@ function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: st
   );
 }
 
-function OrchNodeRO({ data }: { data: { displayName?: string; _sessCount?: number } }) {
+function OrchNodeRO({ data }: { data: { displayName?: string; _sessCount?: number; _heatStyle?: React.CSSProperties } }) {
   const count = data._sessCount ?? 0;
   const accent = C.purple;
+  const baseStyle: React.CSSProperties = {
+    width: 56, height: 56, borderRadius: '50%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    border: `2px solid ${count > 0 ? accent : 'rgba(208,188,255,0.25)'}`,
+    transition: 'all 0.3s ease',
+  };
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
       {count > 0 && <div className={`sess-badge${count > 0 ? ' active' : ''}`} style={{ background: 'rgba(208,188,255,0.15)', border: '1.5px solid rgba(208,188,255,0.55)', color: C.purple, boxShadow: '0 0 8px rgba(208,188,255,0.3)' }}>{count}</div>}
       <Handle type="target" position={Position.Top} style={{ background: accent, border: `2px solid ${C.bg}`, width: 8, height: 8 }} />
-      <div style={{
-        width: 56, height: 56, borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: count > 0 ? 'rgba(208,188,255,0.10)' : 'transparent',
-        border: `2px solid ${count > 0 ? accent : 'rgba(208,188,255,0.25)'}`,
-        boxShadow: count > 0 ? '0 0 14px rgba(208,188,255,0.35)' : 'none',
-        transition: 'all 0.3s ease',
-      }}>
+      <div style={{ ...baseStyle, ...(count > 0 && data._heatStyle ? data._heatStyle : {}) }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent }}>hub</span>
       </div>
       <div style={{ marginTop: 6, textAlign: 'center', maxWidth: 120 }}>
@@ -4005,6 +4003,34 @@ function elapsed(iso: string): string {
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 }
 
+const MON_DEFAULTS: MonitoringConfig = {
+  heatmap_low: 1, heatmap_medium: 10, heatmap_high: 50,
+  edge_thin: 1, edge_medium: 10, edge_thick: 50,
+  panel_max_sessions: 50, stats_window_seconds: 300,
+};
+
+function heatmapStyle(count: number, cfg: MonitoringConfig, type: 'ep' | 'orch'): React.CSSProperties {
+  if (count <= 0) return {};
+  const accent = type === 'ep' ? C.cyan : C.purple;
+  const lowColor  = type === 'ep' ? 'rgba(0,240,255,0.10)'     : 'rgba(208,188,255,0.10)';
+  const midColor  = type === 'ep' ? 'rgba(0,240,255,0.20)'     : 'rgba(208,188,255,0.20)';
+  const highColor = type === 'ep' ? 'rgba(0,240,255,0.35)'     : 'rgba(208,188,255,0.35)';
+  const lowGlow   = type === 'ep' ? '0 0 10px rgba(0,240,255,0.25)'     : '0 0 10px rgba(208,188,255,0.25)';
+  const midGlow   = type === 'ep' ? '0 0 18px rgba(0,240,255,0.5)'      : '0 0 18px rgba(208,188,255,0.5)';
+  const highGlow  = type === 'ep' ? '0 0 28px rgba(0,240,255,0.85)'     : '0 0 28px rgba(208,188,255,0.85)';
+  const borderW   = count >= cfg.heatmap_high ? 3 : count >= cfg.heatmap_medium ? 2.5 : 2;
+  const bg    = count >= cfg.heatmap_high ? highColor : count >= cfg.heatmap_medium ? midColor : lowColor;
+  const glow  = count >= cfg.heatmap_high ? highGlow  : count >= cfg.heatmap_medium ? midGlow  : lowGlow;
+  return { background: bg, border: `${borderW}px solid ${accent}`, boxShadow: glow };
+}
+
+function edgeStrokeWidth(count: number, cfg: MonitoringConfig): number {
+  if (count >= cfg.edge_thick)  return 5;
+  if (count >= cfg.edge_medium) return 3;
+  if (count >= cfg.edge_thin)   return 1.5;
+  return 1;
+}
+
 function SessionsView({
   app,
   agents,
@@ -4019,6 +4045,12 @@ function SessionsView({
   const { sessions, connected } = useDashSessions(token, app.id);
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   const [tick, setTick] = useState(0);
+  const [monCfg, setMonCfg] = useState<MonitoringConfig>(MON_DEFAULTS);
+
+  // Load monitoring config once
+  useEffect(() => {
+    themApi.getMonitoringConfig().then(setMonCfg).catch(() => {});
+  }, []);
 
   // Re-render elapsed times every 5s
   useEffect(() => {
@@ -4042,39 +4074,43 @@ function SessionsView({
     if (n.type === 'entryPoint' && n.data?.slug) {
       const count = epCountBySlug.get(n.data.slug as string) ?? 0;
       if (count > 0) activeEpNodeIds.add(n.id);
-      return { ...n, data: { ...n.data, _sessCount: count } };
+      return { ...n, data: { ...n.data, _sessCount: count, _heatStyle: heatmapStyle(count, monCfg, 'ep') } };
     }
     if (n.type === 'orchestrator') {
       const orchName = (n.data as any)?.name ?? '';
       const orchCount = sessions.filter(s => s.orchestrator_name === orchName).length;
       if (orchCount > 0) activeOrchNodeIds.add(n.id);
-      return { ...n, data: { ...n.data, _sessCount: orchCount } };
+      return { ...n, data: { ...n.data, _sessCount: orchCount, _heatStyle: heatmapStyle(orchCount, monCfg, 'orch') } };
     }
     return n;
   });
 
-  // Style edges by type and activity:
-  //   EP → orch  (active): cyan flowing dash + glow
-  //   orch → agent (active): purple flowing dash + glow
-  //   inactive: faint dashed grey
+  // Count sessions flowing through each edge path for thickness scaling
+  const epOrchSessionCount = sessions.length; // total sessions = load on ep→orch path
+
+  // Style edges: active edges get animated dash + proportional stroke width
   const edges = baseEdges.map(e => {
-    const isEpOrch    = activeEpNodeIds.has(e.source)   && activeOrchNodeIds.has(e.target);
-    const isOrchAgent = activeOrchNodeIds.has(e.source); // orch→agent: source orch active = agents downstream active
+    const isEpOrch    = activeEpNodeIds.has(e.source) && activeOrchNodeIds.has(e.target);
+    const isOrchAgent = activeOrchNodeIds.has(e.source);
 
     if (isEpOrch) {
+      const sw = edgeStrokeWidth(epOrchSessionCount, monCfg);
       return {
         ...e,
-        animated: false, // CSS handles the dash animation
+        animated: false,
         className: 'active-ep-orch',
-        style: { stroke: '#00f0ff', strokeWidth: 2.5 },
+        style: { stroke: '#00f0ff', strokeWidth: sw },
       };
     }
     if (isOrchAgent) {
+      const orchName = (baseNodes.find(n => n.id === e.source)?.data as any)?.name ?? '';
+      const orchCount = sessions.filter(s => s.orchestrator_name === orchName).length;
+      const sw = edgeStrokeWidth(orchCount, monCfg);
       return {
         ...e,
         animated: false,
         className: 'active-orch-agent',
-        style: { stroke: C.purple, strokeWidth: 2 },
+        style: { stroke: C.purple, strokeWidth: sw },
       };
     }
     return {
@@ -4083,6 +4119,10 @@ function SessionsView({
       style: { stroke: 'rgba(148,163,184,0.18)', strokeWidth: 1, strokeDasharray: '4,4' },
     };
   });
+
+  // Cap session list for UI performance
+  const displaySessions = sessions.slice(0, monCfg.panel_max_sessions);
+  void tick; // used indirectly by elapsed() rerender
 
   const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
 
@@ -4226,7 +4266,12 @@ function SessionsView({
                 Connecting…
               </div>
             )}
-            {sessions.map(s => {
+            {sessions.length > monCfg.panel_max_sessions && (
+              <div style={{ margin: '4px 8px 6px', padding: '6px 10px', borderRadius: 8, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.22)', fontSize: 11, color: '#f59e0b' }}>
+                Showing {monCfg.panel_max_sessions} of {sessions.length} sessions
+              </div>
+            )}
+            {displaySessions.map(s => {
               const isSelected = selectedSession?.session_id === s.session_id;
               const epType = app.entry_points?.find(ep => ep.slug === s.ep_slug)?.entry_point_type ?? 'websocket';
               const epIcon = EP_MS_ICON[epType] ?? 'bolt';

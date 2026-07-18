@@ -26,6 +26,7 @@ from app.routers import admin_applications
 from app.routers import admin_middleware
 from app.routers import admin_system_agents
 from app.routers import admin_sessions
+from app.routers import admin_monitoring_config
 from app.routers import ws_orchestrator
 from app.routers import ws_dashboard
 from app.routers import runs
@@ -204,6 +205,7 @@ app.include_router(admin_applications.router, prefix="/api/v1", dependencies=[De
 app.include_router(admin_middleware.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(admin_system_agents.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(admin_sessions.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
+app.include_router(admin_monitoring_config.router, prefix="/api/v1", dependencies=[Depends(require_admin)])
 app.include_router(ws_orchestrator.router)
 app.include_router(ws_dashboard.router)
 app.include_router(runs.router, prefix="/api/v1")

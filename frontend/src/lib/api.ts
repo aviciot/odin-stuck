@@ -364,6 +364,17 @@ export interface BridgeHealth {
   redis: string;
 }
 
+export interface MonitoringConfig {
+  heatmap_low:           number;
+  heatmap_medium:        number;
+  heatmap_high:          number;
+  edge_thin:             number;
+  edge_medium:           number;
+  edge_thick:            number;
+  panel_max_sessions:    number;
+  stats_window_seconds:  number;
+}
+
 export interface SessionInfo {
   session_id: string;
   instance_id: string;
@@ -453,6 +464,8 @@ export const themApi = {
   bulkDeleteRuns: (runIds: string[]) => api.post<{ deleted: number }>('/runs/bulk-delete', { run_ids: runIds }),
   bulkDeleteApplications: (appIds: string[]) => api.post<{ deleted: number }>('/admin/applications/bulk-delete', { app_ids: appIds }),
   listSessions: (appId: string) => api.get<{ sessions: SessionInfo[]; count: number }>(`/admin/sessions?app_id=${appId}`),
+  getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
+  putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),
   // Live reachability check for a deployed application slug
   pingApp: async (slug: string): Promise<boolean> => {
     try {
