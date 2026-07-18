@@ -325,6 +325,8 @@ them.runs.entry_point_slug  — which door each run came through
 - `websocket`  → `ws://<host>/apps/{slug}/ws`
 - `sse`        → `GET http://<host>/apps/{slug}/sse?message=<text>&context_id=<uuid>`
 - `webrtc`     → `http://<host>/apps/{slug}/voice`
+- `voice`      → `POST http://<host>/apps/{slug}/voice/transcribe` (STT) + `POST http://<host>/apps/{slug}/voice/tts` (TTS)
+- `a2a`        → `POST /a2a` with `skillId=<slug>` in the JSON-RPC body
 
 All entry points on the same app route to the same orchestrator (set on the application row).
 
@@ -347,6 +349,38 @@ ws://<host>/apps/{slug}/ws
   → stream_run_events() → relay to client
   → them.runs.entry_point_slug = slug  (traceability)
 ```
+
+### Voice entry point flow (HTTP STT/TTS)
+
+Two stateless HTTP endpoints — the orchestrator only ever sees plain text.
+
+```
+POST /apps/{slug}/voice/transcribe   multipart audio (webm/wav/mp4/m4a)
+  → auth (public or token)
+  → voice_service.transcribe()  [Groq whisper-large-v3 or OpenAI whisper-1]
+  → { "text": "..." }
+
+POST /apps/{slug}/voice/tts          JSON { "text": "..." }
+  → auth (public or token)
+  → voice_service.stream_tts()  [OpenAI tts-1 or ElevenLabs]
+  → StreamingResponse audio/mpeg
+```
+
+STT provider, TTS provider, voices, and API keys are configured per `app_orchestrators` row (kind=`voice`). The voice EP is transport-only — the orchestrator has no awareness of audio.
+
+### Mobile voice + A2A pattern
+
+STT and TTS are codec steps on the client. The orchestrator is called via A2A for the conversation:
+
+```
+[mic] → POST /apps/{slug}/voice/transcribe → text
+text  → POST /a2a  skillId=<a2a-ep-slug>  contextId=<uuid>  → reply text + optional data artifacts
+reply → POST /apps/{slug}/voice/tts → audio/mpeg → [speaker]
+```
+
+- `contextId` threads turns into a shared conversation — server maintains history (`history_window` turns)
+- Client stores only the `contextId` UUID between turns, not message history
+- Voice EP and A2A EP are independent doors into the same orchestrator; the orchestrator is unaware which transport the client uses
 
 ### Access policy
 
