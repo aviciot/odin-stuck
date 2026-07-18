@@ -1628,7 +1628,8 @@ def test_22_applications():
         check("entry_point_type allows websocket/sse/webrtc/a2a", '"websocket"' in s and '"sse"' in s and '"a2a"' in s)
         check("entry_point_type rejects legacy rest/voice", "websocket_chat" not in s and '"rest"' not in s)
         check("_flush_orch_caches defined", "_flush_orch_caches" in s)
-        check("them:orchestrators: key flushed", "them:orchestrators:" in s)
+        check("them:app:{id}:orch: key flushed", 'them:app:' in s and ':orch:' in s)
+        check("them:orch:loc: locator flushed", "them:orch:loc:" in s)
         check("them:agents:registry key flushed", "them:agents:registry" in s)
         check("409 on duplicate slug", "409" in s or "HTTP_409_CONFLICT" in s)
         check("orchestrator FK verified on create (Phase 12: via Orchestrator namespace check)", "Orchestrator" in s)
@@ -2292,6 +2293,10 @@ def test_28_loaders_resolution():
         # Cache dict carries is_app_orchestrator flag
         check("is_app_orchestrator written to cache dict", '"is_app_orchestrator"' in s)
         check("isinstance(row, AppOrchestrator) evaluated on DB-miss path", "isinstance(row, AppOrchestrator)" in s)
+        check("uses them:orch:tmpl: prefix for templates", "them:orch:tmpl:" in s)
+        check("uses them:orch:loc: locator", "them:orch:loc:" in s)
+        check("uses them:app:{id}:orch: for app instances", "_app_orch_key" in s)
+        check("old them:orchestrators: key removed", "them:orchestrators:" not in s)
 
         # load_agents uses delegatable only (a2a_exposed fallback dropped in Phase 12)
         check("load_agents checks delegatable", "delegatable" in s)
@@ -2344,7 +2349,8 @@ def test_29_app_orchestrators_migration():
         s = src("app/routers/admin_applications.py")
         check("_flush_orch_caches defined", "_flush_orch_caches" in s)
         check("flush called in create_application", s.count("_flush_orch_caches") >= 3)
-        check("them:orchestrators: key prefix used", "them:orchestrators:" in s)
+        check("them:app:{id}:orch: key prefix used", "them:app:" in s and ":orch:" in s)
+        check("them:orch:loc: locator flushed", "them:orch:loc:" in s)
         check("them:agents:registry key flushed", "them:agents:registry" in s)
         check("names collected before delete", "orch_names_to_flush" in s or "_flush_orch_caches" in s)
     except Exception as exc:

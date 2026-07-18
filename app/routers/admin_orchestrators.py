@@ -1,6 +1,7 @@
 """
 Admin — Orchestrators
-CRUD for them.orchestrators. Publishes them:orchestrators:changed on any write.
+CRUD for them.orchestrators (shared templates). Publishes them:orchestrators:changed on any write.
+Busts them:orch:tmpl:{name} + them:orch:loc:{name} on any write.
 """
 
 import uuid
@@ -21,7 +22,8 @@ from app.utils.logger import logger
 router = APIRouter(prefix="/admin/orchestrators", tags=["admin-orchestrators"])
 
 _CHANGE_CHANNEL = "them:orchestrators:changed"
-_CACHE_PREFIX = "them:orchestrators:"
+_TMPL_PREFIX = "them:orch:tmpl:"
+_LOC_PREFIX  = "them:orch:loc:"
 _TTL = 600
 
 
@@ -190,7 +192,7 @@ async def _get_or_404(db: AsyncSession, orch_id: uuid.UUID) -> Orchestrator:
 async def _invalidate(name: str) -> None:
     try:
         redis = await get_redis()
-        await redis.delete(f"{_CACHE_PREFIX}{name}")
+        await redis.delete(f"{_TMPL_PREFIX}{name}", f"{_LOC_PREFIX}{name}")
         await redis.publish(_CHANGE_CHANNEL, name)
     except Exception as exc:
         logger.warning("orchestrator: failed to invalidate cache", error=str(exc))

@@ -11,7 +11,7 @@ Export/import:
   POST /import               — restore from exported JSON (creates new app)
   PUT  /{id}/restore         — overwrite existing app from exported JSON
 
-Writes flush them:orchestrators:{name} + them:agents:registry on create/update/delete.
+Writes flush them:app:{app_id}:orch:{name} + them:orch:loc:{name} + them:agents:registry on create/update/delete.
 """
 
 import re
@@ -599,14 +599,16 @@ async def bulk_delete_applications(
     )
     rows = (await db.execute(q)).scalars().all()
 
-    all_orch_names: list[str] = []
-    for app in rows:
-        all_orch_names.extend(ao.name for ao in (app.app_orchestrators or []))
+    per_app_orchs: list[tuple[uuid.UUID, list[str]]] = [
+        (app.id, [ao.name for ao in (app.app_orchestrators or [])])
+        for app in rows
+    ]
 
     await db.execute(delete(Application).where(Application.id.in_(body.app_ids)))
     await db.commit()
 
-    await _flush_orch_caches(all_orch_names)
+    for _app_id, _names in per_app_orchs:
+        await _flush_orch_caches(_app_id, _names)
     logger.info("applications bulk deleted", count=len(rows))
     return {"deleted": len(rows)}
 
@@ -671,7 +673,7 @@ async def create_application(body: ApplicationCreate, db: AsyncSession = Depends
 
     await db.commit()
     app = await _get_or_404(db, app.id)
-    await _flush_orch_caches(touched or [ao.name for ao in app.app_orchestrators])
+    await _flush_orch_caches(app.id, touched or [ao.name for ao in app.app_orchestrators])
     logger.info("application created", app_id=str(app.id), name=body.name,
                 slugs=[ep.slug for ep in app.entry_points])
     return _to_out(app)
@@ -726,7 +728,7 @@ async def update_application(
 
     await db.commit()
     app = await _get_or_404(db, app_id)
-    await _flush_orch_caches(touched or [ao.name for ao in app.app_orchestrators])
+    await _flush_orch_caches(app_id, touched or [ao.name for ao in app.app_orchestrators])
     logger.info("application updated", app_id=str(app_id), name=app.name,
                 slugs=[ep.slug for ep in app.entry_points])
     return _to_out(app)
@@ -739,7 +741,7 @@ async def delete_application(app_id: uuid.UUID, db: AsyncSession = Depends(get_d
     orch_names_to_flush = [ao.name for ao in app.app_orchestrators]
     await db.delete(app)
     await db.commit()
-    await _flush_orch_caches(orch_names_to_flush)
+    await _flush_orch_caches(app_id, orch_names_to_flush)
     logger.info("application deleted", app_id=str(app_id), name=name)
 
 
@@ -810,7 +812,7 @@ async def import_application(body: ApplicationExport, db: AsyncSession = Depends
 
     await db.commit()
     app = await _get_or_404(db, app.id)
-    await _flush_orch_caches(touched)
+    await _flush_orch_caches(app.id, touched)
     logger.info("application imported", app_id=str(app.id), name=body.name)
     return _to_out(app)
 
@@ -854,7 +856,7 @@ async def restore_application(
 
     await db.commit()
     app = await _get_or_404(db, app_id)
-    await _flush_orch_caches(touched)
+    await _flush_orch_caches(app_id, touched)
     logger.info("application restored", app_id=str(app_id), name=app.name)
     return _to_out(app)
 
@@ -894,21 +896,23 @@ async def _flush_mw_chain_cache(app_id: uuid.UUID) -> None:
         logger.warning("mw chain cache flush failed", app_id=str(app_id), error=str(exc))
 
 
-async def _flush_orch_caches(orch_names: list[str]) -> None:
-    """Bust Redis orchestrator config cache for named AppOrchestrator instances.
+async def _flush_orch_caches(app_id: uuid.UUID, orch_names: list[str]) -> None:
+    """Bust Redis orchestrator config + locator cache for named AppOrchestrator instances.
 
-    Called after any write that changes an AppOrchestrator row so the Temporal
-    worker and bridge replicas pick up the updated config on next request.
+    Busts them:app:{app_id}:orch:{name} + them:orch:loc:{name} for each name.
     Also busts the agent registry because delegatable changes affect tool lists.
     """
     redis = db_module.redis_client
     if redis is None or not orch_names:
         return
     try:
-        keys = [f"them:orchestrators:{n}" for n in orch_names]
+        keys: list[str] = []
+        for n in orch_names:
+            keys.append(f"them:app:{app_id}:orch:{n}")
+            keys.append(f"them:orch:loc:{n}")
         keys.append("them:agents:registry")
         await redis.delete(*keys)
-        logger.info("orch cache flushed", names=orch_names)
+        logger.info("orch cache flushed", app_id=str(app_id), names=orch_names)
     except Exception as exc:
         logger.warning("orch cache flush failed", names=orch_names, error=str(exc))
 

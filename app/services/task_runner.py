@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.database as db_module
 from app.adapters.factory import get_adapter
-from app.models import Agent, LLMProvider, Orchestrator, Task
+from app.models import Agent, AppOrchestrator, LLMProvider, Orchestrator, Task
 from app.services import context_service, run_recorder, task_store
 from app.services.providers import create_provider
 from app.services.providers.base import (
@@ -34,8 +34,13 @@ from app.services.providers.base import (
 )
 from app.utils.logger import logger
 
-_ORCH_PREFIX = "them:orchestrators:"
+_ORCH_TMPL_PREFIX = "them:orch:tmpl:"
+_ORCH_LOC_PREFIX  = "them:orch:loc:"
 _ORCH_TTL = 600
+
+
+def _app_orch_key(app_id: str, name: str) -> str:
+    return f"them:app:{app_id}:orch:{name}"
 _DASH_RUN_PREFIX = "them:dash:run:"
 _DASH_RUNS_CHANNEL = "them:dash:runs"
 _CARD_TTL_SECONDS = 3600  # re-fetch A2A agent card at most once per hour
@@ -75,6 +80,7 @@ class _OrchestratorProxy:
     rate_limit_rpm: int
     daily_budget_usd: Decimal
     delegatable: bool = False
+    is_app_orchestrator: bool = False
     memory_enabled: bool = False
     summarize_every_n_calls: int = 3
     memory_raw_fallback_n: int = 5
@@ -83,68 +89,121 @@ class _OrchestratorProxy:
     summarizer_api_key_encrypted: Optional[str] = None
     history_window: int = 20
     budget_tokens: Optional[int] = None
+    application_id: Optional[str] = None
 
 
 async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orchestrator]:
-    """Load orchestrator from Redis cache → DB."""
-    # Try Redis cache first
-    if db_module.redis_client is not None:
+    """Load orchestrator from Redis cache → DB.
+
+    Resolution order:
+      1. them:orch:loc:{name} → "tmpl" or "app:{app_id}" → fetch config key
+      2. them.app_orchestrators WHERE name=name AND enabled=true
+      3. Fallback: them.orchestrators WHERE name=name AND enabled=true
+    """
+    redis = db_module.redis_client
+    if redis is not None:
         try:
-            cached = await db_module.redis_client.get(f"{_ORCH_PREFIX}{name}")
-            if cached:
-                data = json.loads(cached)
-                return _OrchestratorProxy(
-                    id=uuid.UUID(data["id"]),
-                    name=data["name"],
-                    display_name=data.get("display_name", ""),
-                    system_prompt=data.get("system_prompt", ""),
-                    allowed_agent_ids=[uuid.UUID(x) for x in data.get("allowed_agent_ids", [])],
-                    llm_provider=data.get("llm_provider", "anthropic"),
-                    llm_model=data.get("llm_model", ""),
-                    llm_api_key_encrypted=data.get("llm_api_key_encrypted"),
-                    llm_base_url=data.get("llm_base_url"),
-                    max_iterations=data.get("max_iterations", 10),
-                    max_parallel_tools=data.get("max_parallel_tools", 4),
-                    rate_limit_rpm=data.get("rate_limit_rpm", 60),
-                    daily_budget_usd=Decimal(str(data.get("daily_budget_usd", "0"))),
-                    delegatable=data.get("delegatable", False),
-                    memory_enabled=data.get("memory_enabled", False),
-                    summarize_every_n_calls=data.get("summarize_every_n_calls", 3),
-                    memory_raw_fallback_n=data.get("memory_raw_fallback_n", 5),
-                    summarizer_provider=data.get("summarizer_provider"),
-                    summarizer_model=data.get("summarizer_model"),
-                    summarizer_api_key_encrypted=data.get("summarizer_api_key_encrypted"),
-                    history_window=data.get("history_window", 20),
-                    budget_tokens=data.get("budget_tokens"),
-                )  # type: ignore[return-value]
+            loc = await redis.get(f"{_ORCH_LOC_PREFIX}{name}")
+            if isinstance(loc, (bytes, bytearray)):
+                loc = loc.decode()
+            if loc == "tmpl":
+                cached = await redis.get(f"{_ORCH_TMPL_PREFIX}{name}")
+                if cached:
+                    data = json.loads(cached)
+                    return _OrchestratorProxy(
+                        id=uuid.UUID(data["id"]),
+                        name=data["name"],
+                        display_name=data.get("display_name", ""),
+                        system_prompt=data.get("system_prompt", ""),
+                        allowed_agent_ids=[uuid.UUID(x) for x in data.get("allowed_agent_ids", [])],
+                        llm_provider=data.get("llm_provider", "anthropic"),
+                        llm_model=data.get("llm_model", ""),
+                        llm_api_key_encrypted=data.get("llm_api_key_encrypted"),
+                        llm_base_url=data.get("llm_base_url"),
+                        max_iterations=data.get("max_iterations", 10),
+                        max_parallel_tools=data.get("max_parallel_tools", 4),
+                        rate_limit_rpm=data.get("rate_limit_rpm", 60),
+                        daily_budget_usd=Decimal(str(data.get("daily_budget_usd", "0"))),
+                        delegatable=data.get("delegatable", False),
+                        is_app_orchestrator=data.get("is_app_orchestrator", False),
+                        memory_enabled=data.get("memory_enabled", False),
+                        summarize_every_n_calls=data.get("summarize_every_n_calls", 3),
+                        memory_raw_fallback_n=data.get("memory_raw_fallback_n", 5),
+                        summarizer_provider=data.get("summarizer_provider"),
+                        summarizer_model=data.get("summarizer_model"),
+                        summarizer_api_key_encrypted=data.get("summarizer_api_key_encrypted"),
+                        history_window=data.get("history_window", 20),
+                        budget_tokens=data.get("budget_tokens"),
+                        application_id=data.get("application_id"),
+                    )  # type: ignore[return-value]
+            elif loc and loc.startswith("app:"):
+                app_id = loc[4:]
+                cached = await redis.get(_app_orch_key(app_id, name))
+                if cached:
+                    data = json.loads(cached)
+                    return _OrchestratorProxy(
+                        id=uuid.UUID(data["id"]),
+                        name=data["name"],
+                        display_name=data.get("display_name", ""),
+                        system_prompt=data.get("system_prompt", ""),
+                        allowed_agent_ids=[uuid.UUID(x) for x in data.get("allowed_agent_ids", [])],
+                        llm_provider=data.get("llm_provider", "anthropic"),
+                        llm_model=data.get("llm_model", ""),
+                        llm_api_key_encrypted=data.get("llm_api_key_encrypted"),
+                        llm_base_url=data.get("llm_base_url"),
+                        max_iterations=data.get("max_iterations", 10),
+                        max_parallel_tools=data.get("max_parallel_tools", 4),
+                        rate_limit_rpm=data.get("rate_limit_rpm", 60),
+                        daily_budget_usd=Decimal(str(data.get("daily_budget_usd", "0"))),
+                        delegatable=data.get("delegatable", False),
+                        is_app_orchestrator=data.get("is_app_orchestrator", False),
+                        memory_enabled=data.get("memory_enabled", False),
+                        summarize_every_n_calls=data.get("summarize_every_n_calls", 3),
+                        memory_raw_fallback_n=data.get("memory_raw_fallback_n", 5),
+                        summarizer_provider=data.get("summarizer_provider"),
+                        summarizer_model=data.get("summarizer_model"),
+                        summarizer_api_key_encrypted=data.get("summarizer_api_key_encrypted"),
+                        history_window=data.get("history_window", 20),
+                        budget_tokens=data.get("budget_tokens"),
+                        application_id=data.get("application_id"),
+                    )  # type: ignore[return-value]
         except Exception as exc:
             logger.warning("task_runner: orchestrator cache miss", name=name, error=str(exc))
 
+    # Primary: app-scoped instances
     result = await db.execute(
-        select(Orchestrator).where(Orchestrator.name == name, Orchestrator.enabled == True)
+        select(AppOrchestrator).where(AppOrchestrator.name == name, AppOrchestrator.enabled == True)
     )
     row = result.scalar_one_or_none()
+
+    if row is None:
+        # Fallback: shared templates
+        result2 = await db.execute(
+            select(Orchestrator).where(Orchestrator.name == name, Orchestrator.enabled == True)
+        )
+        row = result2.scalar_one_or_none()
+
     if row is None:
         return None
 
-    # Write to cache
-    if db_module.redis_client is not None:
+    if redis is not None:
         try:
             payload = {
                 "id": str(row.id),
                 "name": row.name,
-                "display_name": row.display_name,
+                "display_name": row.display_name or "",
                 "system_prompt": row.system_prompt or "",
                 "allowed_agent_ids": [str(x) for x in (row.allowed_agent_ids or [])],
                 "llm_provider": row.llm_provider or "anthropic",
-                "llm_model": row.llm_model,
+                "llm_model": row.llm_model or "",
                 "llm_api_key_encrypted": row.llm_api_key_encrypted,
                 "llm_base_url": row.llm_base_url,
                 "max_iterations": row.max_iterations,
                 "max_parallel_tools": row.max_parallel_tools,
-                "rate_limit_rpm": row.rate_limit_rpm,
-                "daily_budget_usd": str(row.daily_budget_usd),
+                "rate_limit_rpm": row.rate_limit_rpm or 60,
+                "daily_budget_usd": str(row.daily_budget_usd or "0"),
                 "delegatable": getattr(row, "delegatable", False),
+                "is_app_orchestrator": isinstance(row, AppOrchestrator),
                 "memory_enabled": getattr(row, "memory_enabled", False),
                 "summarize_every_n_calls": getattr(row, "summarize_every_n_calls", 3),
                 "memory_raw_fallback_n": getattr(row, "memory_raw_fallback_n", 5),
@@ -152,8 +211,16 @@ async def _load_orchestrator_row(name: str, db: AsyncSession) -> Optional[Orches
                 "summarizer_model": getattr(row, "summarizer_model", None),
                 "summarizer_api_key_encrypted": getattr(row, "summarizer_api_key_encrypted", None),
                 "history_window": getattr(row, "history_window", 20),
+                "budget_tokens": getattr(row, "budget_tokens", None),
+                "application_id": str(row.application_id) if isinstance(row, AppOrchestrator) else None,
             }
-            await db_module.redis_client.setex(f"{_ORCH_PREFIX}{name}", _ORCH_TTL, json.dumps(payload))
+            if isinstance(row, AppOrchestrator):
+                app_id = str(row.application_id)
+                await redis.setex(_app_orch_key(app_id, name), _ORCH_TTL, json.dumps(payload))
+                await redis.setex(f"{_ORCH_LOC_PREFIX}{name}", _ORCH_TTL, f"app:{app_id}")
+            else:
+                await redis.setex(f"{_ORCH_TMPL_PREFIX}{name}", _ORCH_TTL, json.dumps(payload))
+                await redis.setex(f"{_ORCH_LOC_PREFIX}{name}", _ORCH_TTL, "tmpl")
         except Exception:
             pass
 

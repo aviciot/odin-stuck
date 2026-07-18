@@ -18,9 +18,14 @@ from app.models import Agent, AppOrchestrator, LLMProvider, Orchestrator
 from app.temporal.shared import AgentConfig, LoadContextResult, OrchestratorConfig
 from app.utils.logger import logger
 
-_ORCH_PREFIX = "them:orchestrators:"
+_ORCH_TMPL_PREFIX = "them:orch:tmpl:"          # shared template (them.orchestrators)
+_ORCH_LOC_PREFIX  = "them:orch:loc:"           # locator: "tmpl" | "app:{app_id}"
 _ORCH_TTL = 600
 _CARD_TTL_SECONDS = 3600
+
+
+def _app_orch_key(app_id: str, name: str) -> str:
+    return f"them:app:{app_id}:orch:{name}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -31,28 +36,39 @@ async def load_orchestrator_row(name: str, db: AsyncSession):
     """Load orchestrator config from Redis cache or DB. Returns an ORM row or proxy.
 
     Resolution order:
-      1. Redis cache (them:orchestrators:{name}) → proxy object
+      1. them:orch:loc:{name} → tells which namespace holds the config:
+           "tmpl"         → them:orch:tmpl:{name}         (them.orchestrators)
+           "app:{app_id}" → them:app:{app_id}:orch:{name} (them.app_orchestrators)
       2. them.app_orchestrators WHERE name = name AND enabled = true
       3. Fallback: them.orchestrators WHERE name = name AND enabled = true
-         (for seeded/pre-migration orchestrators not yet converted to app_orchestrators)
+    On DB hit both the config key and the locator are written with TTL 600s.
     """
-    if db_module.redis_client is not None:
+    redis = db_module.redis_client
+    if redis is not None:
         try:
-            cached = await db_module.redis_client.get(f"{_ORCH_PREFIX}{name}")
-            if cached:
-                data = json.loads(cached)
-                return _make_proxy(data)
+            loc = await redis.get(f"{_ORCH_LOC_PREFIX}{name}")
+            if isinstance(loc, (bytes, bytearray)):
+                loc = loc.decode()
+            if loc == "tmpl":
+                cached = await redis.get(f"{_ORCH_TMPL_PREFIX}{name}")
+                if cached:
+                    return _make_proxy(json.loads(cached))
+            elif loc and loc.startswith("app:"):
+                app_id = loc[4:]
+                cached = await redis.get(_app_orch_key(app_id, name))
+                if cached:
+                    return _make_proxy(json.loads(cached))
         except Exception as exc:
             logger.warning("loaders: orchestrator cache miss", name=name, error=str(exc))
 
-    # Primary: resolve against AppOrchestrator (app-scoped instances)
+    # Primary: app-scoped instances
     result = await db.execute(
         select(AppOrchestrator).where(AppOrchestrator.name == name, AppOrchestrator.enabled == True)
     )
     row = result.scalar_one_or_none()
 
     if row is None:
-        # Fallback for seeded/pre-migration orchestrators not yet converted to app_orchestrators
+        # Fallback: shared templates (playground, canvas advisor, seeded orchs)
         result2 = await db.execute(
             select(Orchestrator).where(Orchestrator.name == name, Orchestrator.enabled == True)
         )
@@ -61,12 +77,16 @@ async def load_orchestrator_row(name: str, db: AsyncSession):
     if row is None:
         return None
 
-    if db_module.redis_client is not None:
+    if redis is not None:
         try:
             payload = _orchestrator_to_cache_dict(row)
-            await db_module.redis_client.setex(
-                f"{_ORCH_PREFIX}{name}", _ORCH_TTL, json.dumps(payload)
-            )
+            if isinstance(row, AppOrchestrator):
+                app_id = str(row.application_id)
+                await redis.setex(_app_orch_key(app_id, name), _ORCH_TTL, json.dumps(payload))
+                await redis.setex(f"{_ORCH_LOC_PREFIX}{name}", _ORCH_TTL, f"app:{app_id}")
+            else:
+                await redis.setex(f"{_ORCH_TMPL_PREFIX}{name}", _ORCH_TTL, json.dumps(payload))
+                await redis.setex(f"{_ORCH_LOC_PREFIX}{name}", _ORCH_TTL, "tmpl")
         except Exception:
             pass
 
@@ -102,6 +122,7 @@ def _make_proxy(data: dict):
         summarizer_api_key_encrypted: Optional[str] = None
         history_window: int = 20
         budget_tokens: Optional[int] = None
+        application_id: Optional[str] = None
 
     return _OrchestratorProxy(
         id=uuid.UUID(data["id"]),
@@ -127,6 +148,7 @@ def _make_proxy(data: dict):
         summarizer_api_key_encrypted=data.get("summarizer_api_key_encrypted"),
         history_window=data.get("history_window", 20),
         budget_tokens=data.get("budget_tokens"),
+        application_id=data.get("application_id"),
     )
 
 
@@ -155,6 +177,7 @@ def _orchestrator_to_cache_dict(row) -> dict:
         "summarizer_api_key_encrypted": getattr(row, "summarizer_api_key_encrypted", None),
         "history_window": getattr(row, "history_window", 20),
         "budget_tokens": getattr(row, "budget_tokens", None),
+        "application_id": str(row.application_id) if isinstance(row, AppOrchestrator) else None,
     }
 
 
