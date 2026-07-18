@@ -352,6 +352,8 @@ class Application(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Canvas layout: {layout: {"ep:<slug>": {x,y}, "orch:<ao_id>": {x,y}, ...}, viewport: {x,y,zoom}}
     canvas: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    # Runtime policy: {max_concurrent_sessions, rate_limit_rpm, blocked_tokens[], blocked_user_ids[], session_timeout_minutes}
+    runtime_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -383,6 +385,7 @@ class EntryPoint(Base):
     entry_point_type: Mapped[str] = mapped_column(Text, nullable=False)
     access_policy: Mapped[dict] = mapped_column(JSONB, nullable=False, default=lambda: {"mode": "token"})
     conversation_token_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    max_concurrent_sessions: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

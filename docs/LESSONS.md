@@ -589,3 +589,29 @@ Pub/Sub is faster than a Hash read. If you publish first, a reconnecting client 
 **Root cause:** `005_phase10.sql` tried to `ADD CONSTRAINT ... CHECK (entry_point_type IN ...)` on `them.applications`. That column was moved to `them.entry_points` by `010_app_entrypoints.sql`. On a live DB that already had `010` applied, the constraint was already gone. On a clean CI schema, the column never existed — so the ALTER TABLE failed, aborted the transaction, and the rest of that migration was skipped.
 **Fix:** Neutralized `005_phase10.sql` to only `DROP CONSTRAINT IF EXISTS` (always a no-op). Principle: never ADD or reference a column that a later migration moves or drops — either update the earlier migration or make it a no-op.
 **Watch for:** Any migration that does `ADD CONSTRAINT`, `ADD COLUMN`, or `ALTER COLUMN` on a table that a later migration restructures. On a live DB it looks fine (the column exists from the original schema); on a clean CI schema it fails because that migration runs before the column is added.
+
+---
+
+## 2026-07-18 — SCARD+SADD race and ghost EP set entries
+
+**Symptom (potential):** Under a concurrent session cap, two simultaneous connections both read SCARD=N (below cap) before either SADDs, both proceed, cap is exceeded by 1. Under pod crashes, session_ids left in `them:ep:{slug}:sessions` permanently consume cap slots even though the session is long dead.
+
+**Root cause (race):** A pipeline-based SCARD + SADD is NOT atomic across Redis replicas (or even concurrent connections to the same Redis). Two clients can both see the same count before either writes.
+
+**Fix (race):** Use a server-side Lua script via `EVAL`. The script executes atomically on Redis: prunes ghost entries (session_ids whose `them:sess:{id}` hash no longer exists), checks the live count, then SADDs the new session_id — all in a single uninterruptible operation. Pipeline is wrong for this; only Lua EVAL or SETNX/WATCH/MULTI gives true atomicity.
+
+**Fix (ghost entries):** The Lua gate script checks `EXISTS them:sess:{sid}` for every member before counting. If the session hash has expired (90s TTL, pod crash), the member is SREMed before the cap comparison. This ensures the SCARD reflects only genuinely live sessions.
+
+**Watch for:** Any Redis pattern that does read-then-write where the correctness depends on the count being stable between the two operations. Prefer Lua EVAL for any check-and-modify pattern.
+
+---
+
+## 2026-07-18 — asyncio.wait result guard must check task result, not just task presence in done set
+
+**Symptom:** Admin session terminate worked but so did Redis errors — any exception in the control listener caused the workflow to be cancelled and WS closed with 4000 "terminated by administrator".
+
+**Root cause:** `asyncio.wait([stream_t, cancel_t, control_t])` returns a task in `done` regardless of whether it completed normally, raised, or returned `None`. The guard `if control_t in done:` was missing the result check — it fired on both normal termination signals AND on any Redis error that caused the coroutine to fall through with `None`.
+
+**Fix:** Always check `task.result()` after checking task membership in `done`: `if control_t in done and control_t.result() == "admin_terminate":`. The control listener explicitly returns `"admin_terminate"` only when a real signal was received; exceptions swallowed by `except: pass` leave it returning `None`.
+
+**Watch for:** Any pattern using `asyncio.wait` with tasks that have multiple exit paths — always check both `in done` AND the actual return value or exception.

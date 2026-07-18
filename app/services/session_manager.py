@@ -27,11 +27,13 @@ from typing import Optional
 import app.database as db_module
 from app.utils.logger import logger
 
-_SESS_PREFIX  = "them:sess:"
-_EP_PREFIX    = "them:ep:"
-_APP_PREFIX   = "them:app:"
-_POD_PREFIX   = "them:pod:"
-_PODS_KEY     = "them:pods"
+_SESS_PREFIX         = "them:sess:"
+_EP_PREFIX           = "them:ep:"
+_APP_PREFIX          = "them:app:"
+_POD_PREFIX          = "them:pod:"
+_PODS_KEY            = "them:pods"
+# Canonical definition is in runtime_manager._SESS_CONTROL_PREFIX — same value, single source of truth
+_SESS_CONTROL_PREFIX = "them:sess:control:"  # pub/sub channel — used only in docstring/comments here
 
 _SESS_TTL     = 90   # seconds — refreshed by touch(); expires if pod dies
 _POD_TTL      = 30   # seconds — refreshed by heartbeat loop every 15s
@@ -268,6 +270,19 @@ async def write_pod_heartbeat(instance_id: str, session_count: int) -> None:
         await redis.sadd(_PODS_KEY, instance_id)
     except Exception as exc:
         logger.warning("session_manager.write_pod_heartbeat failed", error=str(exc))
+
+
+# ── Cross-replica admin control ────────────────────────────────────────────────
+
+async def signal_disconnect(session_id: uuid.UUID) -> bool:
+    """
+    Publish a disconnect signal for the given session.
+    The per-session control listener in apps.py / ws_orchestrator.py will receive
+    this and close the WebSocket with code 4000 ("terminated by admin").
+    Best-effort — never raises.
+    """
+    from app.services.runtime_manager import signal_disconnect as _signal
+    return await _signal(session_id)
 
 
 # ── Internal ──────────────────────────────────────────────────────────────────

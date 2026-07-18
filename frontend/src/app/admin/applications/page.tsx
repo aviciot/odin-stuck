@@ -5,7 +5,7 @@ const dagre: any = (typeof window !== 'undefined' ? require('dagre') : null);
 import Sidebar from '@/components/Sidebar';
 import ChromaGrid from '@/components/ChromaGrid';
 import AuthGuard from '@/components/AuthGuard';
-import { themApi, type Application, type Agent, type MiddlewareDef, type AppOrchestratorOut, type SessionInfo, type MonitoringConfig } from '@/lib/api';
+import { themApi, type Application, type Agent, type EntryPoint, type MiddlewareDef, type AppOrchestratorOut, type SessionInfo, type MonitoringConfig } from '@/lib/api';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -3506,6 +3506,7 @@ function AppCard({
   onToggleSelect,
   onEdit,
   onSessions,
+  onRuntime,
   onToggle,
   onDelete,
   onUrls,
@@ -3517,6 +3518,7 @@ function AppCard({
   onToggleSelect?: (id: string, checked: boolean) => void;
   onEdit: (a: Application) => void;
   onSessions: (a: Application) => void;
+  onRuntime: (a: Application) => void;
   onToggle: (a: Application) => void;
   onDelete: (a: Application) => void;
   onUrls: (a: Application) => void;
@@ -3695,10 +3697,11 @@ function AppCard({
       {/* Action buttons */}
       {(() => {
         const webrtcEp = app.entry_points.find(e => e.entry_point_type === 'webrtc');
+        const hasRuntime = app.runtime_config && Object.values(app.runtime_config).some(v => v !== null && !(Array.isArray(v) && v.length === 0));
         return (
           <div style={{
             borderTop: '1px solid var(--tm-divider)', padding: '10px 14px', display: 'grid',
-            gridTemplateColumns: webrtcEp ? '2fr 1fr 1fr 1fr' : '2fr 1fr 1fr',
+            gridTemplateColumns: webrtcEp ? '2fr 1fr 1fr 1fr 1fr' : '2fr 1fr 1fr 1fr',
             gap: 8,
           }}>
             {/* Sessions button */}
@@ -3734,6 +3737,23 @@ function AppCard({
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               <span className="material-symbols-outlined" style={{ fontSize: 15 }}>open_in_new</span>
               Open Builder
+            </button>
+            {/* Runtime button */}
+            <button
+              className="app-card-btn"
+              onClick={() => onRuntime(app)}
+              title="Runtime policy"
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                background: hasRuntime ? 'rgba(251,146,60,0.1)' : 'rgba(255,255,255,0.03)',
+                color: hasRuntime ? '#fb923c' : C.textMuted,
+                border: `1px solid ${hasRuntime ? 'rgba(251,146,60,0.4)' : 'rgba(255,255,255,0.1)'}`,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(251,146,60,0.15)'; e.currentTarget.style.color = '#fb923c'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = hasRuntime ? 'rgba(251,146,60,0.1)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.color = hasRuntime ? '#fb923c' : C.textMuted; }}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: 14 }}>tune</span>
+              Runtime
             </button>
             {webrtcEp && (
               <button
@@ -3870,6 +3890,133 @@ function useDashSessions(token: string | null, appId: string | null): {
   return { sessions, connected };
 }
 
+// ── RuntimeView ───────────────────────────────────────────────────────────────
+function RuntimeView({ app, onBack }: { app: Application; onBack: () => void }) {
+  const emptyRuntime = { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null };
+  const [cfg, setCfg] = useState<import('@/lib/api').AppRuntimeConfig>(app.runtime_config ?? emptyRuntime);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Tag input helpers
+  const [tokensInput, setTokensInput] = useState((app.runtime_config?.blocked_tokens ?? []).join('\n'));
+  const [usersInput, setUsersInput] = useState((app.runtime_config?.blocked_user_ids ?? []).join(', '));
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      const parsedUsers = usersInput.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(Number).filter(n => !isNaN(n));
+      const parsedTokens = tokensInput.split(/\n/).map(s => s.trim()).filter(Boolean);
+      const payload = { ...cfg, blocked_tokens: parsedTokens, blocked_user_ids: parsedUsers };
+      await themApi.putAppRuntime(app.id, payload);
+      setCfg(payload);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const fieldStyle: React.CSSProperties = {
+    width: '100%', padding: '10px 12px', borderRadius: 8,
+    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
+    color: C.text, fontSize: 14, outline: 'none', boxSizing: 'border-box',
+  };
+  const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: C.textMuted, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6, display: 'block' };
+  const sectionStyle: React.CSSProperties = { ...glass, borderRadius: 12, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 };
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '40px 40px 60px', background: C.bg }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 32 }}>
+        <button onClick={onBack} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>arrow_back</span>
+          Applications
+        </button>
+        <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 18 }}>/</span>
+        <span style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>{app.name}</span>
+        <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 18 }}>/</span>
+        <span style={{ fontSize: 14, color: '#fb923c', fontWeight: 700 }}>Runtime Policy</span>
+      </div>
+
+      <div style={{ maxWidth: 640 }}>
+        {/* Session Limits */}
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Session Limits</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div>
+              <label style={labelStyle}>Max Concurrent Sessions</label>
+              <input type="number" min={1} placeholder="Unlimited"
+                value={cfg.max_concurrent_sessions ?? ''} style={fieldStyle}
+                onChange={e => setCfg(c => ({ ...c, max_concurrent_sessions: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>App-wide soft cap. Empty = unlimited.</div>
+            </div>
+            <div>
+              <label style={labelStyle}>Session Timeout (minutes)</label>
+              <input type="number" min={1} placeholder="No timeout"
+                value={cfg.session_timeout_minutes ?? ''} style={fieldStyle}
+                onChange={e => setCfg(c => ({ ...c, session_timeout_minutes: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+              <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Advisory. Empty = no timeout.</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Rate Limiting */}
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Rate Limiting</div>
+          <div>
+            <label style={labelStyle}>App Rate Limit (requests per minute)</label>
+            <input type="number" min={1} placeholder="Unlimited"
+              value={cfg.rate_limit_rpm ?? ''} style={fieldStyle}
+              onChange={e => setCfg(c => ({ ...c, rate_limit_rpm: e.target.value === '' ? null : parseInt(e.target.value) }))} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Applied across all entry points of this app. Separate from per-orchestrator rate limits.</div>
+          </div>
+        </div>
+
+        {/* Access Control */}
+        <div style={sectionStyle}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>Access Control</div>
+          <div>
+            <label style={labelStyle}>Blocked User IDs (comma-separated)</label>
+            <input type="text" placeholder="e.g. 42, 107, 889"
+              value={usersInput} style={fieldStyle}
+              onChange={e => setUsersInput(e.target.value)} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Connections from these user IDs are rejected before any processing.</div>
+          </div>
+          <div>
+            <label style={labelStyle}>Blocked Token Hashes (one per line)</label>
+            <textarea placeholder="sha256 hash of each blocked access token"
+              value={tokensInput} rows={4}
+              style={{ ...fieldStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
+              onChange={e => setTokensInput(e.target.value)} />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>Paste the SHA-256 hash of the token (not the raw token). One hash per line.</div>
+          </div>
+        </div>
+
+        {/* Save */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            style={{
+              padding: '11px 28px', borderRadius: 8, border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
+              background: '#fb923c', color: '#000', fontSize: 14, fontWeight: 700,
+              opacity: saving ? 0.6 : 1,
+            }}
+          >
+            {saving ? 'Saving…' : 'Save Runtime Config'}
+          </button>
+          {saved && <span style={{ fontSize: 13, color: C.green }}>Saved</span>}
+          {error && <span style={{ fontSize: 13, color: C.error }}>{error}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── SessionsView ──────────────────────────────────────────────────────────────
 const SESSIONS_STYLES = `
 @keyframes sess-pulse {
@@ -3918,11 +4065,14 @@ const SESSIONS_STYLES = `
 `;
 
 // Read-only canvas node wrappers — same visuals as builder, but with session count badge
-function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: string; _sessCount?: number; _heatStyle?: React.CSSProperties } }) {
+function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: string; _sessCount?: number; _maxSessions?: number | null; _heatStyle?: React.CSSProperties } }) {
   const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
   const msIcon = EP_MS_ICON[data.epType ?? 'websocket'] ?? 'bolt';
   const count = data._sessCount ?? 0;
-  const accent = C.cyan;
+  const maxSess = data._maxSessions ?? null;
+  const atCap = maxSess !== null && count >= maxSess;
+  const accent = atCap ? '#f59e0b' : C.cyan;
+  const badgeTitle = maxSess !== null ? `${count} / ${maxSess} sessions` : `${count} sessions`;
   const baseStyle: React.CSSProperties = {
     width: 56, height: 56, borderRadius: '50%',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3931,7 +4081,7 @@ function EPNodeRO({ data }: { data: { label?: string; slug?: string; epType?: st
   };
   return (
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', fontFamily: 'Inter, sans-serif', cursor: 'default' }}>
-      {count > 0 && <div className={`sess-badge${count > 0 ? ' active' : ''}`}>{count}</div>}
+      {count > 0 && <div className={`sess-badge${count > 0 ? ' active' : ''}`} title={badgeTitle} style={atCap ? { background: 'rgba(245,158,11,0.18)', border: '1.5px solid rgba(245,158,11,0.7)', color: '#f59e0b', boxShadow: '0 0 8px rgba(245,158,11,0.3)' } : undefined}>{count}{maxSess !== null ? `/${maxSess}` : ''}</div>}
       <div style={{ ...baseStyle, ...(count > 0 && data._heatStyle ? data._heatStyle : {}) }}>
         <span className="material-symbols-outlined" style={{ fontSize: 28, color: accent }}>{msIcon}</span>
       </div>
@@ -4038,7 +4188,7 @@ function edgeStrokeWidth(count: number, cfg: MonitoringConfig): number {
 }
 
 function SessionsView({
-  app,
+  app: initialApp,
   agents,
   onBack,
   token,
@@ -4048,10 +4198,61 @@ function SessionsView({
   onBack: () => void;
   token: string | null;
 }) {
+  const [app, setApp] = useState(initialApp);
   const { sessions, connected } = useDashSessions(token, app.id);
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   const [tick, setTick] = useState(0);
   const [monCfg, setMonCfg] = useState<MonitoringConfig>(MON_DEFAULTS);
+
+  // Optimistic terminate: sessions hidden pending WS confirmation of session_end
+  // hiddenSessions doubles as "terminating" — once hidden the row is gone from the list
+  const [hiddenSessions, setHiddenSessions] = useState<Set<string>>(new Set());
+
+  // When session_end arrives via WS, useDashSessions removes it from sessions[];
+  // no further action needed — the hidden entry is simply never un-hidden for dead sessions.
+
+  async function handleTerminate(sid: string) {
+    setHiddenSessions(h => new Set(h).add(sid));
+    try {
+      await themApi.disconnectSession(sid);
+    } catch {
+      // Signal failed — un-hide so user can retry
+      setHiddenSessions(h => { const n = new Set(h); n.delete(sid); return n; });
+    }
+  }
+
+  // Per-EP limit editing
+  const [epLimits, setEpLimits] = useState<Record<string, string>>({});
+  const [savingEpLimit, setSavingEpLimit] = useState<string | null>(null);
+
+  async function saveEpLimit(ep: EntryPoint) {
+    const raw = epLimits[ep.id];
+    const val = raw === '' ? null : parseInt(raw, 10);
+    if (raw !== undefined && raw !== '' && (isNaN(val as number) || (val as number) < 1)) return;
+    setSavingEpLimit(ep.id);
+    try {
+      const updatedEps = app.entry_points.map(e =>
+        e.id === ep.id ? { ...e, max_concurrent_sessions: val ?? null } : e
+      );
+      const updated = await themApi.updateApplication(app.id, {
+        entry_points: updatedEps.map(e => ({
+          id: e.id,
+          slug: e.slug,
+          entry_point_type: e.entry_point_type,
+          access_policy: e.access_policy,
+          conversation_token_limit: e.conversation_token_limit,
+          max_concurrent_sessions: e.max_concurrent_sessions,
+          enabled: e.enabled,
+        })),
+      });
+      setApp(updated);
+      setEpLimits(prev => { const n = { ...prev }; delete n[ep.id]; return n; });
+    } catch {
+      // leave input dirty so user can retry
+    } finally {
+      setSavingEpLimit(null);
+    }
+  }
 
   // Load monitoring config once
   useEffect(() => {
@@ -4066,8 +4267,15 @@ function SessionsView({
 
   // Build read-only nodes/edges from app, with session counts overlaid
   const epCountBySlug = new Map<string, number>();
-  sessions.forEach(s => {
+  const visibleSessions = sessions.filter(s => !hiddenSessions.has(s.session_id));
+  visibleSessions.forEach(s => {
     if (s.ep_slug) epCountBySlug.set(s.ep_slug, (epCountBySlug.get(s.ep_slug) ?? 0) + 1);
+  });
+
+  // Build ep max map for badge display
+  const epMaxBySlug = new Map<string, number | null>();
+  app.entry_points.forEach(ep => {
+    epMaxBySlug.set(ep.slug, ep.max_concurrent_sessions ?? null);
   });
 
   const { nodes: baseNodes, edges: baseEdges } = buildNodesFromApp(app, agents);
@@ -4078,13 +4286,15 @@ function SessionsView({
 
   const nodes = baseNodes.map(n => {
     if (n.type === 'entryPoint' && n.data?.slug) {
-      const count = epCountBySlug.get(n.data.slug as string) ?? 0;
+      const slug = n.data.slug as string;
+      const count = epCountBySlug.get(slug) ?? 0;
+      const maxSess = epMaxBySlug.get(slug) ?? null;
       if (count > 0) activeEpNodeIds.add(n.id);
-      return { ...n, data: { ...n.data, _sessCount: count, _heatStyle: heatmapStyle(count, monCfg, 'ep') } };
+      return { ...n, data: { ...n.data, _sessCount: count, _maxSessions: maxSess, _heatStyle: heatmapStyle(count, monCfg, 'ep') } };
     }
     if (n.type === 'orchestrator') {
       const orchName = (n.data as any)?.name ?? '';
-      const orchCount = sessions.filter(s => s.orchestrator_name === orchName).length;
+      const orchCount = visibleSessions.filter(s => s.orchestrator_name === orchName).length;
       if (orchCount > 0) activeOrchNodeIds.add(n.id);
       return { ...n, data: { ...n.data, _sessCount: orchCount, _heatStyle: heatmapStyle(orchCount, monCfg, 'orch') } };
     }
@@ -4093,7 +4303,7 @@ function SessionsView({
 
   // Which agent slugs are actively being called right now (across all sessions, parallel-safe)
   const activeAgentSlugs = new Set(
-    sessions.flatMap(s => s.active_agents ?? [])
+    visibleSessions.flatMap(s => s.active_agents ?? [])
   );
 
   // Count sessions flowing through each edge path for thickness scaling
@@ -4115,7 +4325,7 @@ function SessionsView({
       };
     }
     if (isOrchAgent) {
-      const orchCount = sessions.filter(s => s.active_agents?.includes(targetSlug)).length;
+      const orchCount = visibleSessions.filter(s => s.active_agents?.includes(targetSlug)).length;
       const sw = edgeStrokeWidth(orchCount, monCfg);
       return {
         ...e,
@@ -4132,7 +4342,7 @@ function SessionsView({
   });
 
   // Cap session list for UI performance
-  const displaySessions = sessions.slice(0, monCfg.panel_max_sessions);
+  const displaySessions = visibleSessions.slice(0, monCfg.panel_max_sessions);
   void tick; // used indirectly by elapsed() rerender
 
   const EP_MS_ICON: Record<string, string> = { websocket: 'bolt', sse: 'stream', webrtc: 'videocam', a2a: 'robot_2', voice: 'mic' };
@@ -4195,12 +4405,12 @@ function SessionsView({
         <div style={{
           display: 'flex', alignItems: 'center', gap: 6,
           padding: '5px 14px', borderRadius: 20,
-          background: sessions.length > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)',
-          border: `1px solid ${sessions.length > 0 ? C.cyanBorder : 'rgba(255,255,255,0.08)'}`,
+          background: visibleSessions.length > 0 ? 'rgba(0,240,255,0.08)' : 'rgba(255,255,255,0.03)',
+          border: `1px solid ${visibleSessions.length > 0 ? C.cyanBorder : 'rgba(255,255,255,0.08)'}`,
         }}>
-          <span className="material-symbols-outlined" style={{ fontSize: 14, color: sessions.length > 0 ? C.cyan : C.textMuted }}>person</span>
-          <span style={{ fontSize: 13, fontWeight: 700, color: sessions.length > 0 ? C.cyan : C.textMuted }}>
-            {sessions.length} active
+          <span className="material-symbols-outlined" style={{ fontSize: 14, color: visibleSessions.length > 0 ? C.cyan : C.textMuted }}>person</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: visibleSessions.length > 0 ? C.cyan : C.textMuted }}>
+            {visibleSessions.length} active
           </span>
         </div>
       </div>
@@ -4230,7 +4440,7 @@ function SessionsView({
           </ReactFlowProvider>
 
           {/* Empty state overlay */}
-          {sessions.length === 0 && connected && (
+          {visibleSessions.length === 0 && connected && (
             <div style={{
               position: 'absolute', top: '50%', left: '50%',
               transform: 'translate(-50%, -50%)',
@@ -4262,12 +4472,12 @@ function SessionsView({
               fontSize: 11, fontWeight: 700, color: C.textMuted,
               background: 'rgba(255,255,255,0.05)', borderRadius: 10,
               padding: '2px 8px', border: `1px solid ${C.outline}`,
-            }}>{sessions.length}</span>
+            }}>{visibleSessions.length}</span>
           </div>
 
           {/* Session list */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 8px 0' }}>
-            {sessions.length === 0 && connected && (
+            {visibleSessions.length === 0 && connected && (
               <div style={{ padding: '32px 16px', textAlign: 'center', color: C.textMuted, fontSize: 13 }}>
                 Waiting for sessions…
               </div>
@@ -4277,9 +4487,9 @@ function SessionsView({
                 Connecting…
               </div>
             )}
-            {sessions.length > monCfg.panel_max_sessions && (
+            {visibleSessions.length > monCfg.panel_max_sessions && (
               <div style={{ margin: '4px 8px 6px', padding: '6px 10px', borderRadius: 8, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.22)', fontSize: 11, color: '#f59e0b' }}>
-                Showing {monCfg.panel_max_sessions} of {sessions.length} sessions
+                Showing {monCfg.panel_max_sessions} of {visibleSessions.length} sessions
               </div>
             )}
             {displaySessions.map(s => {
@@ -4321,15 +4531,77 @@ function SessionsView({
                       </span>
                     </div>
                   </div>
-                  <span className="material-symbols-outlined" style={{
-                    fontSize: 14, color: isSelected ? C.cyan : C.textMuted,
-                    transition: 'color 0.15s', flexShrink: 0,
-                    transform: isSelected ? 'rotate(90deg)' : 'rotate(0)',
-                  }}>chevron_right</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <button
+                      title="Terminate session"
+                      onClick={e => { e.stopPropagation(); handleTerminate(s.session_id); }}
+                      style={{
+                        width: 26, height: 26, borderRadius: 6, border: '1px solid rgba(239,68,68,0.35)',
+                        background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'all 0.15s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.12)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: 13, color: '#ef4444' }}>power_settings_new</span>
+                    </button>
+                    <span className="material-symbols-outlined" style={{
+                      fontSize: 14, color: isSelected ? C.cyan : C.textMuted,
+                      transition: 'color 0.15s',
+                      transform: isSelected ? 'rotate(90deg)' : 'rotate(0)',
+                    }}>chevron_right</span>
+                  </div>
                 </div>
               );
             })}
           </div>
+
+          {/* Entry Point Limits panel */}
+          {app.entry_points.length > 0 && (
+            <div style={{
+              borderTop: `1px solid ${C.outline}`,
+              padding: '12px 16px',
+              flexShrink: 0,
+              background: 'rgba(255,255,255,0.01)',
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>
+                Entry Point Limits
+              </div>
+              {app.entry_points.map(ep => {
+                const current = epCountBySlug.get(ep.slug) ?? 0;
+                const max = ep.max_concurrent_sessions;
+                const atCap = max !== null && current >= max;
+                const inputVal = epLimits[ep.id] !== undefined ? epLimits[ep.id] : (max !== null ? String(max) : '');
+                return (
+                  <div key={ep.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: C.cyan, fontFamily: 'JetBrains Mono, monospace', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
+                      title={ep.slug}>{ep.slug}</span>
+                    <span style={{ fontSize: 11, color: atCap ? '#f59e0b' : C.textMuted, flexShrink: 0 }}>
+                      {current}/{max ?? '∞'}
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="∞"
+                      value={inputVal}
+                      onChange={e => setEpLimits(prev => ({ ...prev, [ep.id]: e.target.value }))}
+                      onBlur={() => saveEpLimit(ep)}
+                      onKeyDown={e => { if (e.key === 'Enter') saveEpLimit(ep); }}
+                      disabled={savingEpLimit !== null}
+                      style={{
+                        width: 52, height: 24, borderRadius: 5, border: `1px solid ${C.outline}`,
+                        background: 'rgba(255,255,255,0.05)', color: C.text,
+                        fontSize: 11, textAlign: 'center', outline: 'none',
+                        fontFamily: 'JetBrains Mono, monospace',
+                        opacity: savingEpLimit !== null ? 0.5 : 1,
+                      }}
+                      title="Max concurrent sessions (blank = unlimited)"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Session detail drawer */}
           {selectedSession && (() => {
@@ -4364,18 +4636,32 @@ function SessionsView({
                     }} title={value}>{value}</span>
                   </div>
                 ))}
-                <button
-                  onClick={() => setSelectedSession(null)}
-                  style={{
-                    marginTop: 8, width: '100%', padding: '6px 0', borderRadius: 6,
-                    border: `1px solid ${C.outline}`, background: 'transparent',
-                    color: C.textMuted, fontSize: 12, cursor: 'pointer',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                >
-                  Close
-                </button>
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  <button
+                    onClick={() => { handleTerminate(s.session_id); setSelectedSession(null); }}
+                    style={{
+                      flex: 1, padding: '6px 0', borderRadius: 6,
+                      border: '1px solid rgba(239,68,68,0.45)', background: 'rgba(239,68,68,0.06)',
+                      color: '#ef4444', fontSize: 12, cursor: 'pointer',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.14)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(239,68,68,0.06)'; }}
+                  >
+                    Terminate
+                  </button>
+                  <button
+                    onClick={() => setSelectedSession(null)}
+                    style={{
+                      flex: 1, padding: '6px 0', borderRadius: 6,
+                      border: `1px solid ${C.outline}`, background: 'transparent',
+                      color: C.textMuted, fontSize: 12, cursor: 'pointer',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             );
           })()}
@@ -4386,7 +4672,7 @@ function SessionsView({
 }
 
 function ListView({
-  list, loading, onNew, onEdit, onSessions, onToggle, onDelete,
+  list, loading, onNew, onEdit, onSessions, onRuntime, onToggle, onDelete,
   selectedApps, onToggleSelect, onSelectAll, onBulkDelete, bulkDeleting,
 }: {
   list: Application[];
@@ -4394,6 +4680,7 @@ function ListView({
   onNew: () => void;
   onEdit: (app: Application) => void;
   onSessions: (app: Application) => void;
+  onRuntime: (app: Application) => void;
   onToggle: (app: Application) => void;
   onDelete: (app: Application) => void;
   selectedApps: Set<string>;
@@ -4566,6 +4853,7 @@ function ListView({
             onToggleSelect={onToggleSelect}
             onEdit={onEdit}
             onSessions={onSessions}
+            onRuntime={onRuntime}
             onToggle={onToggle}
             onDelete={onDelete}
             onUrls={setUrlModalApp}
@@ -4665,9 +4953,10 @@ export default function ApplicationsPage() {
   const [list, setList] = useState<Application[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'list' | 'builder' | 'sessions'>('list');
+  const [view, setView] = useState<'list' | 'builder' | 'sessions' | 'runtime'>('list');
   const [editApp, setEditApp] = useState<Application | null>(null);
   const [sessionsApp, setSessionsApp] = useState<Application | null>(null);
+  const [runtimeApp, setRuntimeApp] = useState<Application | null>(null);
   const [token, setToken] = useState<string | null>(null);
   useEffect(() => {
     fetch('/api/auth/token').then(r => r.ok ? r.json() : null).then(d => { if (d?.token) setToken(d.token); }).catch(() => {});
@@ -4727,6 +5016,7 @@ export default function ApplicationsPage() {
     setView('list');
     setEditApp(null);
     setSessionsApp(null);
+    setRuntimeApp(null);
   }
 
   function openSessions(app: Application) {
@@ -4734,9 +5024,30 @@ export default function ApplicationsPage() {
     setView('sessions');
   }
 
+  function openRuntime(app: Application) {
+    setRuntimeApp(app);
+    setView('runtime');
+  }
+
   async function onBuilderSaved() {
     await load();
     // Stay in builder — let user navigate back manually if they want
+  }
+
+  if (view === 'runtime' && runtimeApp) {
+    return (
+      <AuthGuard>
+        <div style={{ display: 'flex', minHeight: '100vh', background: C.bg }}>
+          <Sidebar />
+          <div style={{ marginLeft: 260, flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+            <RuntimeView
+              app={runtimeApp}
+              onBack={backToList}
+            />
+          </div>
+        </div>
+      </AuthGuard>
+    );
   }
 
   if (view === 'sessions' && sessionsApp) {
@@ -4788,6 +5099,7 @@ export default function ApplicationsPage() {
           onNew={() => openBuilder(null)}
           onEdit={(app) => openBuilder(app)}
           onSessions={openSessions}
+          onRuntime={openRuntime}
           onToggle={handleToggle}
           onDelete={handleDelete}
           selectedApps={selectedApps}

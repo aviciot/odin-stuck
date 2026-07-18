@@ -22,6 +22,7 @@ Design:
 """
 
 import asyncio
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -38,6 +39,7 @@ from app.config import settings as _settings
 from app.models import Application, EntryPoint, Task
 from app.services.auth_client import validate_jwt
 from app.services import task_store
+from app.services.runtime_manager import RuntimeLimitError, _SESS_CONTROL_PREFIX, runtime_gate
 from app.services.session_manager import end as session_end
 from app.services.session_manager import register as session_register
 from app.services.task_runner import run as task_runner_run
@@ -574,6 +576,32 @@ async def ws_entry(slug: str, websocket: WebSocket):
             return
 
     session_id = uuid.uuid4()
+
+    # Compute token hash for blocked-token check (never pass raw token further)
+    _raw_tok = websocket.query_params.get("token") or ""
+    if not _raw_tok:
+        _auth_hdr = websocket.headers.get("authorization", "")
+        if _auth_hdr.lower().startswith("bearer "):
+            _raw_tok = _auth_hdr[7:].strip()
+    token_hash = hashlib.sha256(_raw_tok.encode()).hexdigest() if _raw_tok else None
+
+    # ── Runtime gate: app policy + rate limit + session cap ───────────────────
+    try:
+        await runtime_gate(
+            ep_slug=slug,
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            token_hash=token_hash,
+            app_runtime=(ep.application.runtime_config or {}),
+            ep_max_concurrent=ep.max_concurrent_sessions,
+            rate_limit_rpm=orch.rate_limit_rpm or 0,
+        )
+    except RuntimeLimitError as exc:
+        await websocket.send_json({"type": "error", "message": exc.detail})
+        await websocket.close(code=exc.ws_code)
+        return
+
     await session_register(
         session_id=session_id,
         instance_id=_settings.instance_id,
@@ -618,6 +646,25 @@ async def ws_entry(slug: str, websocket: WebSocket):
                     except (WebSocketDisconnect, Exception):
                         return
 
+            async def _ws_control_listener():
+                """Listen for admin disconnect signals on them:sess:control:{session_id}."""
+                redis = db_module.redis_client
+                if redis is None:
+                    return
+                ctrl_pubsub = redis.pubsub()
+                try:
+                    await ctrl_pubsub.subscribe(f"{_SESS_CONTROL_PREFIX}{session_id}")
+                    async for msg in ctrl_pubsub.listen():
+                        if msg.get("type") == "message":
+                            return "admin_terminate"
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        await ctrl_pubsub.aclose()
+                    except Exception:
+                        pass
+
             stream_t = asyncio.ensure_future(
                 stream_run_events(
                     context_id=str(context_id),
@@ -628,14 +675,25 @@ async def ws_entry(slug: str, websocket: WebSocket):
                 )
             )
             cancel_t = asyncio.ensure_future(_ws_cancel_listener())
-            done, pending = await asyncio.wait([stream_t, cancel_t], return_when=asyncio.FIRST_COMPLETED)
+            control_t = asyncio.ensure_future(_ws_control_listener())
+            done, pending = await asyncio.wait(
+                [stream_t, cancel_t, control_t], return_when=asyncio.FIRST_COMPLETED
+            )
             for t in pending:
                 t.cancel()
                 try:
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
-            if cancel_evt.is_set():
+            if control_t in done and control_t.result() == "admin_terminate":
+                # Admin-terminated: cancel workflow, close WS with 4000
+                await cancel_workflow(workflow_id)
+                try:
+                    await websocket.send_json({"type": "error", "message": "Session terminated by administrator"})
+                    await websocket.close(code=4000)
+                except Exception:
+                    pass
+            elif cancel_evt.is_set():
                 await cancel_workflow(workflow_id)
         else:
             async with db_module.AsyncSessionLocal() as db:

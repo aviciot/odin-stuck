@@ -26,6 +26,7 @@ import app.database as _db
 from app.edges.registry import get_edge_class
 from app.edges.websocket_edge import WebsocketEdge
 from app.services.auth_client import validate_jwt
+from app.services.runtime_manager import RuntimeLimitError, _SESS_CONTROL_PREFIX, runtime_gate
 from app.services.session_manager import end as session_end
 from app.services.session_manager import register as session_register
 from app.services.task_runner import run as task_runner_run
@@ -104,7 +105,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         from sqlalchemy import select
         from app.models import Orchestrator
         orch_result = await db.execute(
-            select(Orchestrator.edges, Orchestrator.history_window).where(
+            select(Orchestrator.edges, Orchestrator.history_window, Orchestrator.rate_limit_rpm).where(
                 Orchestrator.name == name,
                 Orchestrator.enabled == True,
             )
@@ -112,6 +113,7 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         orch_row = orch_result.one_or_none()
         edges_row = orch_row[0] if orch_row is not None else None
         history_window = int(orch_row[1]) if orch_row is not None and orch_row[1] is not None else 20
+        rate_limit_rpm = int(orch_row[2]) if orch_row is not None and orch_row[2] is not None else 0
 
     # edges_row is None if orch not found (task_runner will give the proper error);
     # None also means the column doesn't exist yet (pre-8.6) — allow through.
@@ -150,6 +152,23 @@ async def ws_orchestrate(name: str, websocket: WebSocket):
         context_id = uuid.UUID(client_context_id) if client_context_id else uuid.uuid4()
     except (ValueError, AttributeError):
         context_id = uuid.uuid4()
+
+    # ── Runtime gate: rate limit (no EP cap on direct WS — no ep_slug) ────
+    try:
+        await runtime_gate(
+            ep_slug=None,
+            app_id=None,
+            user_id=user_id,
+            session_id=session_id,
+            token_hash=None,
+            app_runtime=None,
+            ep_max_concurrent=None,
+            rate_limit_rpm=rate_limit_rpm,
+        )
+    except RuntimeLimitError as exc:
+        await websocket.send_json({"type": "error", "message": exc.detail})
+        await websocket.close(code=exc.ws_code)
+        return
 
     # ── Instantiate the WebsocketEdge and relay runner events ─────────────
     edge = WebsocketEdge(websocket, orchestrator_name=name, user_id=user_id)
@@ -238,6 +257,26 @@ async def _run_temporal(
                 cancel_event.set()
                 return True
 
+    async def _control_listener():
+        """Listen for admin disconnect signals on them:sess:control:{session_id}."""
+        redis = _db.redis_client
+        if redis is None:
+            return None
+        ctrl_pubsub = redis.pubsub()
+        try:
+            await ctrl_pubsub.subscribe(f"{_SESS_CONTROL_PREFIX}{session_id}")
+            async for msg in ctrl_pubsub.listen():
+                if msg.get("type") == "message":
+                    return "admin_terminate"
+        except Exception:
+            pass
+        finally:
+            try:
+                await ctrl_pubsub.aclose()
+            except Exception:
+                pass
+        return None
+
     stream_task = asyncio.ensure_future(
         stream_run_events(
             context_id=str(context_id),
@@ -248,9 +287,10 @@ async def _run_temporal(
         )
     )
     cancel_task = asyncio.ensure_future(_cancel_listener())
+    control_task = asyncio.ensure_future(_control_listener())
 
     done, pending = await asyncio.wait(
-        [stream_task, cancel_task],
+        [stream_task, cancel_task, control_task],
         return_when=asyncio.FIRST_COMPLETED,
     )
 
@@ -261,7 +301,15 @@ async def _run_temporal(
         except (asyncio.CancelledError, Exception):
             pass
 
-    if cancel_task in done and cancel_task.result() is True:
+    if control_task in done and control_task.result() == "admin_terminate":
+        logger.info("ws_orchestrate terminated by admin", orchestrator=name, user_id=user_id, session_id=str(session_id))
+        await cancel_workflow(workflow_id)
+        try:
+            await edge.emit({"type": "error", "message": "Session terminated by administrator"})
+            await websocket.close(code=4000)
+        except Exception:
+            pass
+    elif cancel_task in done and cancel_task.result() is True:
         logger.info("ws_orchestrate (temporal) canceled by client", orchestrator=name, user_id=user_id)
         await cancel_workflow(workflow_id)
         try:

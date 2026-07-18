@@ -2424,7 +2424,11 @@ def test_30_graph_compiler():
         s = src("frontend/src/app/admin/applications/page.tsx")
         check("handleSave sends graph: block", "graph:" in s)
         check("handleSave: sends graph nodes+edges", "graphNodes" in s and "graphEdges" in s)
-        check("handleSave: no legacy entry_points inline payload", not ("entry_points:" in s and "handleSave" in s[:s.find("entry_points:")]) if "entry_points:" in s else True)
+        # handleSave must use graph: payload, not inline entry_points
+        hs_start = s.find("async function handleSave(")
+        hs_end   = s.find("\nasync function ", hs_start + 1) if hs_start >= 0 else -1
+        hs_body  = s[hs_start:hs_end] if hs_start >= 0 and hs_end > hs_start else ""
+        check("handleSave: no legacy entry_points inline payload", "entry_points:" not in hs_body)
         check("canvas layout keyed by node id", "canvasLayout" in s and "n.id" in s)
     except Exception as exc:
         check("frontend graph-centric save", False, str(exc))
@@ -2573,6 +2577,229 @@ def test_32_monitoring_config():
         check("applications page SessionsView heatmap", False, str(exc))
 
 
+def test_33_runtime_manager():
+    section("test_33_runtime_manager: runtime_gate + session cap + admin disconnect + FE")
+    sys.path.insert(0, str(ROOT))
+
+    # ── runtime_manager.py ────────────────────────────────────────────────────
+    try:
+        s = src("app/services/runtime_manager.py")
+        check("runtime_manager.py exists", True)
+        check("RuntimeLimitError defined", "class RuntimeLimitError" in s)
+        check("runtime_gate() defined", "async def runtime_gate(" in s)
+        check("signal_disconnect() defined", "async def signal_disconnect(" in s)
+        check("uses rate_limiter", "check_rate_limit" in s)
+        check("atomic Lua EVAL for session cap", "eval(" in s.lower() or "EVAL" in s)
+        check("SCARD in Lua script", "SCARD" in s)
+        check("raises RuntimeLimitError on cap", "raise RuntimeLimitError" in s)
+        check("them:ep: set gated", "them:ep:" in s)
+        check("them:sess:control: channel defined", "them:sess:control:" in s)
+        check("fail-open on Redis unavailable", "fail-open" in s or "Fail-open" in s)
+    except FileNotFoundError:
+        check("runtime_manager.py exists", False, "file not found")
+    except Exception as exc:
+        check("runtime_manager.py", False, str(exc))
+
+    # ── migration 022 ─────────────────────────────────────────────────────────
+    try:
+        m = src("db/022_runtime_limits.sql")
+        check("migration 022 exists", True)
+        check("adds max_concurrent_sessions column", "max_concurrent_sessions" in m)
+        check("ALTER TABLE them.entry_points", "them.entry_points" in m)
+        check("nullable (no NOT NULL)", "NOT NULL" not in m or "IF NOT EXISTS" in m)
+    except FileNotFoundError:
+        check("migration 022 exists", False, "file not found")
+    except Exception as exc:
+        check("migration 022", False, str(exc))
+
+    # ── ORM model ─────────────────────────────────────────────────────────────
+    try:
+        md = src("app/models.py")
+        check("EntryPoint.max_concurrent_sessions in models.py", "max_concurrent_sessions" in md)
+    except Exception as exc:
+        check("models.py max_concurrent_sessions", False, str(exc))
+
+    # ── apps.py wiring ────────────────────────────────────────────────────────
+    try:
+        a = src("app/routers/apps.py")
+        check("runtime_gate imported in apps.py", "from app.services.runtime_manager import" in a)
+        check("runtime_gate() called in apps.py", "await runtime_gate(" in a)
+        check("RuntimeLimitError caught in apps.py", "RuntimeLimitError" in a)
+        check("exc.ws_code used for WS close (4429/4403 via RuntimeLimitError)", "exc.ws_code" in a)
+        check("4429 rate-limit code in runtime_manager", "4429" in src("app/services/runtime_manager.py"))
+        check("4403 session-cap code in runtime_manager", "4403" in src("app/services/runtime_manager.py"))
+        check("control listener in apps.py", "them:sess:control:" in a)
+        check("4000 admin terminate close in apps.py", "4000" in a)
+        check("control pubsub aclose() in apps.py", "aclose" in a)
+    except Exception as exc:
+        check("apps.py runtime wiring", False, str(exc))
+
+    # ── ws_orchestrator.py wiring ─────────────────────────────────────────────
+    try:
+        w = src("app/routers/ws_orchestrator.py")
+        check("runtime_gate imported in ws_orchestrator", "from app.services.runtime_manager import" in w)
+        check("runtime_gate() called in ws_orchestrator", "await runtime_gate(" in w)
+        check("rate_limit_rpm fetched in ws_orchestrator", "rate_limit_rpm" in w)
+        check("control listener in ws_orchestrator", "them:sess:control:" in w)
+        check("4000 terminate close in ws_orchestrator", "4000" in w)
+    except Exception as exc:
+        check("ws_orchestrator.py runtime wiring", False, str(exc))
+
+    # ── admin_sessions.py disconnect endpoint ─────────────────────────────────
+    try:
+        ad = src("app/routers/admin_sessions.py")
+        check("disconnect endpoint defined", "/disconnect" in ad)
+        check("signal_disconnect called in admin_sessions", "signal_disconnect" in ad)
+        check("404 on session not found", "404" in ad)
+    except Exception as exc:
+        check("admin_sessions.py disconnect", False, str(exc))
+
+    # ── session_manager.py control channel ────────────────────────────────────
+    try:
+        sm = src("app/services/session_manager.py")
+        check("them:sess:control: prefix in session_manager", "them:sess:control:" in sm)
+        check("signal_disconnect() in session_manager", "async def signal_disconnect(" in sm)
+    except Exception as exc:
+        check("session_manager control channel", False, str(exc))
+
+    # ── admin_applications.py EP schema ──────────────────────────────────────
+    try:
+        aa = src("app/routers/admin_applications.py")
+        check("EntryPointIn.max_concurrent_sessions", "max_concurrent_sessions" in aa)
+        check("EntryPointOut.max_concurrent_sessions", "max_concurrent_sessions" in aa)
+    except Exception as exc:
+        check("admin_applications.py EP limit field", False, str(exc))
+
+    # ── frontend api.ts ───────────────────────────────────────────────────────
+    try:
+        api = src("frontend/src/lib/api.ts")
+        check("disconnectSession in api.ts", "disconnectSession" in api)
+        check("max_concurrent_sessions in EntryPoint type", "max_concurrent_sessions" in api)
+    except Exception as exc:
+        check("frontend api.ts runtime additions", False, str(exc))
+
+    # ── frontend SessionsView ─────────────────────────────────────────────────
+    try:
+        fe = src("frontend/src/app/admin/applications/page.tsx")
+        check("disconnectSession called in SessionsView", "disconnectSession" in fe)
+        check("hiddenSessions optimistic state", "hiddenSessions" in fe)
+        check("handleTerminate function", "handleTerminate" in fe)
+        check("Terminate button rendered", "Terminate" in fe)
+        check("EP limits panel rendered", "Entry Point Limits" in fe or "epLimits" in fe)
+        check("saveEpLimit function", "saveEpLimit" in fe)
+        check("_maxSessions passed to EP node", "_maxSessions" in fe)
+        check("atCap badge coloring", "atCap" in fe)
+        check("visibleSessions used (filtered by hidden)", "visibleSessions" in fe)
+    except Exception as exc:
+        check("frontend SessionsView runtime additions", False, str(exc))
+
+
+def test_34_app_runtime():
+    section("test_34_app_runtime: application-level runtime gate + UI + API")
+    sys.path.insert(0, str(ROOT))
+
+    # ── migration 023 ─────────────────────────────────────────────────────────
+    try:
+        m = src("db/023_app_runtime.sql")
+        check("migration 023 exists", True)
+        check("adds runtime_config column", "runtime_config" in m)
+        check("ALTER TABLE them.applications", "them.applications" in m)
+        check("JSONB type", "JSONB" in m)
+    except FileNotFoundError:
+        check("migration 023 exists", False, "file not found")
+    except Exception as exc:
+        check("migration 023", False, str(exc))
+
+    # ── ORM model ─────────────────────────────────────────────────────────────
+    try:
+        md = src("app/models.py")
+        check("Application.runtime_config in models.py", "runtime_config" in md)
+    except Exception as exc:
+        check("models.py Application.runtime_config", False, str(exc))
+
+    # ── admin_applications.py ─────────────────────────────────────────────────
+    try:
+        aa = src("app/routers/admin_applications.py")
+        check("AppRuntimeConfig Pydantic class", "class AppRuntimeConfig" in aa)
+        check("blocked_tokens field", "blocked_tokens" in aa)
+        check("blocked_user_ids field", "blocked_user_ids" in aa)
+        check("max_concurrent_sessions in AppRuntimeConfig", "max_concurrent_sessions" in aa)
+        check("rate_limit_rpm in AppRuntimeConfig", "rate_limit_rpm" in aa)
+        check("session_timeout_minutes in AppRuntimeConfig", "session_timeout_minutes" in aa)
+        check("PUT /{app_id}/runtime route", "/{app_id}/runtime" in aa)
+        check("put_app_runtime function", "put_app_runtime" in aa or "async def put_app_runtime" in aa)
+        check("runtime_config in ApplicationOut", "runtime_config" in aa)
+        check("runtime_config in _to_out()", "runtime_config=app.runtime_config" in aa)
+    except Exception as exc:
+        check("admin_applications.py AppRuntimeConfig", False, str(exc))
+
+    # ── runtime_manager.py app gate ───────────────────────────────────────────
+    try:
+        rm = src("app/services/runtime_manager.py")
+        check("token_hash param in runtime_gate", "token_hash" in rm)
+        check("app_runtime param in runtime_gate", "app_runtime" in rm)
+        check("ep_max_concurrent param in runtime_gate", "ep_max_concurrent" in rm)
+        check("blocked_tokens check", "blocked_tokens" in rm)
+        check("blocked_user_ids check", "blocked_user_ids" in rm)
+        check("rl:them:app: app rate limit key", "rl:them:app:" in rm or "_APP_RL_PREFIX" in rm)
+        check("count_app_sessions for soft app cap", "count_app_sessions" in rm)
+        check("blocked reason in RuntimeLimitError", '"blocked"' in rm)
+        check("RuntimeLimitError reason comment updated", "blocked" in rm)
+    except Exception as exc:
+        check("runtime_manager.py app gate", False, str(exc))
+
+    # ── apps.py wiring ────────────────────────────────────────────────────────
+    try:
+        a = src("app/routers/apps.py")
+        check("app_runtime= passed to runtime_gate in apps.py", "app_runtime=" in a)
+        check("token_hash passed to runtime_gate in apps.py", "token_hash=" in a)
+        check("hashlib.sha256 for token hash", "hashlib.sha256" in a)
+        check("ep_max_concurrent passed in apps.py", "ep_max_concurrent=" in a)
+    except Exception as exc:
+        check("apps.py app_runtime wiring", False, str(exc))
+
+    # ── ws_orchestrator.py ────────────────────────────────────────────────────
+    try:
+        w = src("app/routers/ws_orchestrator.py")
+        check("ep_max_concurrent=None in ws_orchestrator", "ep_max_concurrent=None" in w)
+        check("app_runtime=None in ws_orchestrator", "app_runtime=None" in w)
+        check("token_hash=None in ws_orchestrator", "token_hash=None" in w)
+    except Exception as exc:
+        check("ws_orchestrator.py app_runtime wiring", False, str(exc))
+
+    # ── REDIS.md updated ──────────────────────────────────────────────────────
+    try:
+        rd = src("docs/REDIS.md")
+        check("rl:them:app: key documented in REDIS.md", "rl:them:app:" in rd)
+    except Exception as exc:
+        check("REDIS.md app rate limit key", False, str(exc))
+
+    # ── frontend api.ts ───────────────────────────────────────────────────────
+    try:
+        api = src("frontend/src/lib/api.ts")
+        check("AppRuntimeConfig interface in api.ts", "AppRuntimeConfig" in api)
+        check("runtime_config in Application interface", "runtime_config" in api)
+        check("getAppRuntime in themApi", "getAppRuntime" in api)
+        check("putAppRuntime in themApi", "putAppRuntime" in api)
+    except Exception as exc:
+        check("frontend api.ts AppRuntimeConfig", False, str(exc))
+
+    # ── frontend page.tsx RuntimeView ─────────────────────────────────────────
+    try:
+        fe = src("frontend/src/app/admin/applications/page.tsx")
+        check("RuntimeView component defined", "function RuntimeView(" in fe)
+        check("'runtime' view state", "'runtime'" in fe)
+        check("openRuntime function", "openRuntime" in fe)
+        check("runtimeApp state", "runtimeApp" in fe)
+        check("putAppRuntime called in RuntimeView", "putAppRuntime" in fe)
+        check("Runtime button on AppCard", "Runtime" in fe)
+        check("onRuntime prop on AppCard", "onRuntime" in fe)
+        check("blocked_tokens form field", "blocked_tokens" in fe or "Blocked Token" in fe)
+        check("blocked_user_ids form field", "blocked_user_ids" in fe or "Blocked User" in fe)
+    except Exception as exc:
+        check("frontend page.tsx RuntimeView", False, str(exc))
+
+
 # ─── runner ───────────────────────────────────────────────────────────────────
 
 ALL_TESTS = [
@@ -2608,6 +2835,8 @@ ALL_TESTS = [
     ("30", test_30_graph_compiler),
     ("31", test_31_session_manager),
     ("32", test_32_monitoring_config),
+    ("33", test_33_runtime_manager),
+    ("34", test_34_app_runtime),
 ]
 
 if __name__ == "__main__":

@@ -124,6 +124,7 @@ class EntryPointIn(BaseModel):
     entry_point_type: str = Field(..., description="websocket | sse | webrtc | a2a")
     access_policy: Dict[str, Any] = Field(default_factory=lambda: {"mode": "token"})
     conversation_token_limit: Optional[int] = None
+    max_concurrent_sessions: Optional[int] = None
     enabled: bool = True
     orchestrator: Optional[AppOrchestratorIn] = None
 
@@ -134,6 +135,7 @@ class EntryPointOut(BaseModel):
     entry_point_type: str
     access_policy: Dict[str, Any]
     conversation_token_limit: Optional[int] = None
+    max_concurrent_sessions: Optional[int] = None
     enabled: bool
     created_at: datetime
     updated_at: datetime
@@ -165,6 +167,14 @@ class ApplicationUpdate(BaseModel):
     canvas: Optional[Dict[str, Any]] = None
 
 
+class AppRuntimeConfig(BaseModel):
+    max_concurrent_sessions: Optional[int] = None
+    rate_limit_rpm: Optional[int] = None
+    blocked_tokens: List[str] = Field(default_factory=list)
+    blocked_user_ids: List[int] = Field(default_factory=list)
+    session_timeout_minutes: Optional[int] = None
+
+
 class ApplicationOut(BaseModel):
     id: uuid.UUID
     name: str
@@ -173,6 +183,7 @@ class ApplicationOut(BaseModel):
     entry_points: List[EntryPointOut]
     app_orchestrators: List[AppOrchestratorOut] = Field(default_factory=list)
     canvas: Optional[Dict[str, Any]] = None
+    runtime_config: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
@@ -319,6 +330,7 @@ def _to_out(app: Application) -> ApplicationOut:
             entry_point_type=ep.entry_point_type,
             access_policy=ep.access_policy or {"mode": "token"},
             conversation_token_limit=ep.conversation_token_limit,
+            max_concurrent_sessions=ep.max_concurrent_sessions,
             enabled=ep.enabled,
             created_at=ep.created_at,
             updated_at=ep.updated_at,
@@ -333,6 +345,7 @@ def _to_out(app: Application) -> ApplicationOut:
         entry_points=ep_outs,
         app_orchestrators=ao_list,
         canvas=app.canvas,
+        runtime_config=app.runtime_config or {},
         created_at=app.created_at,
         updated_at=app.updated_at,
     )
@@ -500,6 +513,7 @@ async def _apply_entry_point_diff(
             ep.entry_point_type = ep_in.entry_point_type
             ep.access_policy = ep_in.access_policy
             ep.conversation_token_limit = ep_in.conversation_token_limit
+            ep.max_concurrent_sessions = ep_in.max_concurrent_sessions
             ep.enabled = ep_in.enabled
             # Update linked AppOrchestrator config if provided
             if ep_in.orchestrator is not None and ep.app_orchestrator is not None:
@@ -538,6 +552,7 @@ async def _apply_entry_point_diff(
                         entry_point_type=ep_in.entry_point_type,
                         access_policy=ep_in.access_policy,
                         conversation_token_limit=ep_in.conversation_token_limit,
+                        max_concurrent_sessions=ep_in.max_concurrent_sessions,
                         enabled=ep_in.enabled,
                         app_orchestrator_id=existing_ao.id,
                     ))
@@ -554,6 +569,7 @@ async def _apply_entry_point_diff(
                     entry_point_type=ep_in.entry_point_type,
                     access_policy=ep_in.access_policy,
                     conversation_token_limit=ep_in.conversation_token_limit,
+                    max_concurrent_sessions=ep_in.max_concurrent_sessions,
                     enabled=ep_in.enabled,
                     app_orchestrator_id=ao.id,
                 ))
@@ -743,6 +759,21 @@ async def delete_application(app_id: uuid.UUID, db: AsyncSession = Depends(get_d
     await db.commit()
     await _flush_orch_caches(app_id, orch_names_to_flush)
     logger.info("application deleted", app_id=str(app_id), name=name)
+
+
+@router.put("/{app_id}/runtime", response_model=AppRuntimeConfig)
+async def put_app_runtime(
+    app_id: uuid.UUID,
+    body: AppRuntimeConfig,
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace an application's runtime_config. Takes effect on next connection."""
+    app = await _get_or_404(db, app_id)
+    app.runtime_config = body.model_dump()
+    await db.commit()
+    await _flush_orch_caches(app_id, [ao.name for ao in app.app_orchestrators])
+    logger.info("application runtime config updated", app_id=str(app_id))
+    return body
 
 
 # ------------------------------------------------------------------ #

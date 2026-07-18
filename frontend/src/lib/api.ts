@@ -204,6 +204,7 @@ export interface EntryPoint {
   entry_point_type: 'websocket' | 'sse' | 'webrtc' | 'a2a';
   access_policy: Record<string, unknown>;
   conversation_token_limit: number | null;
+  max_concurrent_sessions: number | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -217,6 +218,14 @@ export interface CanvasLayout {
   [k: string]: unknown;
 }
 
+export interface AppRuntimeConfig {
+  max_concurrent_sessions: number | null;
+  rate_limit_rpm: number | null;
+  blocked_tokens: string[];
+  blocked_user_ids: number[];
+  session_timeout_minutes: number | null;
+}
+
 export interface Application {
   id: string;
   name: string;
@@ -225,6 +234,7 @@ export interface Application {
   canvas?: CanvasLayout | null;
   entry_points: EntryPoint[];
   app_orchestrators?: AppOrchestratorOut[];
+  runtime_config?: AppRuntimeConfig;
   created_at: string;
   updated_at: string;
 }
@@ -465,6 +475,9 @@ export const themApi = {
   bulkDeleteRuns: (runIds: string[]) => api.post<{ deleted: number }>('/runs/bulk-delete', { run_ids: runIds }),
   bulkDeleteApplications: (appIds: string[]) => api.post<{ deleted: number }>('/admin/applications/bulk-delete', { app_ids: appIds }),
   listSessions: (appId: string) => api.get<{ sessions: SessionInfo[]; count: number }>(`/admin/sessions?app_id=${appId}`),
+  disconnectSession: (sessionId: string) => api.post<{ session_id: string; signal_delivered: boolean }>(`/admin/sessions/${sessionId}/disconnect`, {}),
+  getAppRuntime: (appId: string) => api.get<Application>(`/admin/applications/${appId}`).then(a => a.runtime_config ?? { max_concurrent_sessions: null, rate_limit_rpm: null, blocked_tokens: [], blocked_user_ids: [], session_timeout_minutes: null }),
+  putAppRuntime: (appId: string, config: AppRuntimeConfig) => api.put<AppRuntimeConfig>(`/admin/applications/${appId}/runtime`, config),
   getMonitoringConfig: () => api.get<MonitoringConfig>('/admin/monitoring-config'),
   putMonitoringConfig: (body: MonitoringConfig) => api.put<MonitoringConfig>('/admin/monitoring-config', body),
   // Live reachability check for a deployed application slug
