@@ -171,6 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_state     ON them.tasks(state)
     WHERE state IN ('submitted','working','input-required');
 CREATE INDEX IF NOT EXISTS idx_tasks_remote    ON them.tasks(remote_task_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_run       ON them.tasks(run_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_user_id   ON them.tasks(user_id);
 
 CREATE TABLE IF NOT EXISTS them.artifacts (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
